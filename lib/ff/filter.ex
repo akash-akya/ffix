@@ -1,30 +1,9 @@
 defmodule FF.Filter do
   alias FF.Filter.Builder
   alias FF.Filter.Builder.Pad
+  alias FF.Filter.Help
 
-  @ffmpeg System.find_executable("ffmpeg")
-  @quiet ["-v", "quiet"]
-
-  System.cmd(@ffmpeg, @quiet ++ ["-filters"])
-  |> then(fn
-    {output, 0} ->
-      output
-      |> String.split("\n", trim: true)
-      |> Enum.drop_while(fn line -> !String.contains?(line, "->") end)
-      |> Enum.map(&FF.Parsers.FilterList.parse/1)
-      |> Map.new(fn [flags, name, {inputs, outputs}, desc] ->
-        {
-          String.to_atom(name),
-          %{
-            flags: flags,
-            inputs: inputs,
-            outputs: outputs,
-            desc: desc
-          }
-        }
-      end)
-  end)
-  |> Enum.map(fn {name, %{inputs: inputs, outputs: outputs, desc: desc}} ->
+  Enum.map(Help.filters(), fn {name, %{inputs: inputs, outputs: outputs, desc: desc}} ->
     inputs = Enum.reject(inputs, &(&1 == :|))
     outputs = Enum.reject(outputs, &(&1 == :|))
 
@@ -72,9 +51,9 @@ defmodule FF.Filter do
     @doc """
     #{desc}
     """
-    @spec unquote(name)(unquote_splicing(input_specs)) :: unquote(output_specs)
-    def unquote(name)(unquote_splicing(input_args)) do
-      Builder.operation(unquote(name), unquote(input_args), unquote(outputs))
+    @spec unquote(name)(unquote_splicing(input_specs), keyword) :: unquote(output_specs)
+    def unquote(name)(unquote_splicing(input_args), options \\ []) do
+      Builder.operation(unquote(name), unquote(input_args), options, unquote(outputs))
     end
   end)
 end

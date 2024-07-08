@@ -32,7 +32,7 @@ defmodule FF.Parsers.FilterSpec do
     |> ignore(string(">"))
     |> unwrap_and_tag(:type)
 
-  number = utf8_string([?0..?9], min: 1)
+  number = utf8_string([?0..?9, ?-], min: 1)
 
   flags = utf8_string([?A..?Z, ?\.], 11)
 
@@ -44,7 +44,7 @@ defmodule FF.Parsers.FilterSpec do
 
   param_name = utf8_string([?a..?z, ?0..?9, ?_], min: 1)
 
-  desc = utf8_string(@alpha_num ++ [?\s, ?\., ?(, ?), ?", ?', ?/, ?+, ?-], min: 0)
+  desc = utf8_string(@alpha_num ++ [?\s, ?\., ?(, ?), ?", ?', ?/, ?+, ?-, ?;], min: 0)
 
   depth =
     times(utf8_char([?\s]), min: 1)
@@ -66,14 +66,5 @@ defmodule FF.Parsers.FilterSpec do
   def parse(line) do
     {:ok, parsed, "", %{}, _, _} = filter_spec(line)
     parsed
-  end
-
-  def parse_from_desc(description) do
-    lines = String.split(description, "\n", trim: true)
-    index = Enum.find_index(lines, &String.contains?(&1, "AVOptions:"))
-
-    lines
-    |> Enum.drop(index + 1)
-    |> Enum.map(&parse/1)
   end
 end

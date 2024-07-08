@@ -9,10 +9,10 @@ defmodule FF.Filter.Builder do
   end
 
   defmodule Operation do
-    defstruct [:inputs, :name, :ref]
+    defstruct [:inputs, :name, :ref, :spec]
 
-    def new(name, inputs, outputs) do
-      operation = %__MODULE__{ref: make_ref(), name: name, inputs: inputs}
+    def new(name, inputs, outputs, spec) do
+      operation = %__MODULE__{ref: make_ref(), name: name, inputs: inputs, spec: spec}
 
       case outputs do
         [] ->
@@ -36,19 +36,21 @@ defmodule FF.Filter.Builder do
   end
 
   alias FF.Parsers
+  alias FF.Filter.Help
 
   def source(seq) do
     Pad.new(nil, seq, :static)
   end
 
-  def operation(name, inputs, num_outputs \\ 1) do
-    Operation.new(name, inputs, num_outputs)
+  def operation(name, inputs, options, num_outputs \\ 1) do
+    spec = FF.Filter.Builder.filter_spec(name)
+    Operation.new(name, inputs, num_outputs, spec)
   end
 
   def filter_spec(name) do
     name
-    |> FF.Runner.filter()
-    |> Parsers.FilterSpec.parse_from_desc()
+    |> Help.filter()
+    |> Enum.map(&Parsers.FilterSpec.parse/1)
     |> collect(%{all: [], current: nil})
     |> Enum.filter(& &1)
   end
