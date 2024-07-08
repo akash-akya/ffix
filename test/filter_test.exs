@@ -15,20 +15,20 @@ defmodule FF.FilterTest do
 
     assert %Pad{
              op: %Operation{
+               id: _,
                inputs: [
                  %Pad{op: nil, seq: 0, type: :static},
                  %Pad{
                    op: %Operation{
+                     id: _,
                      inputs: [%Pad{op: nil, seq: 1, type: :static}],
-                     name: :acrossover,
-                     ref: _
+                     name: :acrossover
                    },
                    seq: 0,
                    type: :dynamic
                  }
                ],
-               name: :acrossfade,
-               ref: _
+               name: :acrossfade
              },
              seq: 0,
              type: :static
@@ -44,20 +44,22 @@ defmodule FF.FilterTest do
 
     assert %Pad{
              op: %Operation{
+               id: _,
                inputs: [
                  %Pad{op: nil, seq: 0, type: :static},
                  %Pad{
                    op: %Operation{
+                     id: _,
                      inputs: [%Pad{op: nil, seq: 1, type: :static}],
                      name: :acrossover,
-                     ref: _
+                     options: []
                    },
                    seq: 0,
                    type: :dynamic
                  }
                ],
-               name: :acrossfade,
-               ref: _
+               options: [nb_samples: "10", curve1: "20"],
+               name: :acrossfade
              },
              seq: 0,
              type: :static

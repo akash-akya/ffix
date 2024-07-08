@@ -10,10 +10,16 @@ defmodule FF.Filter.Builder do
 
   defmodule Operation do
     @type t :: map
-    defstruct [:inputs, :name, :ref, :spec]
+    defstruct [:id, :inputs, :name, :spec, :options]
 
-    def new(name, inputs, outputs, spec) do
-      operation = %__MODULE__{ref: make_ref(), name: name, inputs: inputs, spec: spec}
+    def new(name, inputs, outputs, options, spec) do
+      operation = %__MODULE__{
+        id: generate_id(),
+        name: name,
+        inputs: inputs,
+        spec: spec,
+        options: options
+      }
 
       case outputs do
         [] ->
@@ -34,6 +40,10 @@ defmodule FF.Filter.Builder do
           |> List.to_tuple()
       end
     end
+
+    defp generate_id do
+      :erlang.phash2(make_ref())
+    end
   end
 
   alias FF.Parsers
@@ -47,7 +57,7 @@ defmodule FF.Filter.Builder do
   def operation(name, inputs, outputs, options) do
     spec = FF.Filter.Builder.filter_spec(name)
     :ok = validate_options!(options, spec)
-    Operation.new(name, inputs, outputs, spec)
+    Operation.new(name, inputs, outputs, options, spec)
   end
 
   def filter_spec(name) do
