@@ -34,4 +34,33 @@ defmodule FF.FilterTest do
              type: :static
            } = crossfade
   end
+
+  test "accepts options" do
+    a = Builder.source(0)
+    b = Builder.source(1)
+
+    crossover = Filter.acrossover(b)
+    crossfade = Filter.acrossfade(a, crossover, nb_samples: "10", curve1: "20")
+
+    assert %Pad{
+             op: %Operation{
+               inputs: [
+                 %Pad{op: nil, seq: 0, type: :static},
+                 %Pad{
+                   op: %Operation{
+                     inputs: [%Pad{op: nil, seq: 1, type: :static}],
+                     name: :acrossover,
+                     ref: _
+                   },
+                   seq: 0,
+                   type: :dynamic
+                 }
+               ],
+               name: :acrossfade,
+               ref: _
+             },
+             seq: 0,
+             type: :static
+           } = crossfade
+  end
 end

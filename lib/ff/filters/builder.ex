@@ -9,6 +9,7 @@ defmodule FF.Filter.Builder do
   end
 
   defmodule Operation do
+    @type t :: map
     defstruct [:inputs, :name, :ref, :spec]
 
     def new(name, inputs, outputs, spec) do
@@ -42,9 +43,11 @@ defmodule FF.Filter.Builder do
     Pad.new(nil, seq, :static)
   end
 
-  def operation(name, inputs, options, num_outputs \\ 1) do
+  @spec operation(String.t(), [Pad.t()], [Pad.t()], keyword) :: Operation.t()
+  def operation(name, inputs, outputs, options) do
     spec = FF.Filter.Builder.filter_spec(name)
-    Operation.new(name, inputs, num_outputs, spec)
+    :ok = validate_options!(options, spec)
+    Operation.new(name, inputs, outputs, spec)
   end
 
   def filter_spec(name) do
@@ -53,6 +56,7 @@ defmodule FF.Filter.Builder do
     |> Enum.map(&Parsers.FilterSpec.parse/1)
     |> collect(%{all: [], current: nil})
     |> Enum.filter(& &1)
+    |> Map.new(&{String.to_atom(&1.name), &1})
   end
 
   @option_depth 3
@@ -77,5 +81,46 @@ defmodule FF.Filter.Builder do
     current = Map.update(current, :sub, [enum_spec], &(&1 ++ [enum_spec]))
 
     collect(specs, %{current: current, all: all})
+  end
+
+  defp validate_options!(options, specs) do
+    case validate_options(options, specs) do
+      :ok ->
+        :ok
+
+      {:error, error} ->
+        raise error
+    end
+  end
+
+  defp validate_options(options, specs) when is_list(options) do
+    Enum.reduce_while(options, :ok, fn {k, v}, _acc ->
+      with {:ok, spec} <- fetch_spec(specs, k),
+           :ok <- validate_option_type(k, v, spec.type) do
+        {:cont, :ok}
+      else
+        {:error, _} = error ->
+          {:halt, error}
+      end
+    end)
+  end
+
+  defp fetch_spec(specs, key) do
+    if spec = specs[key] do
+      {:ok, spec}
+    else
+      {:error, "#{key} is not a valid option"}
+    end
+  end
+
+  defp validate_option_type(option, value, type) do
+    # TODO: validate type, currently only accepts binary
+    valid? = is_binary(value)
+
+    if valid? do
+      :ok
+    else
+      {:error, "#{value} for #{option} must be #{type}"}
+    end
   end
 end

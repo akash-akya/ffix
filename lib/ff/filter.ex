@@ -53,7 +53,7 @@ defmodule FF.Filter do
     """
     @spec unquote(name)(unquote_splicing(input_specs), keyword) :: unquote(output_specs)
     def unquote(name)(unquote_splicing(input_args), options \\ []) do
-      Builder.operation(unquote(name), unquote(input_args), options, unquote(outputs))
+      Builder.operation(unquote(name), unquote(input_args), unquote(outputs), options)
     end
   end)
 end

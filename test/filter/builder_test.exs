@@ -5,20 +5,36 @@ defmodule FF.Filter.BuilderTest do
 
   describe "filter_spec" do
     test "returns correct spec" do
-      assert [
-               %{
-                 flags: "..F.A......",
-                 name: "sample_rate",
-                 type: :int,
-                 desc: "set sample rate (from 15 to INT_MAX) (default 44100)"
-               },
-               %{
+      assert %{
+               channels: %{
                  flags: "..F.A......",
                  name: "channels",
                  type: :int,
                  desc: "set channels (from 1 to 8) (default 1)"
                },
-               %{
+               orientation: %{
+                 flags: "..FV.......",
+                 name: "orientation",
+                 type: :int,
+                 sub: [
+                   %{flags: "..FV.......", enum: "vertical", desc: "", num: "0"},
+                   %{flags: "..FV.......", enum: "horizontal", desc: "", num: "1"}
+                 ],
+                 desc: "set orientation (from 0 to 1) (default vertical)"
+               },
+               overlap: %{
+                 flags: "..F.A......",
+                 name: "overlap",
+                 type: :float,
+                 desc: "set window overlap (from 0 to 1) (default 1)"
+               },
+               sample_rate: %{
+                 flags: "..F.A......",
+                 name: "sample_rate",
+                 type: :int,
+                 desc: "set sample rate (from 15 to INT_MAX) (default 44100)"
+               },
+               scale: %{
                  flags: "..FV.......",
                  name: "scale",
                  type: :int,
@@ -28,7 +44,7 @@ defmodule FF.Filter.BuilderTest do
                  ],
                  desc: "set input amplitude scale (from 0 to 1) (default log)"
                },
-               %{
+               slide: %{
                  flags: "..FV.......",
                  name: "slide",
                  type: :int,
@@ -60,7 +76,7 @@ defmodule FF.Filter.BuilderTest do
                  ],
                  desc: "set input sliding mode (from 0 to 3) (default fullframe)"
                },
-               %{
+               win_func: %{
                  flags: "..F.A......",
                  name: "win_func",
                  type: :int,
@@ -89,25 +105,20 @@ defmodule FF.Filter.BuilderTest do
                    %{flags: "..F.A......", enum: "kaiser", desc: "Kaiser", num: "20"}
                  ],
                  desc: "set window function (from 0 to 20) (default rect)"
-               },
-               %{
-                 flags: "..F.A......",
-                 name: "overlap",
-                 type: :float,
-                 desc: "set window overlap (from 0 to 1) (default 1)"
-               },
-               %{
-                 flags: "..FV.......",
-                 name: "orientation",
-                 type: :int,
-                 sub: [
-                   %{flags: "..FV.......", enum: "vertical", desc: "", num: "0"},
-                   %{flags: "..FV.......", enum: "horizontal", desc: "", num: "1"}
-                 ],
-                 desc: "set orientation (from 0 to 1) (default vertical)"
                }
-             ] ==
+             } ==
                Builder.filter_spec("spectrumsynth")
+    end
+  end
+
+  describe "operation/4" do
+    test "raises error on invalid options" do
+      a = Builder.source(0)
+      b = Builder.source(1)
+
+      assert_raise RuntimeError, "foo is not a valid option", fn ->
+        Builder.operation(:acrossfade, [a, b], [:V], foo: "something")
+      end
     end
   end
 end
