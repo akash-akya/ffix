@@ -10,13 +10,14 @@ defmodule FF.Filter.Builder do
 
   defmodule Operation do
     @type t :: map
-    defstruct [:id, :inputs, :name, :spec, :options]
+    defstruct [:id, :inputs, :outputs, :name, :spec, :options]
 
     def new(name, inputs, outputs, options, spec) do
       operation = %__MODULE__{
         id: generate_id(),
         name: name,
         inputs: inputs,
+        outputs: outputs,
         spec: spec,
         options: options
       }
@@ -41,9 +42,7 @@ defmodule FF.Filter.Builder do
       end
     end
 
-    defp generate_id do
-      :erlang.phash2(make_ref())
-    end
+    defp generate_id, do: make_ref()
   end
 
   alias FF.Parsers
