@@ -9,7 +9,10 @@ defmodule FF.Filter.Help do
     lines = String.split(output, "\n", trim: true)
     index = Enum.find_index(lines, &String.contains?(&1, "AVOptions:"))
 
-    Enum.drop(lines, index + 1)
+    lines
+    |> Enum.drop(index + 1)
+    |> Enum.take_while(&String.starts_with?(&1, " "))
+    |> Enum.filter(&(String.trim(&1) != ""))
   end
 
   def filters do

@@ -5,12 +5,14 @@ defmodule FF.FilterGraph do
     %{ops: ops} = collect(graph, %{ops: Map.new(), name_counter: Map.new()})
     visited = MapSet.new()
 
-    {graph, _} =
-      Enum.reduce(ops, {[], visited}, fn {_id, op}, {graph, visited} ->
+    {graph, _, output_pads} =
+      Enum.reduce(ops, {[], visited, []}, fn {_id, op}, {graph, visited, _output_pads} ->
         validate_inputs!(op.inputs, visited)
 
         inputs_str = inputs_to_str(op.inputs, ops)
-        outputs_str = outputs_to_str(op.outputs, op.seq_id)
+        output_pads = outputs_to_str(op.outputs, op.seq_id)
+        outputs_str = Enum.join(output_pads, "")
+
         options_str = options_to_str(op.options, op.spec)
 
         str = inputs_str <> to_string(op.name) <> options_str <> outputs_str <> ";"
@@ -18,15 +20,16 @@ defmodule FF.FilterGraph do
         graph = graph ++ [str]
         visited = MapSet.put(visited, op.id)
 
-        {graph, visited}
+        {graph, visited, output_pads}
       end)
 
-    Enum.join(graph, "\n")
+    graph_str = Enum.join(graph, "\n")
+    {:ok, {graph_str, output_pads}}
   end
 
   defp validate_inputs!(inputs, visited) do
     Enum.each(inputs, fn input ->
-      unless input.op == nil || MapSet.member?(visited, input.op_id) do
+      unless input.type == :source || MapSet.member?(visited, input.op_id) do
         raise "Unknown input, #{inspect(input.op)}"
       end
     end)
@@ -34,8 +37,8 @@ defmodule FF.FilterGraph do
 
   defp inputs_to_str(inputs, graph) do
     Enum.map(inputs, fn input ->
-      if input.op == nil do
-        "[stream_#{input.seq}]"
+      if input.type == :source do
+        "[#{input.op}]"
       else
         seq_id = Map.fetch!(graph, input.op_id).seq_id
         "[#{seq_id}_#{input.seq}]"
@@ -50,7 +53,6 @@ defmodule FF.FilterGraph do
     |> Enum.map(fn {_output, seq} ->
       "[#{seq_id}_#{seq}]"
     end)
-    |> Enum.join("")
   end
 
   defp options_to_str(options, _specs) do
@@ -68,7 +70,7 @@ defmodule FF.FilterGraph do
     end
   end
 
-  defp collect(%Pad{op: nil} = _pad, acc), do: acc
+  defp collect(%Pad{type: :source} = _pad, acc), do: acc
 
   defp collect(%Pad{op: op}, acc) do
     acc =
@@ -78,7 +80,13 @@ defmodule FF.FilterGraph do
 
     inputs =
       Enum.map(op.inputs, fn input ->
-        op_id = input.op && input.op.id
+        op_id =
+          if input.type != :source do
+            input.op.id
+          else
+            nil
+          end
+
         Map.put(input, :op_id, op_id)
       end)
 

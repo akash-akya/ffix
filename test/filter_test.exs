@@ -7,8 +7,8 @@ defmodule FF.FilterTest do
   alias FF.Filter.Builder.Operation
 
   test "filter operations" do
-    a = Builder.source(0)
-    b = Builder.source(1)
+    a = Builder.source("0:v")
+    b = Builder.source("1:v")
 
     crossover = Filter.acrossover(b)
     crossfade = Filter.acrossfade(a, crossover)
@@ -17,11 +17,11 @@ defmodule FF.FilterTest do
              op: %Operation{
                id: _,
                inputs: [
-                 %Pad{op: nil, seq: 0, type: :static},
+                 %Pad{op: "0:v", seq: 0, type: :source},
                  %Pad{
                    op: %Operation{
                      id: _,
-                     inputs: [%Pad{op: nil, seq: 1, type: :static}],
+                     inputs: [%Pad{op: "1:v", seq: 0, type: :source}],
                      name: :acrossover
                    },
                    seq: 0,
@@ -36,8 +36,8 @@ defmodule FF.FilterTest do
   end
 
   test "accepts options" do
-    a = Builder.source(0)
-    b = Builder.source(1)
+    a = Builder.source("0:v")
+    b = Builder.source("1:v")
 
     crossover = Filter.acrossover(b)
     crossfade = Filter.acrossfade(a, crossover, nb_samples: "10", curve1: "20")
@@ -46,11 +46,11 @@ defmodule FF.FilterTest do
              op: %Operation{
                id: _,
                inputs: [
-                 %Pad{op: nil, seq: 0, type: :static},
+                 %Pad{op: "0:v", seq: 0, type: :source},
                  %Pad{
                    op: %Operation{
                      id: _,
-                     inputs: [%Pad{op: nil, seq: 1, type: :static}],
+                     inputs: [%Pad{op: "1:v", seq: 0, type: :source}],
                      name: :acrossover,
                      options: []
                    },

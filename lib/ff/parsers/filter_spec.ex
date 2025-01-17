@@ -15,6 +15,7 @@ defmodule FF.Parsers.FilterSpec do
       string("flags"),
       string("float"),
       string("image_size"),
+      string("int64"),
       string("int"),
       string("pix_fmt"),
       string("rational"),
@@ -42,7 +43,7 @@ defmodule FF.Parsers.FilterSpec do
       number
     ])
 
-  param_name = utf8_string([?a..?z, ?0..?9, ?_], min: 1)
+  param_name = utf8_string([?a..?z, ?A..?Z, ?0..?9, ?_], min: 1)
 
   desc = utf8_string(@alpha_num ++ [?\s, ?\., ?(, ?), ?", ?', ?/, ?+, ?-, ?;], min: 0)
 
@@ -55,8 +56,12 @@ defmodule FF.Parsers.FilterSpec do
     depth
     |> concat(param_name)
     |> ignore(ws)
-    |> concat(opt)
-    |> ignore(ws)
+    |> concat(
+      choice([
+        opt |> ignore(ws),
+        utf8_string([], 0)
+      ])
+    )
     |> concat(flags)
     |> optional(ignore(ws))
     |> concat(desc)

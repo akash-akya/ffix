@@ -3,7 +3,7 @@ defmodule FF.Filter.Builder do
     @type t :: map
     defstruct [:op, :seq, :type]
 
-    def new(op, seq, type) when type in [:static, :dynamic] do
+    def new(op, seq, type) when type in [:static, :dynamic, :source] do
       %__MODULE__{op: op, seq: seq, type: type}
     end
   end
@@ -48,8 +48,8 @@ defmodule FF.Filter.Builder do
   alias FF.Parsers
   alias FF.Filter.Help
 
-  def source(seq) do
-    Pad.new(nil, seq, :static)
+  def source(name) do
+    Pad.new(name, 0, :source)
   end
 
   @spec operation(String.t(), [Pad.t()], [Pad.t()], keyword) :: Operation.t()

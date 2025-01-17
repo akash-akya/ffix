@@ -7,8 +7,8 @@ defmodule FF.FilterGraphTest do
 
   describe "to_filtergraph" do
     test "generates" do
-      a = Builder.source(0)
-      b = Builder.source(1)
+      a = Builder.source("0:v")
+      b = Builder.source("1:v")
 
       crossover = Filter.acrossover(b)
       crossfade = Filter.acrossfade(a, crossover, nb_samples: "10", curve1: "20")
@@ -16,13 +16,15 @@ defmodule FF.FilterGraphTest do
 
       expected_graph =
         """
-        [stream_1]acrossover[acrossover_0];
-        [stream_0][acrossover_0]acrossfade=nb_samples=10:curve1=20[acrossfade_0];
+        [1:v]acrossover[acrossover_0];
+        [0:v][acrossover_0]acrossfade=nb_samples=10:curve1=20[acrossfade_0];
         [acrossover_0][acrossfade_0]acrossfade=nb_samples=30[acrossfade_1_0];
         """
         |> String.trim()
 
-      assert FilterGraph.to_filtergraph(crossfade2) == expected_graph
+      {:ok, {graph, output_pads}} = FilterGraph.to_filtergraph(crossfade2)
+      assert graph == expected_graph
+      assert output_pads == ["[acrossfade_1_0]"]
     end
   end
 end
