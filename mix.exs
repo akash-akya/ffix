@@ -22,7 +22,8 @@ defmodule FF.MixProject do
   defp deps do
     [
       {:nimble_parsec, "~> 1.4"},
-      {:exile, "~> 0.10"}
+      {:exile, "~> 0.10"},
+      {:ex_doc, "~> 0.34", only: :dev, runtime: false}
     ]
   end
 end
