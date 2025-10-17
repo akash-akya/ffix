@@ -3,7 +3,11 @@ defmodule FF.Parsers.FilterSpec do
 
   @alpha_num [?a..?z, ?A..?Z, ?0..?9, ?_]
 
-  type =
+  @param_name_char [?a..?z, ?A..?Z, ?0..?9, ?_, ?-, ?+, ?>, ?&]
+
+  ws = utf8_string([?\s, ?\t], min: 1)
+
+  core_type =
     choice([
       string("binary"),
       string("boolean"),
@@ -21,21 +25,34 @@ defmodule FF.Parsers.FilterSpec do
       string("rational"),
       string("sample_fmt"),
       string("string"),
-      string("video_rate")
+      string("video_rate"),
+      string("unsigned"),
+      string("sample_fmt")
     ])
+
+  type =
+    ignore(string("<"))
+    |> concat(core_type)
+    |> ignore(string(">"))
     |> map({String, :to_atom, []})
 
-  ws = utf8_string([?\s, ?\t], min: 1)
+  array =
+    ignore(string("["))
+    |> concat(type)
+    |> optional(ignore(ws))
+    |> ignore(string("]"))
+    |> unwrap_and_tag(:array)
 
   param_type =
-    ignore(string("<"))
-    |> concat(type)
-    |> ignore(string(">"))
+    choice([
+      type,
+      array
+    ])
     |> unwrap_and_tag(:type)
 
   number = utf8_string([?0..?9, ?-], min: 1)
 
-  flags = utf8_string([?A..?Z, ?\.], 11)
+  flags = utf8_string([?\., ?F, ?V, ?P, ?A, ?T, ?X, ?R], 11)
 
   opt =
     choice([
@@ -43,9 +60,58 @@ defmodule FF.Parsers.FilterSpec do
       number
     ])
 
-  param_name = utf8_string([?a..?z, ?A..?Z, ?0..?9, ?_, ?-], min: 1)
+  param_char = utf8_char(@param_name_char)
 
-  desc = utf8_string(@alpha_num ++ [?\s, ?\., ?(, ?), ?", ?', ?/, ?+, ?-, ?;], min: 0)
+  param_name =
+    param_char
+    |> repeat(
+      choice([
+        param_char,
+        # if next char is space then the subsequent char must be param-char
+        utf8_char([?\s]) |> lookahead(param_char)
+      ])
+    )
+    |> reduce({List, :to_string, []})
+
+  desc =
+    utf8_string(
+      @alpha_num ++
+        [
+          ?\s,
+          ?\.,
+          ?(,
+          ?),
+          ?",
+          ?',
+          ?/,
+          ?+,
+          ?-,
+          ?;,
+          ?,,
+          ?µ,
+          ?|,
+          ?:,
+          ?*,
+          ?#,
+          ?>,
+          ?<,
+          ?=,
+          ?°,
+          ??,
+          ?&,
+          ?[,
+          ?],
+          ?!,
+          ?~,
+          ?%,
+          ?{,
+          ?},
+          ?\\,
+          ?$,
+          ?@
+        ],
+      min: 0
+    )
 
   depth =
     times(utf8_char([?\s]), min: 1)
@@ -58,17 +124,18 @@ defmodule FF.Parsers.FilterSpec do
     |> ignore(ws)
     |> concat(
       choice([
-        opt |> ignore(ws),
+        opt |> optional(ignore(ws)),
         utf8_string([], 0)
       ])
     )
     |> concat(flags)
     |> optional(ignore(ws))
-    |> concat(desc)
+    |> optional(desc)
 
   defparsec(:filter_spec, line)
 
   def parse(line) do
+    # dbg(line)
     {:ok, parsed, "", %{}, _, _} = filter_spec(line)
     parsed
   end

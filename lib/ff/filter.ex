@@ -48,10 +48,20 @@ defmodule FF.Filter do
           end
       end
 
+    options = Builder.filter_spec(name)
+    options_doc = Builder.build_options_doc(options)
+    options_typespec = Builder.build_options_typespec(options)
+
     @doc """
     #{desc}
+
+    ## Options
+
+    #{options_doc}
+
     """
-    @spec unquote(name)(unquote_splicing(input_specs), keyword) :: unquote(output_specs)
+    @spec unquote(name)(unquote_splicing(input_specs), unquote(options_typespec)) ::
+            unquote(output_specs)
     def unquote(name)(unquote_splicing(input_args), options \\ []) do
       Builder.operation(unquote(name), unquote(input_args), unquote(outputs), options)
     end

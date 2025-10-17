@@ -9,10 +9,15 @@ defmodule FF.Filter.Help do
     lines = String.split(output, "\n", trim: true)
     index = Enum.find_index(lines, &String.contains?(&1, "AVOptions:"))
 
-    lines
-    |> Enum.drop(index + 1)
-    |> Enum.take_while(&String.starts_with?(&1, " "))
-    |> Enum.filter(&(String.trim(&1) != ""))
+    if index do
+      lines
+      |> Enum.drop(index + 1)
+      |> Enum.take_while(&String.starts_with?(&1, " "))
+      |> Enum.filter(&(String.trim(&1) != ""))
+    else
+      # this means there are no options for the filter
+      []
+    end
   end
 
   def filters do
@@ -22,6 +27,8 @@ defmodule FF.Filter.Help do
     |> String.split("\n", trim: true)
     |> Enum.drop_while(fn line -> !String.contains?(line, "->") end)
     |> Enum.map(&FF.Parsers.FilterList.parse/1)
+    |> Enum.sort()
+    # |> Enum.take(20)
     |> Map.new(fn [flags, name, {inputs, outputs}, desc] ->
       {
         String.to_atom(name),

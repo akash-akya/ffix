@@ -109,6 +109,26 @@ defmodule FF.Filter.BuilderTest do
              } ==
                Builder.filter_spec("spectrumsynth")
     end
+
+    test "validate all" do
+      filters = FF.Filter.Help.filters()
+
+      for {name, _} <- filters do
+        assert Builder.filter_spec(name)
+      end
+    end
+
+    test "drawtext" do
+      result =
+        Builder.filter_spec("drawtext")
+
+      result
+      |> dbg()
+    end
+
+    test "param with space" do
+      assert _result = Builder.filter_spec("afireqsrc")
+    end
   end
 
   describe "operation/4" do

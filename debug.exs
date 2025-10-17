@@ -24,18 +24,18 @@ defmodule FFDebug do
     )
     |> Filter.drawtext(
       text: "Booom",
-      # y_align: "baseline",
+      y_align: "baseline",
       x: "500",
       y: "100",
       fontsize: "100"
     )
   end
 
-  build_ffm(
-    [file1, file2],
-    fn [file1, file2] -> graph(file1[:video][0], file2[:video][1]) end,
-    fn inputs, filtered -> encode(inputs, filtered) end
-  )
+  # build_ffm(
+  #   [file1, file2],
+  #   fn [file1, file2] -> graph(file1[:video][0], file2[:video][1]) end,
+  #   fn inputs, filtered -> encode(inputs, filtered) end
+  # )
 
   # build_command(
   #   inputs: [file1, file2],
@@ -52,8 +52,8 @@ defmodule FFDebug do
 end
 
 FFDebug.stream(
-  "/home/akash/Shared/repos/ff/test/support/bbb_sunflower_1080p_30fps_normal.mp4",
-  "/home/akash/Shared/repos/ff/test/support/smiley.png"
+  "test/support/bbb_sunflower_sample.mp4",
+  "test/support/smiley.png"
   # "/home/akash/Shared/repos/ff/test/support/smiley.png"
 )
 |> Stream.into(File.stream!("out.mp4"))

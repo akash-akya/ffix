@@ -65,7 +65,95 @@ defmodule FF.Filter.Builder do
     |> Enum.map(&Parsers.FilterSpec.parse/1)
     |> collect(%{all: [], current: nil})
     |> Enum.filter(& &1)
+    |> Enum.map(&normalize_flags/1)
     |> Map.new(&{String.to_atom(&1.name), &1})
+  end
+
+  @spec build_options_doc(map) :: String.t()
+  def build_options_doc(options) do
+    options
+    |> Enum.map(fn {name, config} ->
+      build_option_doc(name, config)
+    end)
+    |> Enum.join("\n")
+  end
+
+  defp build_option_doc(name, config) do
+    case config[:sub] do
+      nil ->
+        "  * #{name} - #{config.desc}"
+
+      flags ->
+        flags =
+          flags
+          |> Enum.map(fn flag ->
+            num = if flag.num != "", do: " (#{flag.num}) ", else: ""
+            desc = if flag.desc != "", do: " - #{flag.desc}", else: ""
+
+            "    - #{flag.enum} #{num}#{desc} "
+          end)
+          |> Enum.join("\n")
+
+        """
+          * #{name} - #{config.desc}
+        #{flags}
+        """
+    end
+  end
+
+  @spec build_options_typespec(map) :: term
+  def build_options_typespec(options) do
+    quote do
+      [unquote_splicing(for option <- options, do: option_typespec(option))]
+    end
+  end
+
+  defp option_typespec({name, config}) do
+    type =
+      case config.type do
+        {:array, type} ->
+          quote(do: [unquote(core_type(type, config[:sub]))])
+
+        type ->
+          core_type(type, config[:sub])
+      end
+
+    quote do
+      {unquote(name), unquote(type)}
+    end
+  end
+
+  defp core_type(type, nil) do
+    case type do
+      :int -> quote(do: integer)
+      :int64 -> quote(do: integer)
+      :binary -> quote(do: binary)
+      :boolean -> quote(do: boolean)
+      :string -> quote(do: String.t())
+      :float -> quote(do: float)
+      :double -> quote(do: float)
+      term -> term
+    end
+  end
+
+  defp core_type(type, sub) do
+    case type do
+      :int ->
+        enum_typespec(sub)
+
+      :flags ->
+        dbg(sub)
+        # TODO: `flags` are sometimes supports multiple options and
+        # sometimes does not
+        quote(do: [unquote(enum_typespec(sub))])
+    end
+  end
+
+  defp enum_typespec(sub) do
+    sub
+    |> Enum.map(& &1.enum)
+    |> Enum.map(&String.to_atom/1)
+    |> Enum.reduce(&{:|, [], [&1, &2]})
   end
 
   @option_depth 3
@@ -73,6 +161,14 @@ defmodule FF.Filter.Builder do
 
   defp collect([], acc) do
     acc.all ++ [acc.current]
+  end
+
+  defp collect([[{:depth, 2} | rest] | specs], acc) do
+    [name, {:type, type}, flags, desc] = rest
+    spec = %{name: name, type: type, flags: flags, desc: desc}
+    %{current: current, all: all} = acc
+
+    collect(specs, %{current: spec, all: all ++ [current]})
   end
 
   defp collect([[{:depth, @option_depth} | rest] | specs], acc) do
@@ -131,5 +227,19 @@ defmodule FF.Filter.Builder do
     else
       {:error, "#{value} for #{option} must be #{type}"}
     end
+  end
+
+  defp normalize_flags(arg) do
+    arg
+    # case arg[:sub] do
+    #   nil ->
+    #     arg
+
+    #   sub ->
+    #     flags =
+    #       Enum.map(sub, fn sub ->
+    #         sub
+    #       end)
+    # end
   end
 end
