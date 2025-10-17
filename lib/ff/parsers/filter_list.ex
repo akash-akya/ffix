@@ -30,7 +30,7 @@ defmodule FF.Parsers.FilterList do
   support =
     choice([string("T"), null])
     |> choice([string("S"), null])
-    |> choice([string("C"), null])
+    |> optional(choice([string("C"), null]))
     |> map({String, :to_atom, []})
     |> wrap()
 
