@@ -4,7 +4,7 @@ defmodule FF do
 
   # ffmpeg -v warning -y -i pipe:0 -t 5 -filter_complex "drawtext=text='HELLO THERE':y=500:x=400:fontsize=200:fontfile=/usr/share/fonts/truetype/freefont/FreeSerif.ttf" -f mp4 -movflags empty_moov -
 
-  def run(filtergraph, inputs) do
+  def stream(filtergraph, inputs) do
     {:ok, {graph, [output_pad]}} = FilterGraph.to_filtergraph(filtergraph)
 
     [
