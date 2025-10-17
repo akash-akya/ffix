@@ -43,7 +43,7 @@ defmodule FF.Parsers.FilterSpec do
       number
     ])
 
-  param_name = utf8_string([?a..?z, ?A..?Z, ?0..?9, ?_], min: 1)
+  param_name = utf8_string([?a..?z, ?A..?Z, ?0..?9, ?_, ?-], min: 1)
 
   desc = utf8_string(@alpha_num ++ [?\s, ?\., ?(, ?), ?", ?', ?/, ?+, ?-, ?;], min: 0)
 
