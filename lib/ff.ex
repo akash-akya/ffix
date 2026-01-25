@@ -1,20 +1,37 @@
 defmodule FF do
-  alias FF.FilterGraph
-  alias FF.Runner
+  alias FF.Expr
+  alias FF.Filter.Builder
+  alias FF.Graph
+  alias FF.Stream
+  alias FF.Terminal
 
-  # ffmpeg -v warning -y -i pipe:0 -t 5 -filter_complex "drawtext=text='HELLO THERE':y=500:x=400:fontsize=200:fontfile=/usr/share/fonts/truetype/freefont/FreeSerif.ttf" -f mp4 -movflags empty_moov -
+  @type input_selector :: FF.Graph.InputRef.selector()
 
-  def stream(filtergraph, inputs) do
-    {:ok, {graph, [output_pad]}} = FilterGraph.to_filtergraph(filtergraph)
+  @spec input(non_neg_integer(), input_selector()) :: Stream.t()
+  def input(index, selector), do: Builder.input(index, selector)
 
-    [
-      ~W(ffmpeg -v warning -y -t 5),
-      Enum.map(inputs, &["-i", &1]),
-      ["-filter_complex", graph],
-      ["-map", output_pad],
-      ~W(-f mp4 -movflags empty_moov -)
-    ]
-    |> List.flatten()
-    |> Runner.run()
+  @spec input_raw(String.t()) :: Stream.t()
+  def input_raw(spec), do: Builder.input_raw(spec)
+
+  @spec expr(String.t()) :: Expr.t()
+  def expr(source) when is_binary(source), do: %Expr{source: source}
+
+  @spec filter(atom() | String.t(), [Stream.t()], keyword()) ::
+          Stream.t() | Terminal.t() | [Stream.t()] | tuple()
+  def filter(name, inputs, options \\ []) when is_list(inputs) do
+    Builder.filter(name, inputs, options)
   end
+
+  @spec graph(keyword()) :: Graph.t()
+  def graph(options), do: Builder.graph(options)
+
+  @spec to_filtergraph(Graph.t()) :: String.t()
+  def to_filtergraph(%Graph{} = graph) do
+    graph
+    |> Builder.validate_graph!()
+    |> FF.Graph.Render.to_filtergraph()
+  end
+
+  @spec validate!(Graph.t()) :: Graph.t()
+  def validate!(%Graph{} = graph), do: Builder.validate_graph!(graph)
 end

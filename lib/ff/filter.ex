@@ -1,9 +1,8 @@
 defmodule FF.Filter do
   alias FF.Filter.Builder
-  alias FF.Filter.Builder.Pad
   alias FF.Filter.Help
 
-  Enum.map(Help.filters(), fn {name, %{inputs: inputs, outputs: outputs, desc: desc}} ->
+  Enum.each(Help.filters(), fn {name, %{inputs: inputs, outputs: outputs, desc: desc}} ->
     inputs = Enum.reject(inputs, &(&1 == :|))
     outputs = Enum.reject(outputs, &(&1 == :|))
 
@@ -22,35 +21,30 @@ defmodule FF.Filter do
 
     input_specs =
       Enum.map(inputs, fn
-        :N -> quote(do: [Pad.t()])
-        _input -> quote(do: Pad.t())
+        :N -> quote(do: [FF.Stream.t()])
+        _ -> quote(do: FF.Stream.t())
       end)
 
     output_specs =
       case outputs do
         [] ->
-          quote(do: nil)
+          quote(do: FF.Terminal.t())
 
         [:N] ->
-          quote(do: [Pad.t()])
+          quote(do: [FF.Stream.t()])
 
-        [term] when term in [:A, :V] ->
-          quote(do: Pad.t())
+        [_single] ->
+          quote(do: FF.Stream.t())
 
-        _ ->
+        many ->
           quote do
-            # if there are more than one output, return tuple
-            {unquote_splicing(
-               Enum.map(outputs, fn _out ->
-                 quote(do: Pad.t())
-               end)
-             )}
+            {unquote_splicing(Enum.map(many, fn _ -> quote(do: FF.Stream.t()) end))}
           end
       end
 
-    options = Builder.filter_spec(name)
-    options_doc = Builder.build_options_doc(options)
-    options_typespec = Builder.build_options_typespec(options)
+    option_specs = Builder.filter_spec(name)
+    options_doc = Builder.build_options_doc(option_specs)
+    options_typespec = Builder.build_options_typespec(option_specs)
 
     @doc """
     #{desc}
@@ -58,12 +52,16 @@ defmodule FF.Filter do
     ## Options
 
     #{options_doc}
-
     """
-    @spec unquote(name)(unquote_splicing(input_specs), unquote(options_typespec)) ::
-            unquote(output_specs)
+    @spec unquote(name)(unquote_splicing(input_specs), unquote(options_typespec)) :: unquote(output_specs)
     def unquote(name)(unquote_splicing(input_args), options \\ []) do
-      Builder.operation(unquote(name), unquote(input_args), unquote(outputs), options)
+      Builder.apply_filter(
+        unquote(name),
+        [unquote_splicing(input_args)],
+        unquote(outputs),
+        options,
+        unquote(Macro.escape(option_specs))
+      )
     end
   end)
 end
