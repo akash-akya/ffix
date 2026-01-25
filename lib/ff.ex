@@ -1,4 +1,5 @@
 defmodule FF do
+  alias FF.Command
   alias FF.Expr
   alias FF.Filter.Builder
   alias FF.Graph
@@ -25,6 +26,9 @@ defmodule FF do
   @spec graph(keyword()) :: Graph.t()
   def graph(options), do: Builder.graph(options)
 
+  @spec command() :: Command.t()
+  def command, do: Command.new()
+
   @spec to_filtergraph(Graph.t()) :: String.t()
   def to_filtergraph(%Graph{} = graph) do
     graph
@@ -32,6 +36,13 @@ defmodule FF do
     |> FF.Graph.Render.to_filtergraph()
   end
 
-  @spec validate!(Graph.t()) :: Graph.t()
+  @spec to_argv(Command.t()) :: [String.t()]
+  def to_argv(%Command{} = command), do: Command.to_argv(command)
+
+  @spec to_shell_string(Command.t()) :: String.t()
+  def to_shell_string(%Command{} = command), do: Command.to_shell_string(command)
+
+  @spec validate!(Graph.t() | Command.t()) :: Graph.t() | Command.t()
   def validate!(%Graph{} = graph), do: Builder.validate_graph!(graph)
+  def validate!(%Command{} = command), do: Command.validate!(command)
 end

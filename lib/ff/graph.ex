@@ -31,6 +31,23 @@ defmodule FF.Graph do
   @spec exports(t()) :: [Export.t()]
   def exports(%__MODULE__{exports: exports}), do: exports
 
+  @spec export(t(), atom() | non_neg_integer()) :: Export.t() | nil
+  def export(%__MODULE__{exports: exports}, name) when is_atom(name) do
+    Enum.find(exports, &(&1.name == name))
+  end
+
+  def export(%__MODULE__{exports: exports}, index) when is_integer(index) and index >= 0 do
+    Enum.at(exports, index)
+  end
+
+  @spec export!(t(), atom() | non_neg_integer()) :: Export.t()
+  def export!(%__MODULE__{} = graph, key) do
+    case export(graph, key) do
+      nil -> raise ArgumentError, "unknown graph export: #{inspect(key)}"
+      export -> export
+    end
+  end
+
   @spec nodes(t()) :: [Node.t()]
   def nodes(%__MODULE__{nodes: nodes, order: order}) do
     Enum.map(order, &Map.fetch!(nodes, &1))
