@@ -1,11 +1,13 @@
 defmodule FF.Graph.Parse do
   @moduledoc false
 
+  alias FF.Filter.Metadata
   alias FF.Graph
   alias FF.Graph.Export
   alias FF.Graph.InputRef
   alias FF.Graph.Node
   alias FF.Graph.Ref
+  alias FF.Parsers.FilterGraph
 
   @type state :: %{
           nodes: %{Graph.node_id() => Node.t()},
@@ -14,24 +16,14 @@ defmodule FF.Graph.Parse do
           input_nodes: %{InputRef.t() => Graph.node_id()},
           labels: %{String.t() => Ref.t()},
           used_labels: MapSet.t(String.t()),
-          outputs: [%{label: String.t(), ref: Ref.t(), generated?: boolean()}],
-          settings: [{String.t(), term()}],
-          node_label_counts: %{atom() => non_neg_integer()}
+          export_candidates: [%{label: String.t() | nil, ref: Ref.t()}],
+          settings: [{String.t(), term()}]
         }
 
   @spec parse!(String.t()) :: Graph.t()
   def parse!(source) when is_binary(source) do
-    statements =
-      source
-      |> split_unescaped(?;)
-      |> Enum.map(&String.trim/1)
-      |> Enum.reject(&(&1 == ""))
-
-    if statements == [] do
-      raise ArgumentError, "empty filtergraph"
-    end
-
-    statements
+    source
+    |> FilterGraph.parse()
     |> Enum.reduce(new_state(), &apply_statement/2)
     |> to_graph()
     |> FF.validate!()
@@ -45,52 +37,64 @@ defmodule FF.Graph.Parse do
       input_nodes: %{},
       labels: %{},
       used_labels: MapSet.new(),
-      outputs: [],
-      settings: [],
-      node_label_counts: %{}
+      export_candidates: [],
+      settings: []
     }
   end
 
-  defp apply_statement(statement, state) do
-    if String.contains?(statement, "[") do
-      add_filter(statement, state)
-    else
-      add_setting(statement, state)
-    end
+  defp apply_statement({:setting, key, value}, state) do
+    %{state | settings: state.settings ++ [{key, parse_setting_value(value)}]}
   end
 
-  defp add_setting(statement, state) do
-    case split_once_unescaped(statement, ?=) do
-      {key, value} ->
-        %{state | settings: state.settings ++ [{key, parse_setting_value(value)}]}
-
-      nil ->
-        raise ArgumentError, "invalid graph setting: #{inspect(statement)}"
-    end
+  defp apply_statement({:chain, filters}, state) do
+    {state, pending_outputs} = Enum.reduce(filters, {state, []}, &add_filter/2)
+    export_pending_outputs(state, pending_outputs)
   end
 
-  defp add_filter(statement, state) do
-    {input_labels, rest} = take_labels(statement)
-    {name, instance, rest} = take_filter_name(rest)
-    {args, output_labels} = take_args_and_outputs(rest)
-    {input_refs, state} = Enum.map_reduce(input_labels, state, &resolve_input/2)
+  defp add_filter(%{inputs: input_labels} = filter, {state, pending_outputs}) do
+    name = String.to_atom(filter.name)
+    args = parse_args(filter.args)
+    {expected_inputs, expected_outputs} = filter_signature(name, args)
 
-    node_name = String.to_atom(name)
+    if length(input_labels) > expected_inputs do
+      raise ArgumentError, "too many input labels for #{filter.name}"
+    end
+
+    if length(filter.outputs) > expected_outputs do
+      raise ArgumentError, "too many output labels for #{filter.name}"
+    end
+
+    {explicit_inputs, state} = Enum.map_reduce(input_labels, state, &resolve_input/2)
+    implicit_input_count = expected_inputs - length(explicit_inputs)
+    {implicit_inputs, leftover_pending} = Enum.split(pending_outputs, implicit_input_count)
+
+    if length(implicit_inputs) != implicit_input_count do
+      raise ArgumentError, "missing input labels for #{filter.name}"
+    end
+
+    if leftover_pending != [] do
+      raise ArgumentError, "unlabelled outputs must connect to the next filter or be labelled"
+    end
+
     node_id = state.next_id
-    output_count = length(output_labels)
+    refs = if expected_outputs == 0, do: [], else: Enum.map(0..(expected_outputs - 1), &%Ref{node_id: node_id, output: &1})
+
+    preferred_labels =
+      filter.outputs
+      |> Enum.with_index()
+      |> Map.new(fn {label, output} -> {output, label} end)
 
     node = %Node{
       id: node_id,
       kind: :filter,
-      name: node_name,
-      instance: instance,
-      inputs: input_refs,
+      name: name,
+      instance: filter.instance,
+      inputs: explicit_inputs ++ implicit_inputs,
       args: args,
-      outputs: output_count,
-      media: infer_media(input_refs, state.nodes)
+      outputs: expected_outputs,
+      media: infer_media(name, explicit_inputs ++ implicit_inputs, state.nodes),
+      metadata: preferred_label_metadata(preferred_labels)
     }
-
-    {node_label, state} = next_node_label(state, node_name)
 
     state = %{
       state
@@ -99,17 +103,24 @@ defmodule FF.Graph.Parse do
         next_id: node_id + 1
     }
 
-    Enum.with_index(output_labels)
-    |> Enum.reduce(state, fn {label, output}, state ->
-      ref = %Ref{node_id: node_id, output: output}
-      generated? = label == generated_output_label(node_label, output_count, output)
+    {labeled_refs, pending_refs} = Enum.split(refs, length(filter.outputs))
 
-      %{
-        state
-        | labels: Map.put(state.labels, label, ref),
-          outputs: state.outputs ++ [%{label: label, ref: ref, generated?: generated?}]
-      }
-    end)
+    state =
+      Enum.zip(filter.outputs, labeled_refs)
+      |> Enum.reduce(state, fn {label, ref}, state ->
+        %{
+          state
+          | labels: Map.put(state.labels, label, ref),
+            export_candidates: state.export_candidates ++ [%{label: label, ref: ref}]
+        }
+      end)
+
+    {state, pending_refs}
+  end
+
+  defp export_pending_outputs(state, refs) do
+    candidates = Enum.map(refs, &%{label: nil, ref: &1})
+    %{state | export_candidates: state.export_candidates ++ candidates}
   end
 
   defp to_graph(state) do
@@ -120,11 +131,16 @@ defmodule FF.Graph.Parse do
       |> Enum.map(& &1.id)
 
     exports =
-      state.outputs
-      |> Enum.reject(&MapSet.member?(state.used_labels, &1.label))
-      |> Enum.reject(& &1.generated?)
-      |> Enum.map(fn %{label: label, ref: ref} ->
-        %Export{name: export_name(label), ref: ref}
+      Enum.flat_map(state.export_candidates, fn
+        %{label: nil, ref: ref} ->
+          [%Export{name: nil, ref: ref}]
+
+        %{label: label, ref: ref} ->
+          if MapSet.member?(state.used_labels, label) do
+            []
+          else
+            [%Export{name: export_name(label), ref: ref}]
+          end
       end)
 
     %Graph{
@@ -139,6 +155,7 @@ defmodule FF.Graph.Parse do
   defp resolve_input(label, state) do
     case parse_input_ref(label) do
       %InputRef{} = input_ref -> ensure_input_node(state, input_ref)
+
       nil ->
         case state.labels[label] do
           nil -> raise ArgumentError, "unknown input label #{inspect(label)}"
@@ -178,70 +195,58 @@ defmodule FF.Graph.Parse do
     end
   end
 
-  defp take_filter_name(""), do: raise(ArgumentError, "missing filter name")
+  defp filter_signature(name, args) do
+    filter = Metadata.filter!(name)
+    spec = Metadata.filter_spec(name)
 
-  defp take_filter_name(source) do
-    end_index =
-      source
-      |> String.to_charlist()
-      |> Enum.find_index(&(&1 in ~c"=["))
-      |> Kernel.||(String.length(source))
+    {io_count(filter.inputs, args, spec[:inputs], :inputs), io_count(filter.outputs, args, spec[:outputs], :outputs)}
+  end
 
-    name = binary_part(source, 0, end_index)
-    rest = binary_part(source, end_index, byte_size(source) - end_index)
+  defp io_count(io, args, option_spec, key) do
+    io = Enum.reject(io, &(&1 == :|))
 
-    case String.split(name, "@", parts: 2) do
-      [filter_name] -> {filter_name, nil, rest}
-      [filter_name, instance] -> {filter_name, instance, rest}
+    case io do
+      [] -> 0
+      [:N] -> option_integer(args, Atom.to_string(key)) || option_default(option_spec) || 1
+      many -> length(many)
     end
   end
 
-  defp take_args_and_outputs(""), do: {[], []}
+  defp option_integer(args, key) do
+    args
+    |> Enum.find_value(fn
+      {^key, value} -> to_integer(value)
+      {_other, _value} -> nil
+    end)
+  end
 
-  defp take_args_and_outputs(<<"[", _::binary>> = source) do
-    {parse_labels(source), []}
-    |> case do
-      {labels, []} -> {[], labels}
+  defp option_default(nil), do: nil
+
+  defp option_default(%{desc: desc}) do
+    case String.split(desc, "(default ", parts: 2) do
+      [_, rest] ->
+        case String.split(rest, ")", parts: 2) do
+          [value, _] -> value |> String.trim(~s(")) |> to_integer()
+          _ -> nil
+        end
+
+      _ ->
+        nil
     end
   end
 
-  defp take_args_and_outputs(<<"=", rest::binary>>) do
-    case find_unescaped(rest, ?[) do
-      nil -> {parse_args(rest), []}
-      index ->
-        args = binary_part(rest, 0, index)
-        outputs = binary_part(rest, index, byte_size(rest) - index)
-        {parse_args(args), parse_labels(outputs)}
+  defp to_integer(value) when is_integer(value), do: value
+
+  defp to_integer(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {integer, ""} -> integer
+      _ -> nil
     end
   end
 
-  defp take_args_and_outputs(source) do
-    raise ArgumentError, "invalid filter tail: #{inspect(source)}"
-  end
+  defp to_integer(_value), do: nil
 
-  defp take_labels(source), do: take_labels(source, [])
-
-  defp take_labels(<<"[", rest::binary>>, labels) do
-    case :binary.match(rest, "]") do
-      {index, 1} ->
-        label = binary_part(rest, 0, index)
-        next = binary_part(rest, index + 1, byte_size(rest) - index - 1)
-        take_labels(next, labels ++ [label])
-
-      :nomatch ->
-        raise ArgumentError, "unterminated label"
-    end
-  end
-
-  defp take_labels(source, labels), do: {labels, source}
-
-  defp parse_labels(source) do
-    case take_labels(source) do
-      {labels, ""} -> labels
-      {_labels, rest} -> raise ArgumentError, "invalid output labels: #{inspect(rest)}"
-    end
-  end
-
+  defp parse_args(nil), do: []
   defp parse_args(""), do: []
 
   defp parse_args(source) do
@@ -252,7 +257,7 @@ defmodule FF.Graph.Parse do
 
   defp parse_arg(token) do
     case split_once_unescaped(token, ?=) do
-      {key, value} -> {key, parse_value(value)}
+      {key, value} -> {String.trim(key), parse_value(value)}
       nil -> {:pos, parse_value(token)}
     end
   end
@@ -271,55 +276,57 @@ defmodule FF.Graph.Parse do
     end
   end
 
-  defp parse_scalar(""), do: nil
-  defp parse_scalar(source), do: unescape(source)
+  defp parse_scalar(source) do
+    source = String.trim(source)
+
+    if String.starts_with?(source, "'") and String.ends_with?(source, "'") and byte_size(source) >= 2 do
+      source
+      |> binary_part(1, byte_size(source) - 2)
+      |> unescape()
+    else
+      unescape(source)
+    end
+  end
 
   defp parse_input_ref(label) do
-    case Regex.run(~r/^(\d+):v:(\d+)$/, label) do
-      [_, input, stream] ->
-        %InputRef{input: String.to_integer(input), selector: {:video, String.to_integer(stream)}}
-
-      nil ->
-        case Regex.run(~r/^(\d+):a:(\d+)$/, label) do
-          [_, input, stream] ->
-            %InputRef{input: String.to_integer(input), selector: {:audio, String.to_integer(stream)}}
-
-          nil ->
-            case Regex.run(~r/^(\d+):v$/, label) do
-              [_, input] -> %InputRef{input: String.to_integer(input), selector: :video}
-              nil ->
-                case Regex.run(~r/^(\d+):a$/, label) do
-                  [_, input] -> %InputRef{input: String.to_integer(input), selector: :audio}
-                  nil -> parse_raw_input_ref(label)
-                end
-            end
-        end
+    case String.split(label, ":") do
+      [input, "v"] -> build_input_ref(input, :video)
+      [input, "a"] -> build_input_ref(input, :audio)
+      [input, "v", stream] -> build_stream_input_ref(input, stream, :video)
+      [input, "a", stream] -> build_stream_input_ref(input, stream, :audio)
+      [input | selector] -> build_raw_input_ref(input, Enum.join(selector, ":"))
+      _ -> nil
     end
   end
 
-  defp parse_raw_input_ref(label) do
-    case Regex.run(~r/^(\d+):(.+)$/, label) do
-      [_, input, selector] -> %InputRef{input: String.to_integer(input), selector: {:raw, selector}}
-      nil -> nil
+  defp build_input_ref(input, selector) do
+    with {input, ""} <- Integer.parse(input) do
+      %InputRef{input: input, selector: selector}
+    else
+      _ -> nil
     end
   end
 
-  defp next_node_label(state, name) do
-    count = Map.get(state.node_label_counts, name, 0)
-    label = if count == 0, do: Atom.to_string(name), else: "#{name}_#{count}"
-
-    {label, %{state | node_label_counts: Map.put(state.node_label_counts, name, count + 1)}}
+  defp build_stream_input_ref(input, stream, selector) do
+    with {input, ""} <- Integer.parse(input),
+         {stream, ""} <- Integer.parse(stream) do
+      %InputRef{input: input, selector: {selector, stream}}
+    else
+      _ -> nil
+    end
   end
 
-  # Exports are inferred from labels that remain unused and differ from FF's
-  # generated intermediate label scheme. This keeps parsing aligned with the
-  # renderer without pretending to cover arbitrary ffmpeg graphs yet.
-  defp generated_output_label(node_label, outputs, output) when outputs > 1 do
-    "#{node_label}_#{output}"
+  defp build_raw_input_ref(input, selector) do
+    with {input, ""} <- Integer.parse(input),
+         false <- selector == "" do
+      %InputRef{input: input, selector: {:raw, selector}}
+    else
+      _ -> nil
+    end
   end
 
-  defp generated_output_label(node_label, 1, 0), do: node_label
-  defp generated_output_label(_node_label, _outputs, _output), do: nil
+  defp preferred_label_metadata(%{} = preferred_labels) when map_size(preferred_labels) == 0, do: %{}
+  defp preferred_label_metadata(preferred_labels), do: %{preferred_labels: preferred_labels}
 
   defp export_name(label) do
     if String.match?(label, ~r/^out\d+$/) do
@@ -329,11 +336,22 @@ defmodule FF.Graph.Parse do
     end
   end
 
-  defp infer_media([], _nodes), do: :unknown
-
-  defp infer_media(refs, nodes) do
+  defp infer_media(name, refs, nodes) do
     case refs |> Enum.map(&Map.fetch!(nodes, &1.node_id).media) |> Enum.uniq() do
       [media] -> media
+      _ -> filter_output_media(name)
+    end
+  end
+
+  defp filter_output_media(name) do
+    name
+    |> Metadata.filter!()
+    |> Map.fetch!(:outputs)
+    |> Enum.reject(&(&1 == :|))
+    |> Enum.uniq()
+    |> case do
+      [:V] -> :video
+      [:A] -> :audio
       _ -> :unknown
     end
   end
@@ -361,22 +379,29 @@ defmodule FF.Graph.Parse do
     end
   end
 
-  defp find_unescaped(source, separator), do: find_unescaped(source, separator, 0, false)
+  defp find_unescaped(source, separator), do: find_unescaped(source, separator, 0, false, false)
+  defp find_unescaped(<<>>, _separator, _index, _escaped, _quoted), do: nil
 
-  defp find_unescaped(<<>>, _separator, _index, _escaped), do: nil
-
-  defp find_unescaped(<<?\\, rest::binary>>, separator, index, false) do
-    find_unescaped(rest, separator, index + 1, true)
+  defp find_unescaped(<<?\\, rest::binary>>, separator, index, false, quoted) do
+    find_unescaped(rest, separator, index + 1, true, quoted)
   end
 
-  defp find_unescaped(<<_char, rest::binary>>, separator, index, true) do
-    find_unescaped(rest, separator, index + 1, false)
+  defp find_unescaped(<<_char, rest::binary>>, separator, index, true, quoted) do
+    find_unescaped(rest, separator, index + 1, false, quoted)
   end
 
-  defp find_unescaped(<<separator, _rest::binary>>, separator, index, false), do: index
+  defp find_unescaped(<<?', rest::binary>>, separator, index, false, false) do
+    find_unescaped(rest, separator, index + 1, false, true)
+  end
 
-  defp find_unescaped(<<_char, rest::binary>>, separator, index, false) do
-    find_unescaped(rest, separator, index + 1, false)
+  defp find_unescaped(<<?', rest::binary>>, separator, index, false, true) do
+    find_unescaped(rest, separator, index + 1, false, false)
+  end
+
+  defp find_unescaped(<<separator, _rest::binary>>, separator, index, false, false), do: index
+
+  defp find_unescaped(<<_char, rest::binary>>, separator, index, false, quoted) do
+    find_unescaped(rest, separator, index + 1, false, quoted)
   end
 
   defp unescape(source), do: unescape(source, [])

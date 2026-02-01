@@ -161,6 +161,7 @@ defmodule FF.Graph.Render do
 
       if node.kind == :filter do
         required_outputs = required_outputs(node, used_outputs)
+        preferred_labels = preferred_output_labels(node)
 
         Enum.reduce(required_outputs, {labels, used_labels}, fn output, {labels, used_labels} ->
           key = {node_id, output}
@@ -168,7 +169,8 @@ defmodule FF.Graph.Render do
           if Map.has_key?(labels, key) do
             {labels, used_labels}
           else
-            base_label = "#{Map.fetch!(node_labels, node_id)}_#{output}"
+            preferred_label = Map.get(preferred_labels, output)
+            base_label = preferred_label || "#{Map.fetch!(node_labels, node_id)}_#{output}"
             label = unique_label(base_label, used_labels)
             {Map.put(labels, key, label), MapSet.put(used_labels, label)}
           end
@@ -179,6 +181,9 @@ defmodule FF.Graph.Render do
     end)
     |> elem(0)
   end
+
+  defp preferred_output_labels(%Node{metadata: %{preferred_labels: labels}}), do: labels
+  defp preferred_output_labels(%Node{}), do: %{}
 
   defp export_labels(exports) do
     Enum.with_index(exports)

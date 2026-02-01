@@ -3,92 +3,143 @@ defmodule FF.Parsers.FilterGraph do
 
   import NimbleParsec
 
-  @alphanum [?a..?z, ?A..?Z, ?_, ?0..?9]
+  @name_chars [?a..?z, ?A..?Z, ?0..?9, ?_]
+  @ws_chars [?\n, ?\r, ?\t, ?\s]
 
-  name =
-    ascii_string(@alphanum, min: 1)
-    |> reduce({Enum, :join, [""]})
+  whitespace = ascii_string(@ws_chars, min: 1)
+  maybe_whitespace = ignore(optional(whitespace))
+
+  label =
+    ignore(string("["))
+    |> concat(utf8_string([{:not, ?]}], min: 1))
+    |> ignore(string("]"))
+
+  labels =
+    times(
+      maybe_whitespace
+      |> concat(label)
+      |> concat(maybe_whitespace),
+      min: 1
+    )
+
+  name = ascii_string(@name_chars, min: 1)
 
   filter_name =
     name
-    |> optional(string("@") |> concat(name))
-
-  link_label =
-    ignore(string("["))
-    |> concat(name)
-    |> ignore(string("]"))
-
-  link_labels =
-    link_label
-    |> optional(repeat(link_label))
+    |> optional(ignore(string("@")) |> concat(name))
     |> wrap()
+    |> tag(:filter_name)
 
-  quoted_string =
-    ignore(string("'"))
-    |> utf8_string([{:not, ?'}], min: 0)
-    |> ignore(string("'"))
+  escaped_piece =
+    string("\\")
+    |> concat(utf8_string([], 1))
     |> reduce({Enum, :join, [""]})
 
-  @allowed_arg_chars @alphanum ++ [?-, ?+, ?., ?/, ?\s, ?\t]
+  quoted_piece =
+    string("'")
+    |> repeat(
+      choice([
+        escaped_piece,
+        utf8_string([{:not, ?'}], min: 1)
+      ])
+    )
+    |> string("'")
+    |> reduce({Enum, :join, [""]})
 
-  string =
-    choice([
-      ascii_string(@allowed_arg_chars, min: 1),
-      quoted_string
-    ])
+  arg_char =
+    lookahead_not(choice([string("["), string(","), string(";")]))
+    |> utf8_string([], 1)
 
-  list =
-    string
-    |> times(ignore(string("|")) |> concat(string), min: 1)
-    |> wrap()
-
-  filter_value =
-    choice([
-      list,
-      string
-    ])
-
-  filter_key = string
-
-  filter_pair =
-    filter_key
-    |> ignore(string("="))
-    |> concat(filter_value)
-    |> reduce({List, :to_tuple, []})
-
-  filter_arg =
-    choice([
-      filter_pair,
-      filter_value
-    ])
+  raw_args =
+    repeat(choice([quoted_piece, escaped_piece, arg_char]))
+    |> reduce({Enum, :join, [""]})
 
   args =
     ignore(string("="))
-    |> repeat(filter_arg |> ignore(string(":")))
-    |> concat(filter_arg)
+    |> concat(maybe_whitespace)
+    |> concat(raw_args)
     |> wrap()
+    |> tag(:args)
 
-  # FILTER           ::= [LINKLABELS] FILTER_NAME ["=" FILTER_ARGUMENTS] [LINKLABELS]
+  inputs = labels |> tag(:inputs)
+  outputs = labels |> tag(:outputs)
+
   filter =
-    optional(link_labels)
+    maybe_whitespace
+    |> concat(optional(inputs))
+    |> concat(maybe_whitespace)
     |> concat(filter_name)
-    |> optional(args)
-    |> optional(link_labels)
+    |> concat(maybe_whitespace)
+    |> concat(optional(args))
+    |> concat(maybe_whitespace)
+    |> concat(optional(outputs))
+    |> concat(maybe_whitespace)
+    |> reduce({__MODULE__, :build_filter, []})
 
-  # FILTERCHAIN      ::= FILTER [,FILTERCHAIN]
-  filter_chain =
+  chain_separator = maybe_whitespace |> ignore(string(",")) |> concat(maybe_whitespace)
+  graph_separator = maybe_whitespace |> ignore(string(";")) |> concat(maybe_whitespace)
+
+  chain =
     filter
-    |> repeat(ignore(string(",")) |> concat(filter))
+    |> repeat(chain_separator |> concat(filter))
+    |> reduce({__MODULE__, :build_chain, []})
 
-  # FILTERGRAPH      ::= [sws_flags=flags;] FILTERCHAIN [;FILTERGRAPH]
-  filter_graph =
-    filter_chain
-    |> repeat(ignore(string(";")) |> concat(filter_chain))
+  setting_value_char =
+    lookahead_not(string(";"))
+    |> utf8_string([], 1)
 
-  defparsec(:filter_graph, filter_graph)
+  setting_value =
+    repeat(choice([quoted_piece, escaped_piece, setting_value_char]))
+    |> reduce({Enum, :join, [""]})
 
-  def parse(line) do
-    {:ok, parsed, "", %{}, _, _} = filter_graph(line)
-    parsed
+  setting =
+    maybe_whitespace
+    |> ignore(string("sws_flags"))
+    |> concat(maybe_whitespace)
+    |> ignore(string("="))
+    |> concat(maybe_whitespace)
+    |> concat(setting_value)
+    |> concat(maybe_whitespace)
+    |> reduce({__MODULE__, :build_setting, []})
+
+  statement = choice([setting, chain])
+
+  graph =
+    statement
+    |> repeat(graph_separator |> concat(statement))
+    |> ignore(optional(graph_separator))
+
+  defparsec(:filter_graph, graph)
+
+  @spec parse(String.t()) :: [tuple()]
+  def parse(source) when is_binary(source) do
+    case filter_graph(source) do
+      {:ok, parsed, "", %{}, _, _} -> parsed
+      {:ok, _parsed, rest, %{}, _, _} -> raise ArgumentError, "unexpected trailing input: #{inspect(rest)}"
+      {:error, message, rest, %{}, _, _} -> raise ArgumentError, "#{message} at #{inspect(rest)}"
+    end
   end
+
+  def build_filter(parts) do
+    Enum.reduce(parts, %{inputs: [], name: nil, instance: nil, args: nil, outputs: []}, fn
+      {:inputs, labels}, filter ->
+        %{filter | inputs: labels}
+
+      {:outputs, labels}, filter ->
+        %{filter | outputs: labels}
+
+      {:filter_name, values}, filter ->
+        case List.flatten(values) do
+          [name] -> %{filter | name: name}
+          [name, instance] -> %{filter | name: name, instance: instance}
+        end
+
+      {:args, values}, filter ->
+        args = values |> List.flatten() |> Enum.join() |> String.trim()
+        %{filter | args: args}
+    end)
+  end
+
+  def build_chain(filters), do: {:chain, filters}
+  def build_setting([value]), do: {:setting, "sws_flags", String.trim(value)}
 end
