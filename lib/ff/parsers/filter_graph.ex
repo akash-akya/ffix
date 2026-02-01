@@ -1,4 +1,6 @@
 defmodule FF.Parsers.FilterGraph do
+  @moduledoc false
+
   import NimbleParsec
 
   @alphanum [?a..?z, ?A..?Z, ?_, ?0..?9]

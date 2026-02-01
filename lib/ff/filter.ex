@@ -1,8 +1,8 @@
 defmodule FF.Filter do
   alias FF.Filter.Builder
-  alias FF.Filter.Help
+  alias FF.Filter.Metadata
 
-  Enum.each(Help.filters(), fn {name, %{inputs: inputs, outputs: outputs, desc: desc}} ->
+  Enum.each(Metadata.filters(), fn {name, %{inputs: inputs, outputs: outputs, desc: desc}} ->
     inputs = Enum.reject(inputs, &(&1 == :|))
     outputs = Enum.reject(outputs, &(&1 == :|))
 
@@ -42,9 +42,9 @@ defmodule FF.Filter do
           end
       end
 
-    option_specs = Builder.filter_spec(name)
-    options_doc = Builder.build_options_doc(option_specs)
-    options_typespec = Builder.build_options_typespec(option_specs)
+    option_specs = Metadata.filter_spec(name)
+    options_doc = Metadata.build_options_doc(option_specs)
+    options_typespec = Metadata.build_options_typespec(option_specs)
 
     @doc """
     #{desc}

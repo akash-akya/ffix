@@ -5,6 +5,7 @@ defmodule FF.Graph do
 
   alias __MODULE__.Export
   alias __MODULE__.Node
+  alias __MODULE__.Parse
   alias __MODULE__.Render
 
   @type node_id :: pos_integer()
@@ -73,6 +74,9 @@ defmodule FF.Graph do
 
     %{graph | exports: exports}
   end
+
+  @spec parse!(String.t()) :: t()
+  def parse!(source) when is_binary(source), do: Parse.parse!(source)
 
   @spec to_filtergraph(t()) :: String.t()
   def to_filtergraph(%__MODULE__{} = graph), do: Render.to_filtergraph(graph)

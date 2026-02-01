@@ -8,8 +8,7 @@ defmodule FF.Filter.Builder do
   alias FF.Graph.Ref
   alias FF.Stream
   alias FF.Terminal
-  alias FF.Filter.Help
-  alias FF.Parsers
+  alias FF.Filter.Metadata
 
   defmodule Plan do
     @moduledoc false
@@ -74,8 +73,8 @@ defmodule FF.Filter.Builder do
           Stream.t() | Terminal.t() | [Stream.t()] | tuple()
   def filter(name, inputs, options \\ []) when is_list(inputs) do
     name = normalize_name(name)
-    %{outputs: outputs} = fetch_filter!(name)
-    option_specs = filter_spec(name)
+    %{outputs: outputs} = Metadata.filter!(name)
+    option_specs = Metadata.filter_spec(name)
 
     apply_filter(name, inputs, outputs, options, option_specs)
   end
@@ -163,140 +162,8 @@ defmodule FF.Filter.Builder do
     graph
   end
 
-  def filter_spec(name) do
-    name
-    |> Help.filter()
-    |> Enum.map(&Parsers.FilterSpec.parse/1)
-    |> collect(%{all: [], current: nil})
-    |> Enum.filter(& &1)
-    |> Enum.map(&normalize_flags/1)
-    |> Map.new(&{String.to_atom(&1.name), &1})
-  end
-
-  @spec build_options_doc(map()) :: String.t()
-  def build_options_doc(options) do
-    options
-    |> Enum.map(fn {name, config} ->
-      build_option_doc(name, config)
-    end)
-    |> Enum.join("\n")
-  end
-
-  defp build_option_doc(name, config) do
-    case config[:sub] do
-      nil ->
-        "  * #{name} - #{config.desc}"
-
-      flags ->
-        flags =
-          flags
-          |> Enum.map(fn flag ->
-            num = if flag.num != "", do: " (#{flag.num}) ", else: ""
-            desc = if flag.desc != "", do: " - #{flag.desc}", else: ""
-
-            "    - #{flag.enum}#{num}#{desc}"
-          end)
-          |> Enum.join("\n")
-
-        """
-          * #{name} - #{config.desc}
-        #{flags}
-        """
-    end
-  end
-
-  @spec build_options_typespec(map()) :: Macro.t()
-  def build_options_typespec(options) do
-    quote do
-      [unquote_splicing(for option <- options, do: option_typespec(option))]
-    end
-  end
-
-  defp option_typespec({name, config}) do
-    type =
-      case config.type do
-        {:array, type} ->
-          quote(do: [unquote(core_type(type, config[:sub]))])
-
-        type ->
-          core_type(type, config[:sub])
-      end
-
-    quote do
-      {unquote(name), unquote(type)}
-    end
-  end
-
-  defp core_type(type, nil) do
-    case type do
-      :int -> quote(do: integer())
-      :int64 -> quote(do: integer())
-      :binary -> quote(do: binary())
-      :boolean -> quote(do: boolean())
-      :string -> quote(do: String.t())
-      :float -> quote(do: float())
-      :double -> quote(do: float())
-      _ -> quote(do: term())
-    end
-  end
-
-  defp core_type(type, sub) do
-    case type do
-      :int -> enum_typespec(sub)
-      :flags -> quote(do: [unquote(enum_typespec(sub))])
-      _ -> quote(do: term())
-    end
-  end
-
-  defp enum_typespec([]), do: quote(do: term())
-
-  defp enum_typespec(sub) do
-    sub
-    |> Enum.map(&String.to_atom(&1.enum))
-    |> Enum.reduce(fn left, right -> {:|, [], [left, right]} end)
-  end
-
-  @option_depth 3
-  @enum_depth 5
-
-  defp collect([], acc) do
-    acc.all ++ [acc.current]
-  end
-
-  defp collect([[{:depth, 2} | rest] | specs], acc) do
-    [name, {:type, type}, flags, desc] = rest
-    spec = %{name: name, type: type, flags: flags, desc: desc}
-    %{current: current, all: all} = acc
-
-    collect(specs, %{current: spec, all: all ++ [current]})
-  end
-
-  defp collect([[{:depth, @option_depth} | rest] | specs], acc) do
-    [name, {:type, type}, flags, desc] = rest
-    spec = %{name: name, type: type, flags: flags, desc: desc}
-    %{current: current, all: all} = acc
-
-    collect(specs, %{current: spec, all: all ++ [current]})
-  end
-
-  defp collect([[{:depth, @enum_depth} | rest] | specs], acc) do
-    [enum, num, flags, desc] = rest
-    enum_spec = %{enum: enum, num: num, flags: flags, desc: desc}
-    %{current: current, all: all} = acc
-    current = Map.update(current, :sub, [enum_spec], &(&1 ++ [enum_spec]))
-
-    collect(specs, %{current: current, all: all})
-  end
-
   defp normalize_name(name) when is_atom(name), do: name
   defp normalize_name(name) when is_binary(name), do: String.to_atom(name)
-
-  defp fetch_filter!(name) do
-    case Help.filters()[name] do
-      nil -> raise ArgumentError, "unknown filter #{inspect(name)}"
-      filter -> filter
-    end
-  end
 
   defp normalize_inputs(inputs) do
     Enum.flat_map(inputs, fn
@@ -522,6 +389,4 @@ defmodule FF.Filter.Builder do
   defp selector_media({:video, _}), do: :video
   defp selector_media({:audio, _}), do: :audio
   defp selector_media(_), do: :unknown
-
-  defp normalize_flags(arg), do: arg
 end

@@ -1,4 +1,6 @@
 defmodule FF.Parsers.FilterList do
+  @moduledoc false
+
   import NimbleParsec
 
   ws = utf8_string([?\s, ?\t], min: 1)

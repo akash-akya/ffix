@@ -1,4 +1,6 @@
 defmodule FF.Parsers.FilterSpec do
+  @moduledoc false
+
   import NimbleParsec
 
   @alpha_num [?a..?z, ?A..?Z, ?0..?9, ?_]
