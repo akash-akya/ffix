@@ -28,7 +28,6 @@ defmodule FF.Filter.Help do
     |> Enum.drop_while(fn line -> !String.contains?(line, "->") end)
     |> Enum.map(&FF.Parsers.FilterList.parse/1)
     |> Enum.sort()
-    # |> Enum.take(20)
     |> Map.new(fn [flags, name, {inputs, outputs}, desc] ->
       {
         String.to_atom(name),
