@@ -41,11 +41,12 @@ defmodule FF.Filter.Builder do
     ]
   end
 
+  @type input_id :: InputRef.input_id() | atom()
   @type input_selector :: InputRef.selector()
 
-  @spec input(non_neg_integer(), input_selector()) :: Stream.t()
-  def input(index, selector) when is_integer(index) and index >= 0 do
-    input_ref = %InputRef{input: index, selector: selector}
+  @spec input(input_id(), input_selector()) :: Stream.t()
+  def input(index, selector) do
+    input_ref = %InputRef{input: InputRef.normalize_input_id!(index), selector: selector}
 
     plan = %Plan{
       id: make_ref(),

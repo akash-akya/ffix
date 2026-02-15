@@ -3,6 +3,8 @@ defmodule FF.Graph.InputRef do
   Structured reference to an external ffmpeg input stream.
   """
 
+  @type input_id :: non_neg_integer() | String.t() | reference()
+
   @type selector ::
           :video
           | :audio
@@ -11,9 +13,20 @@ defmodule FF.Graph.InputRef do
           | {:raw, String.t()}
 
   @type t :: %__MODULE__{
-          input: non_neg_integer(),
+          input: input_id(),
           selector: selector()
         }
 
   defstruct [:input, :selector]
+
+  @spec normalize_input_id!(non_neg_integer() | atom() | String.t() | reference()) :: input_id()
+  def normalize_input_id!(input) when is_integer(input) and input >= 0, do: input
+  def normalize_input_id!(input) when is_reference(input), do: input
+  def normalize_input_id!(input) when is_atom(input), do: Atom.to_string(input)
+  def normalize_input_id!(input) when is_binary(input) and input != "", do: input
+
+  def normalize_input_id!(input) do
+    raise ArgumentError,
+          "input id must be a non-negative integer, reference, atom, or non-empty string, got: #{inspect(input)}"
+  end
 end

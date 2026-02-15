@@ -6,9 +6,10 @@ defmodule FF do
   alias FF.Stream
   alias FF.Terminal
 
+  @type input_id :: FF.Graph.InputRef.input_id() | atom()
   @type input_selector :: FF.Graph.InputRef.selector()
 
-  @spec input(non_neg_integer(), input_selector()) :: Stream.t()
+  @spec input(input_id(), input_selector()) :: Stream.t()
   def input(index, selector), do: Builder.input(index, selector)
 
   @spec input_raw(String.t()) :: Stream.t()

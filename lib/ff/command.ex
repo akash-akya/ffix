@@ -5,7 +5,7 @@ defmodule FF.Command do
   ## Examples
 
       input = FF.Command.input("input.mp4", ss: "00:00:03", stream_loop: -1)
-      video = FF.Command.input_stream(0, :video)
+      video = input[:video]
 
       command =
         FF.command(
@@ -37,9 +37,10 @@ defmodule FF.Command do
   alias FF.Graph
   alias FF.Graph.Export
   alias FF.Graph.InputRef
+  alias FF.Stream
 
   @type option :: {atom() | String.t(), term()}
-  @type source :: Export.t() | InputRef.t() | atom() | non_neg_integer()
+  @type source :: Export.t() | Stream.t() | atom() | non_neg_integer()
 
   @type t :: %__MODULE__{
           global_options: [option()],
@@ -78,7 +79,8 @@ defmodule FF.Command do
   def input(%__MODULE__{} = command, source), do: input(command, source, [])
 
   def input(source, options) when is_list(options) do
-    %Input{source: source, options: options}
+    {label, options} = Keyword.pop(options, :label)
+    %Input{id: make_ref(), source: source, label: normalize_input_label!(label), options: options}
   end
 
   def input(source, options) do
@@ -93,9 +95,21 @@ defmodule FF.Command do
     raise ArgumentError, "command input options must be a keyword list, got: #{inspect({source, options})}"
   end
 
-  @spec input_stream(non_neg_integer(), InputRef.selector()) :: InputRef.t()
-  def input_stream(index, selector) when is_integer(index) and index >= 0 do
-    %InputRef{input: index, selector: selector}
+  @spec input_stream(Input.t() | InputRef.input_id() | atom(), InputRef.selector()) :: Stream.t()
+  def input_stream(%Input{id: id}, selector) when is_reference(id) do
+    FF.input(id, selector)
+  end
+
+  def input_stream(%Input{label: label}, selector) when is_binary(label) do
+    FF.input(label, selector)
+  end
+
+  def input_stream(%Input{}, _selector) do
+    raise ArgumentError, "command input access requires an input created with FF.Command.input/2"
+  end
+
+  def input_stream(index, selector) do
+    FF.input(index, selector)
   end
 
   @spec graph(t(), Graph.t()) :: t()
@@ -132,6 +146,8 @@ defmodule FF.Command do
       other -> raise ArgumentError, "invalid command input: #{inspect(other)}"
     end)
 
+    input_index_map = input_index_map!(command.inputs)
+
     if command.outputs == [] do
       raise ArgumentError, "command requires at least one output"
     end
@@ -140,7 +156,7 @@ defmodule FF.Command do
 
     case command.graph do
       nil -> :ok
-      %Graph{} = graph -> graph |> FF.validate!() |> validate_graph_inputs!(input_count)
+      %Graph{} = graph -> graph |> resolve_graph_inputs!(input_count, input_index_map) |> FF.validate!()
       other -> raise ArgumentError, "invalid command graph: #{inspect(other)}"
     end
 
@@ -149,7 +165,7 @@ defmodule FF.Command do
         raise ArgumentError, "output requires at least one source"
 
       %Output{sources: sources} ->
-        Enum.each(sources, &validate_source!(&1, command.graph, input_count))
+        Enum.each(sources, &validate_source!(&1, command.graph, input_count, input_index_map))
 
       other ->
         raise ArgumentError, "invalid command output: #{inspect(other)}"
@@ -161,13 +177,16 @@ defmodule FF.Command do
   @spec to_argv(t()) :: [String.t()]
   def to_argv(%__MODULE__{} = command) do
     command = validate!(command)
-    render = if command.graph, do: FF.Graph.Render.render(command.graph)
+    input_index_map = input_index_map!(command.inputs)
+    input_count = length(command.inputs)
+    graph = if command.graph, do: resolve_graph_inputs!(command.graph, input_count, input_index_map)
+    render = if graph, do: FF.Graph.Render.render(graph)
 
     ["ffmpeg"] ++
       encode_options(command.global_options) ++
       Enum.flat_map(command.inputs, &input_to_argv/1) ++
       graph_to_argv(render) ++
-      Enum.flat_map(command.outputs, &output_to_argv(&1, command.graph, render))
+      Enum.flat_map(command.outputs, &output_to_argv(&1, graph, render, input_count, input_index_map))
   end
 
   @spec to_shell_string(t()) :: String.t()
@@ -224,22 +243,23 @@ defmodule FF.Command do
     raise ArgumentError, "command outputs must be a list"
   end
 
-  defp validate_source!(%Export{} = export, nil, _input_count) do
+  defp validate_source!(%Export{} = export, nil, _input_count, _input_index_map) do
     raise ArgumentError, "graph export #{inspect(export.name || export.ref)} requires a graph"
   end
 
-  defp validate_source!(%Export{} = export, %Graph{} = graph, _input_count) do
+  defp validate_source!(%Export{} = export, %Graph{} = graph, _input_count, _input_index_map) do
     unless Enum.member?(graph.exports, export) do
       raise ArgumentError,
             "graph export #{inspect(export.name || export.ref)} is not exported by the command graph"
     end
   end
 
-  defp validate_source!(%InputRef{} = input_ref, _graph, input_count) do
-    validate_input_ref!(input_ref, input_count)
+  defp validate_source!(%Stream{} = stream, _graph, input_count, input_index_map) do
+    resolve_stream_source!(stream, input_count, input_index_map)
+    :ok
   end
 
-  defp validate_source!(source, %Graph{} = graph, _input_count)
+  defp validate_source!(source, %Graph{} = graph, _input_count, _input_index_map)
        when is_atom(source) or (is_integer(source) and source >= 0) do
     case Graph.export(graph, source) do
       nil -> raise ArgumentError, "command graph has no output #{inspect(source)}"
@@ -247,12 +267,12 @@ defmodule FF.Command do
     end
   end
 
-  defp validate_source!(source, nil, _input_count)
+  defp validate_source!(source, nil, _input_count, _input_index_map)
        when is_atom(source) or (is_integer(source) and source >= 0) do
     raise ArgumentError, "output source #{inspect(source)} requires a command graph"
   end
 
-  defp validate_source!(source, _graph, _input_count) do
+  defp validate_source!(source, _graph, _input_count, _input_index_map) do
     raise ArgumentError, "invalid output source: #{inspect(source)}"
   end
 
@@ -263,26 +283,28 @@ defmodule FF.Command do
   defp graph_to_argv(nil), do: []
   defp graph_to_argv(%{graph: graph}), do: ["-filter_complex", graph]
 
-  defp output_to_argv(%Output{target: target, sources: sources, options: options}, graph, render) do
+  defp output_to_argv(%Output{target: target, sources: sources, options: options}, graph, render, input_count, input_index_map) do
     # Outputs read in terms of graph exports and input streams, but argv still needs
     # ffmpeg's explicit `-map` syntax at the boundary.
-    Enum.flat_map(sources, fn source -> ["-map", map_source(source, graph, render)] end) ++
+    Enum.flat_map(sources, fn source -> ["-map", map_source(source, graph, render, input_count, input_index_map)] end) ++
       encode_options(options) ++
       [encode_output_target(target)]
   end
 
-  defp map_source(%InputRef{} = input_ref, _graph, _render) do
-    encode_input_ref(input_ref)
+  defp map_source(%Stream{} = stream, _graph, _render, input_count, input_index_map) do
+    stream
+    |> resolve_stream_source!(input_count, input_index_map)
+    |> encode_input_ref()
   end
 
-  defp map_source(source, %Graph{} = graph, render)
+  defp map_source(source, %Graph{} = graph, render, input_count, input_index_map)
        when is_atom(source) or (is_integer(source) and source >= 0) do
     graph
     |> Graph.export!(source)
-    |> map_source(graph, render)
+    |> map_source(graph, render, input_count, input_index_map)
   end
 
-  defp map_source(%Export{} = export, %Graph{} = graph, render) do
+  defp map_source(%Export{} = export, %Graph{} = graph, render, _input_count, _input_index_map) do
     node = Map.fetch!(graph.nodes, export.ref.node_id)
 
     case node.kind do
@@ -305,21 +327,82 @@ defmodule FF.Command do
     end
   end
 
-  defp validate_graph_inputs!(%Graph{} = graph, input_count) do
-    Enum.each(Map.values(graph.nodes), fn
-      %{kind: :input, input_ref: %InputRef{} = input_ref} -> validate_input_ref!(input_ref, input_count)
-      _node -> :ok
+  defp input_index_map!(inputs) do
+    inputs
+    |> Enum.with_index()
+    |> Enum.reduce(%{}, fn {%Input{id: id, label: label}, index}, index_map ->
+      index_map
+      |> put_input_key!(id, index, fn -> "duplicate command input declaration" end)
+      |> maybe_put_input_label!(label, index)
     end)
-
-    graph
   end
 
-  defp validate_input_ref!(%InputRef{input: input}, input_count) do
+  defp maybe_put_input_label!(index_map, nil, _index), do: index_map
+
+  defp maybe_put_input_label!(index_map, label, index) do
+    put_input_key!(index_map, label, index, fn -> "duplicate command input label #{inspect(label)}" end)
+  end
+
+  defp put_input_key!(index_map, nil, _index, _message_fun), do: index_map
+
+  defp put_input_key!(index_map, key, index, message_fun) do
+    if Map.has_key?(index_map, key) do
+      raise ArgumentError, message_fun.()
+    else
+      Map.put(index_map, key, index)
+    end
+  end
+
+  defp normalize_input_label!(nil), do: nil
+
+  defp normalize_input_label!(label) do
+    case InputRef.normalize_input_id!(label) do
+      label when is_binary(label) -> label
+      _label -> raise ArgumentError, "input label must be an atom or non-empty string"
+    end
+  end
+
+  defp resolve_graph_inputs!(%Graph{} = graph, input_count, input_index_map) do
+    nodes =
+      Map.new(graph.nodes, fn
+        {node_id, %{kind: :input, input_ref: %InputRef{} = input_ref} = node} ->
+          {node_id, %{node | input_ref: resolve_input_ref!(input_ref, input_count, input_index_map)}}
+
+        entry ->
+          entry
+      end)
+
+    %{graph | nodes: nodes}
+  end
+
+  defp resolve_input_ref!(%InputRef{input: input} = input_ref, input_count, _input_index_map)
+       when is_integer(input) do
     if input < input_count do
-      :ok
+      input_ref
     else
       raise ArgumentError, "input #{input} is not declared in the command"
     end
+  end
+
+  defp resolve_input_ref!(%InputRef{input: input} = input_ref, _input_count, input_index_map)
+       when is_binary(input) or is_reference(input) do
+    case input_index_map[input] do
+      nil -> raise ArgumentError, "input #{inspect(input)} is not declared in the command"
+      index -> %{input_ref | input: index}
+    end
+  end
+
+  defp resolve_input_ref!(%InputRef{input: input}, _input_count, _input_index_map) do
+    raise ArgumentError, "invalid input ref #{inspect(input)}"
+  end
+
+  defp resolve_stream_source!(%Stream{plan: %{kind: :input, input_ref: %InputRef{} = input_ref}}, input_count, input_index_map) do
+    resolve_input_ref!(input_ref, input_count, input_index_map)
+  end
+
+  defp resolve_stream_source!(%Stream{} = stream, _input_count, _input_index_map) do
+    raise ArgumentError,
+          "invalid output source: #{inspect(stream)}; only direct input streams can be mapped, export graph outputs instead"
   end
 
   defp encode_options(options) do

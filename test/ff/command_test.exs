@@ -86,6 +86,147 @@ defmodule FF.CommandTest do
     end
   end
 
+  test "builds argv with labeled command inputs" do
+    src = Command.input("input.mp4", label: :src)
+    logo = Command.input("logo.png", label: :logo)
+
+    command =
+      FF.command(
+        inputs: [src, logo],
+        graph:
+          FF.graph(
+            outputs: [
+              video:
+                src[:video]
+                |> Filter.overlay(logo[:video], x: 20, y: 20)
+            ]
+          ),
+        outputs: [
+          Command.output("out.mp4", [:video, src[:audio]], vcodec: :libx264, acodec: :aac)
+        ]
+      )
+
+    assert FF.to_argv(command) == [
+             "ffmpeg",
+             "-i",
+             "input.mp4",
+             "-i",
+             "logo.png",
+             "-filter_complex",
+             "[0:v][1:v]overlay=x=20:y=20[video];",
+             "-map",
+             "[video]",
+             "-map",
+             "0:a",
+             "-vcodec",
+             "libx264",
+             "-acodec",
+             "aac",
+             "out.mp4"
+           ]
+  end
+
+  test "input access supports indexed tracks" do
+    src = Command.input("input.mp4", label: :src)
+
+    command =
+      FF.command(
+        inputs: [src],
+        outputs: [Command.output("out.mka", src[audio: 1], acodec: :copy)]
+      )
+
+    assert FF.to_argv(command) == [
+             "ffmpeg",
+             "-i",
+             "input.mp4",
+             "-map",
+             "0:a:1",
+             "-acodec",
+             "copy",
+             "out.mka"
+           ]
+  end
+
+  test "input_stream/2 accepts command input declarations" do
+    src = Command.input("input.mp4")
+
+    command =
+      FF.command(
+        inputs: [src],
+        outputs: [Command.output("out.mka", Command.input_stream(src, {:audio, 1}), acodec: :copy)]
+      )
+
+    assert FF.to_argv(command) == [
+             "ffmpeg",
+             "-i",
+             "input.mp4",
+             "-map",
+             "0:a:1",
+             "-acodec",
+             "copy",
+             "out.mka"
+           ]
+  end
+
+  test "supports access on unlabeled command inputs" do
+    src = Command.input("input.mp4")
+
+    command =
+      FF.command(
+        inputs: [src],
+        outputs: [Command.output("out.mp4", src[:video], vcodec: :copy)]
+      )
+
+    assert FF.to_argv(command) == [
+             "ffmpeg",
+             "-i",
+             "input.mp4",
+             "-map",
+             "0:v",
+             "-vcodec",
+             "copy",
+             "out.mp4"
+           ]
+  end
+
+  test "rejects duplicate command input declarations" do
+    src = Command.input("input.mp4")
+
+    assert_raise ArgumentError, "duplicate command input declaration", fn ->
+      FF.command(
+        inputs: [src, src],
+        outputs: [Command.output("out.mp4", src[:video], vcodec: :copy)]
+      )
+      |> FF.to_argv()
+    end
+  end
+
+  test "rejects duplicate command input labels" do
+    assert_raise ArgumentError, "duplicate command input label \"src\"", fn ->
+      FF.command(
+        inputs: [
+          Command.input("a.mp4", label: :src),
+          Command.input("b.mp4", label: "src")
+        ],
+        outputs: [Command.output("out.mp4", Command.input_stream(0, :video))]
+      )
+      |> FF.to_argv()
+    end
+  end
+
+  test "rejects missing labeled inputs" do
+    command =
+      FF.command(
+        inputs: [Command.input("input.mp4", label: :src)],
+        graph: FF.graph(outputs: [video: FF.input(:missing, :video)]),
+        outputs: [Command.output("out.mp4", :video)]
+      )
+
+    assert_raise ArgumentError, ~s(input "missing" is not declared in the command), fn ->
+      FF.to_argv(command)
+    end
+  end
+
   test "builds argv with input options" do
     command =
       FF.command(

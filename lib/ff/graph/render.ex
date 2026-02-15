@@ -122,11 +122,17 @@ defmodule FF.Graph.Render do
     |> String.replace("'", "\\'")
   end
 
-  defp input_ref_to_string(%InputRef{input: input, selector: :video}), do: "#{input}:v"
-  defp input_ref_to_string(%InputRef{input: input, selector: :audio}), do: "#{input}:a"
-  defp input_ref_to_string(%InputRef{input: input, selector: {:video, stream}}), do: "#{input}:v:#{stream}"
-  defp input_ref_to_string(%InputRef{input: input, selector: {:audio, stream}}), do: "#{input}:a:#{stream}"
-  defp input_ref_to_string(%InputRef{input: input, selector: {:raw, selector}}), do: "#{input}:#{selector}"
+  defp input_ref_to_string(%InputRef{input: input, selector: :video}), do: "#{graph_input_id!(input)}:v"
+  defp input_ref_to_string(%InputRef{input: input, selector: :audio}), do: "#{graph_input_id!(input)}:a"
+  defp input_ref_to_string(%InputRef{input: input, selector: {:video, stream}}), do: "#{graph_input_id!(input)}:v:#{stream}"
+  defp input_ref_to_string(%InputRef{input: input, selector: {:audio, stream}}), do: "#{graph_input_id!(input)}:a:#{stream}"
+  defp input_ref_to_string(%InputRef{input: input, selector: {:raw, selector}}), do: "#{graph_input_id!(input)}:#{selector}"
+
+  defp graph_input_id!(input) when is_integer(input), do: input
+
+  defp graph_input_id!(input) do
+    raise ArgumentError, "graph input #{inspect(input)} requires command input resolution"
+  end
 
   defp render_exports(exports, output_labels) do
     Enum.map(exports, fn %Export{name: name, ref: ref} ->
