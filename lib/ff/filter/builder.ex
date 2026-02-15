@@ -9,6 +9,7 @@ defmodule FF.Filter.Builder do
   alias FF.Stream
   alias FF.Terminal
   alias FF.Filter.Metadata
+  alias FF.Value
 
   defmodule Plan do
     @moduledoc false
@@ -94,7 +95,7 @@ defmodule FF.Filter.Builder do
       kind: :filter,
       name: name,
       inputs: inputs,
-      args: normalize_args(options),
+      args: normalize_args(options, option_specs),
       outputs: output_count,
       media: summarize_media(output_media)
     }
@@ -179,7 +180,7 @@ defmodule FF.Filter.Builder do
     end)
   end
 
-  # We only validate names here. Value coercion can grow later without changing the graph model.
+  # Keep value normalization permissive so raw ffmpeg strings remain an escape hatch.
   defp validate_options!(options, specs) do
     Enum.each(options, fn
       {:pos, _value} -> :ok
@@ -192,10 +193,10 @@ defmodule FF.Filter.Builder do
     :ok
   end
 
-  defp normalize_args(options) do
+  defp normalize_args(options, specs) do
     Enum.map(options, fn
-      {:pos, value} -> {:pos, value}
-      {key, value} -> {key, value}
+      {:pos, value} -> {:pos, Value.normalize(value, nil)}
+      {key, value} -> {key, Value.normalize(value, Map.get(specs, key))}
     end)
   end
 

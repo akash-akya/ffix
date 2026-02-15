@@ -115,19 +115,11 @@ defmodule FF.Filter.Metadata do
     end
   end
 
-  defp core_type(type, sub) do
+  defp core_type(type, _sub) do
     case type do
-      :int -> enum_typespec(sub)
-      :flags -> quote(do: [unquote(enum_typespec(sub))])
+      :int -> quote(do: integer() | String.t() | atom())
+      :flags -> quote(do: integer() | String.t() | atom() | [String.t() | atom()])
       _ -> quote(do: term())
     end
-  end
-
-  defp enum_typespec([]), do: quote(do: term())
-
-  defp enum_typespec(sub) do
-    sub
-    |> Enum.map(&String.to_atom(&1.enum))
-    |> Enum.reduce(fn left, right -> {:|, [], [left, right]} end)
   end
 end
