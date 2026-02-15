@@ -4,22 +4,138 @@ defmodule FF.CommandTest do
   alias FF.Command
   alias FF.Filter
 
-  test "builds argv for one output using a graph export and input audio" do
+  test "graphs support access by named and positional outputs" do
+    video = FF.input(0, :video)
+    [master, preview] = Filter.split(video, outputs: 2)
+    graph = FF.graph(outputs: [master: master, preview: preview])
+
+    assert graph[:master] == FF.Graph.export!(graph, :master)
+    assert graph[0] == graph[:master]
+    assert graph[1] == graph[:preview]
+    assert graph[:missing] == nil
+    assert graph[2] == nil
+  end
+
+  test "builds argv with inline graph output shorthands" do
+    audio = Command.input_stream(0, :audio)
+
+    command =
+      FF.command(
+        inputs: [Command.input("input.mp4")],
+        graph:
+          FF.graph(
+            outputs: [
+              master:
+                FF.input(0, :video)
+                |> Filter.scale(w: 1280, h: -1),
+              preview:
+                FF.input(0, :video)
+                |> Filter.scale(w: 320, h: -1)
+                |> Filter.fps(fps: 1)
+            ]
+          ),
+        outputs: [
+          Command.output("master.mp4", [:master, audio], vcodec: :libx264, acodec: :aac),
+          Command.output("thumb-%03d.jpg", 1, f: :image2, vsync: 0)
+        ]
+      )
+
+    assert FF.to_argv(command) == [
+             "ffmpeg",
+             "-i",
+             "input.mp4",
+             "-filter_complex",
+             "[0:v]scale=w=1280:h=-1[master];\n[0:v]scale=w=320:h=-1[scale_1_0];\n[scale_1_0]fps=fps=1[preview];",
+             "-map",
+             "[master]",
+             "-map",
+             "0:a",
+             "-vcodec",
+             "libx264",
+             "-acodec",
+             "aac",
+             "master.mp4",
+             "-map",
+             "[preview]",
+             "-f",
+             "image2",
+             "-vsync",
+             "0",
+             "thumb-%03d.jpg"
+           ]
+  end
+
+  test "rejects graph output shorthands without a command graph" do
+    command = FF.command(outputs: [Command.output("out.mp4", :preview)])
+
+    assert_raise ArgumentError, "output source :preview requires a command graph", fn ->
+      FF.to_argv(command)
+    end
+  end
+
+  test "rejects missing inline graph output shorthands" do
+    command =
+      FF.command(
+        inputs: [Command.input("input.mp4")],
+        graph: FF.graph(outputs: [video: FF.input(0, :video)]),
+        outputs: [Command.output("out.mp4", :preview)]
+      )
+
+    assert_raise ArgumentError, "command graph has no output :preview", fn ->
+      FF.to_argv(command)
+    end
+  end
+
+  test "builds argv with input options" do
+    command =
+      FF.command(
+        global: [y: true],
+        inputs: [
+          Command.input("input.mp4", ss: "00:00:03", stream_loop: -1),
+          Command.input("logo.png", loop: 1, framerate: 1)
+        ],
+        outputs: [Command.output("out.mp4", Command.input_stream(0, :video), vcodec: :copy)]
+      )
+
+    assert FF.to_argv(command) == [
+             "ffmpeg",
+             "-y",
+             "-ss",
+             "00:00:03",
+             "-stream_loop",
+             "-1",
+             "-i",
+             "input.mp4",
+             "-loop",
+             "1",
+             "-framerate",
+             "1",
+             "-i",
+             "logo.png",
+             "-map",
+             "0:v",
+             "-vcodec",
+             "copy",
+             "out.mp4"
+           ]
+  end
+
+  test "builds argv from command, input, and output constructors" do
     video =
       FF.input(0, :video)
       |> Filter.scale(w: 1280, h: -1)
       |> Filter.drawtext(text: "Hello", x: FF.expr("w-tw-20"), y: 20)
 
     graph = FF.graph(outputs: [video: video])
-    video = FF.Graph.export!(graph, :video)
     audio = Command.input_stream(0, :audio)
 
     command =
-      FF.command()
-      |> Command.global(y: true, loglevel: :error)
-      |> Command.input("input.mp4")
-      |> Command.graph(graph)
-      |> Command.output("out.mp4", [video, audio], vcodec: :libx264, acodec: :copy)
+      FF.command(
+        global: [y: true, loglevel: :error],
+        inputs: [Command.input("input.mp4")],
+        graph: graph,
+        outputs: [Command.output("out.mp4", [graph[:video], audio], vcodec: :libx264, acodec: :copy)]
+      )
 
     assert FF.to_argv(command) == [
              "ffmpeg",
@@ -44,13 +160,12 @@ defmodule FF.CommandTest do
 
   test "maps graph exports backed by inputs as input stream refs" do
     graph = FF.graph(outputs: [raw: FF.input(0, :video)])
-    raw = FF.Graph.export!(graph, :raw)
 
     command =
       FF.command()
       |> Command.input("input.mp4")
       |> Command.graph(graph)
-      |> Command.output("out.mp4", raw, vcodec: :copy)
+      |> Command.output("out.mp4", graph[:raw], vcodec: :copy)
 
     assert FF.to_argv(command) == [
              "ffmpeg",
@@ -73,13 +188,11 @@ defmodule FF.CommandTest do
       |> Filter.drawtext(text: "hello world", x: FF.expr("w-tw-20"), y: 20)
 
     graph = FF.graph(outputs: [video: video])
-    video = FF.Graph.export!(graph, :video)
-
     command =
       FF.command()
       |> Command.input("input file.mp4")
       |> Command.graph(graph)
-      |> Command.output("out file.mp4", video, vcodec: :libx264)
+      |> Command.output("out file.mp4", graph[:video], vcodec: :libx264)
 
     shell = FF.to_shell_string(command)
 
@@ -96,7 +209,7 @@ defmodule FF.CommandTest do
       FF.command()
       |> Command.input("input.mp4")
       |> Command.graph(graph)
-      |> Command.output("out.mp4", FF.Graph.export!(graph, :video), vcodec: :libx264)
+      |> Command.output("out.mp4", graph[:video], vcodec: :libx264)
 
     assert_raise ArgumentError, "input 1 is not declared in the command", fn ->
       FF.to_argv(command)
@@ -113,16 +226,14 @@ defmodule FF.CommandTest do
       |> Filter.scale(w: 320, h: -1)
 
     graph = FF.graph(outputs: [master: master, preview: preview])
-    master = FF.Graph.export!(graph, :master)
-    preview = FF.Graph.export!(graph, :preview)
     audio = Command.input_stream(0, :audio)
 
     command =
       FF.command()
       |> Command.input("input.mp4")
       |> Command.graph(graph)
-      |> Command.output("master.mp4", [master, audio], vcodec: :libx264, acodec: :aac)
-      |> Command.output("thumb-%03d.jpg", preview, f: :image2, vsync: 0)
+      |> Command.output("master.mp4", [graph[:master], audio], vcodec: :libx264, acodec: :aac)
+      |> Command.output("thumb-%03d.jpg", graph[:preview], f: :image2, vsync: 0)
 
     assert FF.to_argv(command) == [
              "ffmpeg",

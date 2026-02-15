@@ -3,6 +3,8 @@ defmodule FF.Graph do
   Canonical representation of a complete filtergraph.
   """
 
+  @behaviour Access
+
   alias __MODULE__.Export
   alias __MODULE__.Node
   alias __MODULE__.Parse
@@ -47,6 +49,24 @@ defmodule FF.Graph do
       nil -> raise ArgumentError, "unknown graph export: #{inspect(key)}"
       export -> export
     end
+  end
+
+  @spec fetch(t(), atom() | non_neg_integer()) :: {:ok, Export.t()} | :error
+  def fetch(%__MODULE__{} = graph, key) when is_atom(key) or (is_integer(key) and key >= 0) do
+    case export(graph, key) do
+      nil -> :error
+      export -> {:ok, export}
+    end
+  end
+
+  def fetch(%__MODULE__{}, _key), do: :error
+
+  def get_and_update(%__MODULE__{}, _key, _fun) do
+    raise ArgumentError, "FF.Graph access is read-only"
+  end
+
+  def pop(%__MODULE__{}, _key) do
+    raise ArgumentError, "FF.Graph access is read-only"
   end
 
   @spec nodes(t()) :: [Node.t()]

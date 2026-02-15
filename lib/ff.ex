@@ -29,6 +29,9 @@ defmodule FF do
   @spec command() :: Command.t()
   def command, do: Command.new()
 
+  @spec command(keyword()) :: Command.t()
+  def command(options) when is_list(options), do: Command.new(options)
+
   @spec to_filtergraph(Graph.t()) :: String.t()
   def to_filtergraph(%Graph{} = graph) do
     graph

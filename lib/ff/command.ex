@@ -1,6 +1,35 @@
 defmodule FF.Command do
   @moduledoc """
   Canonical representation of a full ffmpeg command.
+
+  ## Examples
+
+      input = FF.Command.input("input.mp4", ss: "00:00:03", stream_loop: -1)
+      video = FF.Command.input_stream(0, :video)
+
+      command =
+        FF.command(
+          global: [y: true],
+          inputs: [input],
+          outputs: [FF.Command.output("out.mp4", video, vcodec: :copy)]
+        )
+
+      FF.to_argv(command)
+      #=> [
+      #=>   "ffmpeg",
+      #=>   "-y",
+      #=>   "-ss",
+      #=>   "00:00:03",
+      #=>   "-stream_loop",
+      #=>   "-1",
+      #=>   "-i",
+      #=>   "input.mp4",
+      #=>   "-map",
+      #=>   "0:v",
+      #=>   "-vcodec",
+      #=>   "copy",
+      #=>   "out.mp4"
+      #=> ]
   """
 
   alias __MODULE__.Input
@@ -10,7 +39,7 @@ defmodule FF.Command do
   alias FF.Graph.InputRef
 
   @type option :: {atom() | String.t(), term()}
-  @type source :: Export.t() | InputRef.t()
+  @type source :: Export.t() | InputRef.t() | atom() | non_neg_integer()
 
   @type t :: %__MODULE__{
           global_options: [option()],
@@ -25,15 +54,43 @@ defmodule FF.Command do
   @spec new() :: t()
   def new, do: %__MODULE__{}
 
+  @spec new(keyword()) :: t()
+  def new(options) when is_list(options) do
+    validate_command_keys!(options)
+
+    %__MODULE__{
+      global_options: normalize_option_list!(Keyword.get(options, :global, []), :global),
+      inputs: normalize_inputs!(Keyword.get(options, :inputs, [])),
+      graph: normalize_graph!(Keyword.get(options, :graph)),
+      outputs: normalize_outputs!(Keyword.get(options, :outputs, [])),
+      metadata: Keyword.get(options, :metadata, %{})
+    }
+  end
+
   @spec global(t(), keyword()) :: t()
   def global(%__MODULE__{global_options: global_options} = command, options) when is_list(options) do
     %{command | global_options: global_options ++ options}
   end
 
-  @spec input(t(), Input.source(), keyword()) :: t()
-  def input(%__MODULE__{inputs: inputs} = command, source, options \\ []) when is_list(options) do
-    input = %Input{source: source, options: options}
-    %{command | inputs: inputs ++ [input]}
+  @spec input(Input.source(), keyword()) :: Input.t()
+  def input(source), do: input(source, [])
+
+  def input(%__MODULE__{} = command, source), do: input(command, source, [])
+
+  def input(source, options) when is_list(options) do
+    %Input{source: source, options: options}
+  end
+
+  def input(source, options) do
+    raise ArgumentError, "input options must be a keyword list, got: #{inspect({source, options})}"
+  end
+
+  def input(%__MODULE__{} = command, source, options) when is_list(options) do
+    %{command | inputs: command.inputs ++ [input(source, options)]}
+  end
+
+  def input(%__MODULE__{}, source, options) do
+    raise ArgumentError, "command input options must be a keyword list, got: #{inspect({source, options})}"
   end
 
   @spec input_stream(non_neg_integer(), InputRef.selector()) :: InputRef.t()
@@ -46,33 +103,56 @@ defmodule FF.Command do
     %{command | graph: graph}
   end
 
-  @spec output(t(), Output.target(), source() | [source()], keyword()) :: t()
-  def output(%__MODULE__{outputs: outputs} = command, target, sources, options \\ [])
-      when is_list(options) do
-    output = %Output{target: target, sources: List.wrap(sources), options: options}
-    %{command | outputs: outputs ++ [output]}
+  @spec output(Output.target(), source() | [source()], keyword()) :: Output.t()
+  def output(target, sources), do: output(target, sources, [])
+
+  def output(%__MODULE__{} = command, target, sources), do: output(command, target, sources, [])
+
+  def output(target, sources, options) when is_list(options) do
+    %Output{target: target, sources: List.wrap(sources), options: options}
+  end
+
+  def output(target, sources, options) do
+    raise ArgumentError, "output options must be a keyword list, got: #{inspect({target, sources, options})}"
+  end
+
+  def output(%__MODULE__{} = command, target, sources, options) when is_list(options) do
+    %{command | outputs: command.outputs ++ [output(target, sources, options)]}
+  end
+
+  def output(%__MODULE__{}, target, sources, options) do
+    raise ArgumentError,
+          "command output options must be a keyword list, got: #{inspect({target, sources, options})}"
   end
 
   @spec validate!(t()) :: t()
   def validate!(%__MODULE__{} = command) do
+    Enum.each(command.inputs, fn
+      %Input{} -> :ok
+      other -> raise ArgumentError, "invalid command input: #{inspect(other)}"
+    end)
+
     if command.outputs == [] do
       raise ArgumentError, "command requires at least one output"
     end
 
     input_count = length(command.inputs)
 
-    if command.graph do
-      command.graph
-      |> FF.validate!()
-      |> validate_graph_inputs!(input_count)
+    case command.graph do
+      nil -> :ok
+      %Graph{} = graph -> graph |> FF.validate!() |> validate_graph_inputs!(input_count)
+      other -> raise ArgumentError, "invalid command graph: #{inspect(other)}"
     end
 
-    Enum.each(command.outputs, fn %Output{sources: sources} ->
-      if sources == [] do
+    Enum.each(command.outputs, fn
+      %Output{sources: []} ->
         raise ArgumentError, "output requires at least one source"
-      end
 
-      Enum.each(sources, &validate_source!(&1, command.graph, input_count))
+      %Output{sources: sources} ->
+        Enum.each(sources, &validate_source!(&1, command.graph, input_count))
+
+      other ->
+        raise ArgumentError, "invalid command output: #{inspect(other)}"
     end)
 
     command
@@ -97,6 +177,53 @@ defmodule FF.Command do
     |> Enum.map_join(" ", &shell_escape/1)
   end
 
+  defp validate_command_keys!(options) do
+    unknown = Keyword.keys(options) -- [:global, :inputs, :graph, :outputs, :metadata]
+
+    if unknown != [] do
+      raise ArgumentError, "unknown command keys: #{inspect(unknown)}"
+    end
+  end
+
+  defp normalize_option_list!(options, _key) when is_list(options), do: options
+
+  defp normalize_option_list!(_options, key) do
+    raise ArgumentError, "command #{key} must be a keyword list"
+  end
+
+  defp normalize_inputs!(inputs) when is_list(inputs) do
+    Enum.each(inputs, fn
+      %Input{} -> :ok
+      other -> raise ArgumentError, "invalid command input: #{inspect(other)}"
+    end)
+
+    inputs
+  end
+
+  defp normalize_inputs!(_inputs) do
+    raise ArgumentError, "command inputs must be a list"
+  end
+
+  defp normalize_graph!(nil), do: nil
+  defp normalize_graph!(%Graph{} = graph), do: graph
+
+  defp normalize_graph!(graph) do
+    raise ArgumentError, "invalid command graph: #{inspect(graph)}"
+  end
+
+  defp normalize_outputs!(outputs) when is_list(outputs) do
+    Enum.each(outputs, fn
+      %Output{} -> :ok
+      other -> raise ArgumentError, "invalid command output: #{inspect(other)}"
+    end)
+
+    outputs
+  end
+
+  defp normalize_outputs!(_outputs) do
+    raise ArgumentError, "command outputs must be a list"
+  end
+
   defp validate_source!(%Export{} = export, nil, _input_count) do
     raise ArgumentError, "graph export #{inspect(export.name || export.ref)} requires a graph"
   end
@@ -110,6 +237,19 @@ defmodule FF.Command do
 
   defp validate_source!(%InputRef{} = input_ref, _graph, input_count) do
     validate_input_ref!(input_ref, input_count)
+  end
+
+  defp validate_source!(source, %Graph{} = graph, _input_count)
+       when is_atom(source) or (is_integer(source) and source >= 0) do
+    case Graph.export(graph, source) do
+      nil -> raise ArgumentError, "command graph has no output #{inspect(source)}"
+      _export -> :ok
+    end
+  end
+
+  defp validate_source!(source, nil, _input_count)
+       when is_atom(source) or (is_integer(source) and source >= 0) do
+    raise ArgumentError, "output source #{inspect(source)} requires a command graph"
   end
 
   defp validate_source!(source, _graph, _input_count) do
@@ -133,6 +273,13 @@ defmodule FF.Command do
 
   defp map_source(%InputRef{} = input_ref, _graph, _render) do
     encode_input_ref(input_ref)
+  end
+
+  defp map_source(source, %Graph{} = graph, render)
+       when is_atom(source) or (is_integer(source) and source >= 0) do
+    graph
+    |> Graph.export!(source)
+    |> map_source(graph, render)
   end
 
   defp map_source(%Export{} = export, %Graph{} = graph, render) do
