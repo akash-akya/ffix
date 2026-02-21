@@ -6,6 +6,14 @@ defmodule FF do
   alias FF.Stream
   alias FF.Terminal
 
+  defmacro __using__(_options) do
+    quote do
+      import FF, only: [expr: 1]
+      import FF.Filter
+      import FF.DSL
+    end
+  end
+
   @type input_id :: FF.Graph.InputRef.input_id() | atom()
   @type input_selector :: FF.Graph.InputRef.selector()
 
