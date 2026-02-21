@@ -77,7 +77,11 @@ defmodule FF.Graph.Parse do
     end
 
     node_id = state.next_id
-    refs = if expected_outputs == 0, do: [], else: Enum.map(0..(expected_outputs - 1), &%Ref{node_id: node_id, output: &1})
+
+    refs =
+      if expected_outputs == 0,
+        do: [],
+        else: Enum.map(0..(expected_outputs - 1), &%Ref{node_id: node_id, output: &1})
 
     preferred_labels =
       filter.outputs
@@ -154,7 +158,8 @@ defmodule FF.Graph.Parse do
 
   defp resolve_input(label, state) do
     case parse_input_ref(label) do
-      %InputRef{} = input_ref -> ensure_input_node(state, input_ref)
+      %InputRef{} = input_ref ->
+        ensure_input_node(state, input_ref)
 
       nil ->
         case state.labels[label] do
@@ -199,7 +204,8 @@ defmodule FF.Graph.Parse do
     filter = Metadata.filter!(name)
     spec = Metadata.filter_spec(name)
 
-    {io_count(filter.inputs, args, spec[:inputs], :inputs), io_count(filter.outputs, args, spec[:outputs], :outputs)}
+    {io_count(filter.inputs, args, spec[:inputs], :inputs),
+     io_count(filter.outputs, args, spec[:outputs], :outputs)}
   end
 
   defp io_count(io, args, option_spec, key) do
@@ -279,7 +285,8 @@ defmodule FF.Graph.Parse do
   defp parse_scalar(source) do
     source = String.trim(source)
 
-    if String.starts_with?(source, "'") and String.ends_with?(source, "'") and byte_size(source) >= 2 do
+    if String.starts_with?(source, "'") and String.ends_with?(source, "'") and
+         byte_size(source) >= 2 do
       source
       |> binary_part(1, byte_size(source) - 2)
       |> unescape()
@@ -325,7 +332,9 @@ defmodule FF.Graph.Parse do
     end
   end
 
-  defp preferred_label_metadata(%{} = preferred_labels) when map_size(preferred_labels) == 0, do: %{}
+  defp preferred_label_metadata(%{} = preferred_labels) when map_size(preferred_labels) == 0,
+    do: %{}
+
   defp preferred_label_metadata(preferred_labels), do: %{preferred_labels: preferred_labels}
 
   defp export_name(label) do
@@ -371,7 +380,9 @@ defmodule FF.Graph.Parse do
 
   defp split_once_unescaped(source, separator) do
     case find_unescaped(source, separator) do
-      nil -> nil
+      nil ->
+        nil
+
       index ->
         head = binary_part(source, 0, index)
         tail = binary_part(source, index + 1, byte_size(source) - index - 1)

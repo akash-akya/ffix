@@ -53,7 +53,8 @@ defmodule FF.Filter do
 
     #{options_doc}
     """
-    @spec unquote(name)(unquote_splicing(input_specs), unquote(options_typespec)) :: unquote(output_specs)
+    @spec unquote(name)(unquote_splicing(input_specs), unquote(options_typespec)) ::
+            unquote(output_specs)
     def unquote(name)(unquote_splicing(input_args), options \\ []) do
       Builder.apply_filter(
         unquote(name),

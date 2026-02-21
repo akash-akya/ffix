@@ -153,7 +153,9 @@ defmodule FF.CommandTest do
     command =
       FF.command(
         inputs: [src],
-        outputs: [Command.output("out.mka", Command.input_stream(src, {:audio, 1}), acodec: :copy)]
+        outputs: [
+          Command.output("out.mka", Command.input_stream(src, {:audio, 1}), acodec: :copy)
+        ]
       )
 
     assert FF.to_argv(command) == [
@@ -275,7 +277,9 @@ defmodule FF.CommandTest do
         global: [y: true, loglevel: :error],
         inputs: [Command.input("input.mp4")],
         graph: graph,
-        outputs: [Command.output("out.mp4", [graph[:video], audio], vcodec: :libx264, acodec: :copy)]
+        outputs: [
+          Command.output("out.mp4", [graph[:video], audio], vcodec: :libx264, acodec: :copy)
+        ]
       )
 
     assert FF.to_argv(command) == [
@@ -329,6 +333,7 @@ defmodule FF.CommandTest do
       |> Filter.drawtext(text: "hello world", x: FF.expr("w-tw-20"), y: 20)
 
     graph = FF.graph(outputs: [video: video])
+
     command =
       FF.command()
       |> Command.input("input file.mp4")

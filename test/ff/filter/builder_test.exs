@@ -30,7 +30,9 @@ defmodule FF.Filter.BuilderTest do
       |> then(&FF.graph(output: &1))
 
     assert filter_node(raw_graph, :fade).args == [type: "custom", start_frame: 0, nb_frames: 30]
-    assert FF.to_filtergraph(raw_graph) == "[0:v]fade=type=custom:start_frame=0:nb_frames=30[out0];"
+
+    assert FF.to_filtergraph(raw_graph) ==
+             "[0:v]fade=type=custom:start_frame=0:nb_frames=30[out0];"
   end
 
   test "normalizes flag lists but keeps raw flag strings and numeric values" do
@@ -41,7 +43,12 @@ defmodule FF.Filter.BuilderTest do
       |> Filter.drawtext(text: "hi", x: 0, y: 0, text_align: [:center, :top])
       |> then(&FF.graph(output: &1))
 
-    assert filter_node(graph, :drawtext).args == [text: "hi", x: 0, y: 0, text_align: "center+top"]
+    assert filter_node(graph, :drawtext).args == [
+             text: "hi",
+             x: 0,
+             y: 0,
+             text_align: "center+top"
+           ]
 
     assert FF.to_filtergraph(graph) ==
              "[0:v]drawtext=text=hi:x=0:y=0:text_align=center+top[out0];"

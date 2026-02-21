@@ -69,7 +69,8 @@ defmodule FF.Command do
   end
 
   @spec global(t(), keyword()) :: t()
-  def global(%__MODULE__{global_options: global_options} = command, options) when is_list(options) do
+  def global(%__MODULE__{global_options: global_options} = command, options)
+      when is_list(options) do
     %{command | global_options: global_options ++ options}
   end
 
@@ -84,7 +85,8 @@ defmodule FF.Command do
   end
 
   def input(source, options) do
-    raise ArgumentError, "input options must be a keyword list, got: #{inspect({source, options})}"
+    raise ArgumentError,
+          "input options must be a keyword list, got: #{inspect({source, options})}"
   end
 
   def input(%__MODULE__{} = command, source, options) when is_list(options) do
@@ -92,7 +94,8 @@ defmodule FF.Command do
   end
 
   def input(%__MODULE__{}, source, options) do
-    raise ArgumentError, "command input options must be a keyword list, got: #{inspect({source, options})}"
+    raise ArgumentError,
+          "command input options must be a keyword list, got: #{inspect({source, options})}"
   end
 
   @spec input_stream(Input.t() | InputRef.input_id() | atom(), InputRef.selector()) :: Stream.t()
@@ -127,7 +130,8 @@ defmodule FF.Command do
   end
 
   def output(target, sources, options) do
-    raise ArgumentError, "output options must be a keyword list, got: #{inspect({target, sources, options})}"
+    raise ArgumentError,
+          "output options must be a keyword list, got: #{inspect({target, sources, options})}"
   end
 
   def output(%__MODULE__{} = command, target, sources, options) when is_list(options) do
@@ -155,9 +159,14 @@ defmodule FF.Command do
     input_count = length(command.inputs)
 
     case command.graph do
-      nil -> :ok
-      %Graph{} = graph -> graph |> resolve_graph_inputs!(input_count, input_index_map) |> FF.validate!()
-      other -> raise ArgumentError, "invalid command graph: #{inspect(other)}"
+      nil ->
+        :ok
+
+      %Graph{} = graph ->
+        graph |> resolve_graph_inputs!(input_count, input_index_map) |> FF.validate!()
+
+      other ->
+        raise ArgumentError, "invalid command graph: #{inspect(other)}"
     end
 
     Enum.each(command.outputs, fn
@@ -179,14 +188,20 @@ defmodule FF.Command do
     command = validate!(command)
     input_index_map = input_index_map!(command.inputs)
     input_count = length(command.inputs)
-    graph = if command.graph, do: resolve_graph_inputs!(command.graph, input_count, input_index_map)
+
+    graph =
+      if command.graph, do: resolve_graph_inputs!(command.graph, input_count, input_index_map)
+
     render = if graph, do: FF.Graph.Render.render(graph)
 
     ["ffmpeg"] ++
       encode_options(command.global_options) ++
       Enum.flat_map(command.inputs, &input_to_argv/1) ++
       graph_to_argv(render) ++
-      Enum.flat_map(command.outputs, &output_to_argv(&1, graph, render, input_count, input_index_map))
+      Enum.flat_map(
+        command.outputs,
+        &output_to_argv(&1, graph, render, input_count, input_index_map)
+      )
   end
 
   @spec to_shell_string(t()) :: String.t()
@@ -283,10 +298,18 @@ defmodule FF.Command do
   defp graph_to_argv(nil), do: []
   defp graph_to_argv(%{graph: graph}), do: ["-filter_complex", graph]
 
-  defp output_to_argv(%Output{target: target, sources: sources, options: options}, graph, render, input_count, input_index_map) do
+  defp output_to_argv(
+         %Output{target: target, sources: sources, options: options},
+         graph,
+         render,
+         input_count,
+         input_index_map
+       ) do
     # Outputs read in terms of graph exports and input streams, but argv still needs
     # ffmpeg's explicit `-map` syntax at the boundary.
-    Enum.flat_map(sources, fn source -> ["-map", map_source(source, graph, render, input_count, input_index_map)] end) ++
+    Enum.flat_map(sources, fn source ->
+      ["-map", map_source(source, graph, render, input_count, input_index_map)]
+    end) ++
       encode_options(options) ++
       [encode_output_target(target)]
   end
@@ -340,7 +363,9 @@ defmodule FF.Command do
   defp maybe_put_input_label!(index_map, nil, _index), do: index_map
 
   defp maybe_put_input_label!(index_map, label, index) do
-    put_input_key!(index_map, label, index, fn -> "duplicate command input label #{inspect(label)}" end)
+    put_input_key!(index_map, label, index, fn ->
+      "duplicate command input label #{inspect(label)}"
+    end)
   end
 
   defp put_input_key!(index_map, nil, _index, _message_fun), do: index_map
@@ -366,7 +391,8 @@ defmodule FF.Command do
     nodes =
       Map.new(graph.nodes, fn
         {node_id, %{kind: :input, input_ref: %InputRef{} = input_ref} = node} ->
-          {node_id, %{node | input_ref: resolve_input_ref!(input_ref, input_count, input_index_map)}}
+          {node_id,
+           %{node | input_ref: resolve_input_ref!(input_ref, input_count, input_index_map)}}
 
         entry ->
           entry
@@ -396,7 +422,11 @@ defmodule FF.Command do
     raise ArgumentError, "invalid input ref #{inspect(input)}"
   end
 
-  defp resolve_stream_source!(%Stream{plan: %{kind: :input, input_ref: %InputRef{} = input_ref}}, input_count, input_index_map) do
+  defp resolve_stream_source!(
+         %Stream{plan: %{kind: :input, input_ref: %InputRef{} = input_ref}},
+         input_count,
+         input_index_map
+       ) do
     resolve_input_ref!(input_ref, input_count, input_index_map)
   end
 
@@ -423,9 +453,15 @@ defmodule FF.Command do
   # Use string keys or values directly when ffmpeg expects more specific syntax.
   defp encode_option_value(value) when is_boolean(value), do: to_string(value)
   defp encode_option_value(value) when is_integer(value), do: Integer.to_string(value)
-  defp encode_option_value(value) when is_float(value), do: :erlang.float_to_binary(value, [:compact])
+
+  defp encode_option_value(value) when is_float(value),
+    do: :erlang.float_to_binary(value, [:compact])
+
   defp encode_option_value(value) when is_atom(value), do: Atom.to_string(value)
-  defp encode_option_value(value) when is_list(value), do: Enum.map_join(value, "+", &encode_option_value/1)
+
+  defp encode_option_value(value) when is_list(value),
+    do: Enum.map_join(value, "+", &encode_option_value/1)
+
   defp encode_option_value(value) when is_binary(value), do: value
 
   defp encode_input_source(:stdin), do: "pipe:0"
@@ -440,9 +476,15 @@ defmodule FF.Command do
 
   defp encode_input_ref(%InputRef{input: input, selector: :video}), do: "#{input}:v"
   defp encode_input_ref(%InputRef{input: input, selector: :audio}), do: "#{input}:a"
-  defp encode_input_ref(%InputRef{input: input, selector: {:video, stream}}), do: "#{input}:v:#{stream}"
-  defp encode_input_ref(%InputRef{input: input, selector: {:audio, stream}}), do: "#{input}:a:#{stream}"
-  defp encode_input_ref(%InputRef{input: input, selector: {:raw, selector}}), do: "#{input}:#{selector}"
+
+  defp encode_input_ref(%InputRef{input: input, selector: {:video, stream}}),
+    do: "#{input}:v:#{stream}"
+
+  defp encode_input_ref(%InputRef{input: input, selector: {:audio, stream}}),
+    do: "#{input}:a:#{stream}"
+
+  defp encode_input_ref(%InputRef{input: input, selector: {:raw, selector}}),
+    do: "#{input}:#{selector}"
 
   defp shell_escape(""), do: "''"
 

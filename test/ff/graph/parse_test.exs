@@ -44,11 +44,31 @@ defmodule FF.Graph.ParseTest do
 
   test "round-trips rendered graphs with escaped values" do
     graphs = [
-      FF.graph(outputs: [video: FF.input(0, :video) |> Filter.drawtext(text: "hello, world", x: 20, y: 20)]),
-      FF.graph(outputs: [video: FF.input(0, :video) |> Filter.drawtext(text: "hello:world", x: FF.expr("w-tw-20"), y: 20)]),
-      FF.graph(outputs: [video: FF.input(0, :video) |> Filter.drawtext(text: "hello;world", x: 20, y: 20)]),
-      FF.graph(outputs: [video: FF.input(0, :video) |> Filter.drawtext(text: "hello[world]", x: 20, y: 20)]),
-      FF.graph(outputs: [video: FF.input(0, :video) |> Filter.drawtext(text: "it\'s\\ok", x: 20, y: 20)])
+      FF.graph(
+        outputs: [
+          video: FF.input(0, :video) |> Filter.drawtext(text: "hello, world", x: 20, y: 20)
+        ]
+      ),
+      FF.graph(
+        outputs: [
+          video:
+            FF.input(0, :video)
+            |> Filter.drawtext(text: "hello:world", x: FF.expr("w-tw-20"), y: 20)
+        ]
+      ),
+      FF.graph(
+        outputs: [
+          video: FF.input(0, :video) |> Filter.drawtext(text: "hello;world", x: 20, y: 20)
+        ]
+      ),
+      FF.graph(
+        outputs: [
+          video: FF.input(0, :video) |> Filter.drawtext(text: "hello[world]", x: 20, y: 20)
+        ]
+      ),
+      FF.graph(
+        outputs: [video: FF.input(0, :video) |> Filter.drawtext(text: "it\'s\\ok", x: 20, y: 20)]
+      )
     ]
 
     Enum.each(graphs, fn graph ->

@@ -44,9 +44,9 @@ defmodule FF.Command.Input do
 
   defp selector_from_access!(:video), do: :video
   defp selector_from_access!(:audio), do: :audio
-  defp selector_from_access!([video: index]), do: {:video, normalize_track_index!(index)}
-  defp selector_from_access!([audio: index]), do: {:audio, normalize_track_index!(index)}
-  defp selector_from_access!([raw: selector]), do: normalize_raw_selector!(selector)
+  defp selector_from_access!(video: index), do: {:video, normalize_track_index!(index)}
+  defp selector_from_access!(audio: index), do: {:audio, normalize_track_index!(index)}
+  defp selector_from_access!(raw: selector), do: normalize_raw_selector!(selector)
   defp selector_from_access!({:video, index}), do: {:video, normalize_track_index!(index)}
   defp selector_from_access!({:audio, index}), do: {:audio, normalize_track_index!(index)}
   defp selector_from_access!({:raw, selector}), do: normalize_raw_selector!(selector)
@@ -62,7 +62,8 @@ defmodule FF.Command.Input do
     raise ArgumentError, "track index must be a non-negative integer, got: #{inspect(index)}"
   end
 
-  defp normalize_raw_selector!(selector) when is_binary(selector) and selector != "", do: {:raw, selector}
+  defp normalize_raw_selector!(selector) when is_binary(selector) and selector != "",
+    do: {:raw, selector}
 
   defp normalize_raw_selector!(selector) do
     raise ArgumentError, "raw selector must be a non-empty string, got: #{inspect(selector)}"

@@ -122,11 +122,20 @@ defmodule FF.Graph.Render do
     |> String.replace("'", "\\'")
   end
 
-  defp input_ref_to_string(%InputRef{input: input, selector: :video}), do: "#{graph_input_id!(input)}:v"
-  defp input_ref_to_string(%InputRef{input: input, selector: :audio}), do: "#{graph_input_id!(input)}:a"
-  defp input_ref_to_string(%InputRef{input: input, selector: {:video, stream}}), do: "#{graph_input_id!(input)}:v:#{stream}"
-  defp input_ref_to_string(%InputRef{input: input, selector: {:audio, stream}}), do: "#{graph_input_id!(input)}:a:#{stream}"
-  defp input_ref_to_string(%InputRef{input: input, selector: {:raw, selector}}), do: "#{graph_input_id!(input)}:#{selector}"
+  defp input_ref_to_string(%InputRef{input: input, selector: :video}),
+    do: "#{graph_input_id!(input)}:v"
+
+  defp input_ref_to_string(%InputRef{input: input, selector: :audio}),
+    do: "#{graph_input_id!(input)}:a"
+
+  defp input_ref_to_string(%InputRef{input: input, selector: {:video, stream}}),
+    do: "#{graph_input_id!(input)}:v:#{stream}"
+
+  defp input_ref_to_string(%InputRef{input: input, selector: {:audio, stream}}),
+    do: "#{graph_input_id!(input)}:a:#{stream}"
+
+  defp input_ref_to_string(%InputRef{input: input, selector: {:raw, selector}}),
+    do: "#{graph_input_id!(input)}:#{selector}"
 
   defp graph_input_id!(input) when is_integer(input), do: input
 
@@ -193,7 +202,8 @@ defmodule FF.Graph.Render do
 
   defp export_labels(exports) do
     Enum.with_index(exports)
-    |> Enum.reduce({%{}, MapSet.new()}, fn {%Export{name: name, ref: ref}, index}, {labels, used} ->
+    |> Enum.reduce({%{}, MapSet.new()}, fn {%Export{name: name, ref: ref}, index},
+                                           {labels, used} ->
       base_label = if name, do: Atom.to_string(name), else: "out#{index}"
       label = unique_label(base_label, used)
 

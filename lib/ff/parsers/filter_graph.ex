@@ -114,9 +114,14 @@ defmodule FF.Parsers.FilterGraph do
   @spec parse(String.t()) :: [tuple()]
   def parse(source) when is_binary(source) do
     case filter_graph(source) do
-      {:ok, parsed, "", %{}, _, _} -> parsed
-      {:ok, _parsed, rest, %{}, _, _} -> raise ArgumentError, "unexpected trailing input: #{inspect(rest)}"
-      {:error, message, rest, %{}, _, _} -> raise ArgumentError, "#{message} at #{inspect(rest)}"
+      {:ok, parsed, "", %{}, _, _} ->
+        parsed
+
+      {:ok, _parsed, rest, %{}, _, _} ->
+        raise ArgumentError, "unexpected trailing input: #{inspect(rest)}"
+
+      {:error, message, rest, %{}, _, _} ->
+        raise ArgumentError, "#{message} at #{inspect(rest)}"
     end
   end
 

@@ -12,14 +12,19 @@ defmodule FF.Filter.Metadata do
                     lines
                     |> Enum.map(&Parsers.FilterSpec.parse/1)
                     |> Enum.reduce(%{all: [], current: nil}, fn
-                      [{:depth, depth}, name, {:type, type}, flags, desc], %{all: all, current: current}
+                      [{:depth, depth}, name, {:type, type}, flags, desc],
+                      %{all: all, current: current}
                       when depth in [2, 3] ->
                         spec = %{name: name, type: type, flags: flags, desc: desc}
                         %{all: all ++ [current], current: spec}
 
                       [{:depth, 5}, enum, num, flags, desc], %{current: current} = acc ->
                         enum_spec = %{enum: enum, num: num, flags: flags, desc: desc}
-                        %{acc | current: Map.update(current, :sub, [enum_spec], &(&1 ++ [enum_spec]))}
+
+                        %{
+                          acc
+                          | current: Map.update(current, :sub, [enum_spec], &(&1 ++ [enum_spec]))
+                        }
                     end)
                     |> then(fn %{all: all, current: current} -> all ++ [current] end)
                     |> Enum.filter(& &1)

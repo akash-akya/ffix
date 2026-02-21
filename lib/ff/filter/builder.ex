@@ -184,7 +184,9 @@ defmodule FF.Filter.Builder do
   # Keep value normalization permissive so raw ffmpeg strings remain an escape hatch.
   defp validate_options!(options, specs) do
     Enum.each(options, fn
-      {:pos, _value} -> :ok
+      {:pos, _value} ->
+        :ok
+
       {key, _value} ->
         unless specs == %{} or Map.has_key?(specs, key) do
           raise ArgumentError, "#{key} is not a valid option"
@@ -209,7 +211,9 @@ defmodule FF.Filter.Builder do
   # Start with the common `outputs:` option and default to one output otherwise.
   defp dynamic_output_count(options) do
     case Keyword.get(options, :outputs) do
-      value when is_integer(value) and value > 0 -> value
+      value when is_integer(value) and value > 0 ->
+        value
+
       value when is_binary(value) ->
         case Integer.parse(value) do
           {count, ""} when count > 0 -> count
