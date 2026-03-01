@@ -454,8 +454,7 @@ defmodule FF.Command do
   defp encode_option_value(value) when is_boolean(value), do: to_string(value)
   defp encode_option_value(value) when is_integer(value), do: Integer.to_string(value)
 
-  defp encode_option_value(value) when is_float(value),
-    do: :erlang.float_to_binary(value, [:compact])
+  defp encode_option_value(value) when is_float(value), do: encode_float_option_value(value)
 
   defp encode_option_value(value) when is_atom(value), do: Atom.to_string(value)
 
@@ -485,6 +484,13 @@ defmodule FF.Command do
 
   defp encode_input_ref(%InputRef{input: input, selector: {:raw, selector}}),
     do: "#{input}:#{selector}"
+
+  defp encode_float_option_value(value) do
+    value
+    |> :erlang.float_to_binary(decimals: 15)
+    |> String.trim_trailing("0")
+    |> String.trim_trailing(".")
+  end
 
   defp shell_escape(""), do: "''"
 

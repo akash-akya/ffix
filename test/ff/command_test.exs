@@ -263,6 +263,29 @@ defmodule FF.CommandTest do
            ]
   end
 
+  test "encodes float command options as plain decimal strings" do
+    command =
+      FF.command(
+        inputs: [Command.input("input.mp4")],
+        outputs: [
+          Command.output("out.mp4", Command.input_stream(0, :video), t: 0.25, vcodec: :copy)
+        ]
+      )
+
+    assert FF.to_argv(command) == [
+             "ffmpeg",
+             "-i",
+             "input.mp4",
+             "-map",
+             "0:v",
+             "-t",
+             "0.25",
+             "-vcodec",
+             "copy",
+             "out.mp4"
+           ]
+  end
+
   test "builds argv from command, input, and output constructors" do
     video =
       FF.input(0, :video)
