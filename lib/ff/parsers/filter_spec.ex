@@ -28,8 +28,7 @@ defmodule FF.Parsers.FilterSpec do
       string("sample_fmt"),
       string("string"),
       string("video_rate"),
-      string("unsigned"),
-      string("sample_fmt")
+      string("unsigned")
     ])
 
   type =
