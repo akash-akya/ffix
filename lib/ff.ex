@@ -3,6 +3,7 @@ defmodule FF do
   alias FF.Expr
   alias FF.Filter.Builder
   alias FF.Graph
+  alias FF.Runner
   alias FF.Stream
   alias FF.Terminal
 
@@ -53,6 +54,19 @@ defmodule FF do
 
   @spec to_shell_string(Command.t()) :: String.t()
   def to_shell_string(%Command{} = command), do: Command.to_shell_string(command)
+
+  @spec run(Command.t() | nonempty_list(String.t()), [Runner.option()]) ::
+          {:ok, Runner.Result.t()} | {:error, Runner.Error.t()}
+  def run(command, options \\ []), do: Runner.run(command, options)
+
+  @spec run!(Command.t() | nonempty_list(String.t()), [Runner.option()]) :: Runner.Result.t()
+  def run!(command, options \\ []), do: Runner.run!(command, options)
+
+  @spec stream(Command.t() | nonempty_list(String.t()), [Runner.option()]) :: term()
+  def stream(command, options \\ []), do: Runner.stream(command, options)
+
+  @spec stream!(Command.t() | nonempty_list(String.t()), [Runner.option()]) :: term()
+  def stream!(command, options \\ []), do: Runner.stream!(command, options)
 
   @spec validate!(Graph.t() | Command.t()) :: Graph.t() | Command.t()
   def validate!(%Graph{} = graph), do: Builder.validate_graph!(graph)

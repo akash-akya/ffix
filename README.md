@@ -346,6 +346,8 @@ A few rules of thumb:
 
 - `FF.to_argv/1` is the canonical form for execution
 - `FF.to_shell_string/1` is for logging and debugging
+- `FF.run/1,2` and `FF.run!/1,2` execute commands and return typed results
+- `FF.stream/1,2` and `FF.stream!/1,2` expose a lazy event stream when you want pull-based output handling
 - `FF.validate!/1` is useful when you want to fail early
 
 For example:
@@ -355,7 +357,31 @@ command = VideoPipeline.resize()
 
 FF.validate!(command)
 
-{_output, 0} = System.cmd("ffmpeg", tl(FF.to_argv(command)))
+{:ok, result} = FF.run(command)
+
+result.exit_status
+#=> 0
+```
+
+`FF.run!/2` is available when you want a raising variant:
+
+```elixir
+result = FF.run!(command, stderr: :collect)
+
+result.stderr
+```
+
+When you want to consume output lazily with back-pressure, use `FF.stream/2`:
+
+```elixir
+FF.stream(command, progress: true)
+|> Enum.each(fn
+  {:stdout, chunk} -> IO.binwrite(chunk)
+  {:log, log} -> IO.puts(log.message)
+  {:progress, progress} -> IO.inspect(progress.status)
+  {:exit, result} -> IO.inspect(result.exit_status)
+  _event -> :ok
+end)
 ```
 
 ## Step 8: The Plain Runtime API Is Still There

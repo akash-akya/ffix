@@ -156,6 +156,85 @@ defmodule FF.FFmpegIntegrationTest do
     assert ["video"] == probe_codec_types!(thumb_path)
   end
 
+  test "runner parses ffmpeg logs and progress events" do
+    parent = self()
+    command = runner_observation_command()
+
+    result =
+      FF.run!(command,
+        progress: true,
+        stderr: :collect,
+        on_event: fn event -> send(parent, event) end
+      )
+
+    assert result.exit_status == 0
+    assert result.stderr =~ "[info]"
+    assert Enum.any?(result.logs, &(&1.level == :info))
+    assert %FF.Runner.Progress{status: :end} = result.last_progress
+    assert result.last_progress.frame >= 1
+
+    events = collect_runner_events([])
+
+    assert Enum.any?(events, fn
+             {:log, %FF.Runner.Log{level: :info}} -> true
+             _ -> false
+           end)
+
+    assert Enum.any?(events, fn
+             {:progress, %FF.Runner.Progress{status: :end}} -> true
+             _ -> false
+           end)
+  end
+
+  test "runner streams ffmpeg logs and progress events" do
+    command = runner_observation_command()
+
+    events =
+      FF.stream(command, progress: true, stderr: :collect)
+      |> Enum.to_list()
+
+    assert Enum.any?(events, fn
+             {:log, %FF.Runner.Log{level: :info}} -> true
+             _ -> false
+           end)
+
+    assert Enum.any?(events, fn
+             {:progress, %FF.Runner.Progress{status: :end}} -> true
+             _ -> false
+           end)
+
+    assert {:exit, result} = List.last(events)
+    assert result.exit_status == 0
+    assert result.stderr =~ "[info]"
+    assert %FF.Runner.Progress{status: :end} = result.last_progress
+  end
+
+  test "runner stderr discard suppresses ffmpeg log and progress events" do
+    parent = self()
+    command = runner_observation_command()
+
+    result =
+      FF.run!(command,
+        progress: true,
+        stderr: :discard,
+        on_event: fn event -> send(parent, event) end
+      )
+
+    assert result.exit_status == 0
+    assert result.stderr == nil
+    assert result.logs == []
+    assert result.last_progress == nil
+
+    events = collect_runner_events([])
+
+    refute Enum.any?(events, fn
+             {:stderr, _} -> true
+             {:log, _} -> true
+             {:progress, _} -> true
+             _ -> false
+           end)
+  end
+
   defp create_sample_video!(path) do
     {output, status} =
       System.cmd(
@@ -205,14 +284,21 @@ defmodule FF.FFmpegIntegrationTest do
     ]
   end
 
+  defp runner_observation_command do
+    FF.command(
+      global: [nostdin: true, loglevel: "level+info", stats_period: 0.1, threads: 1],
+      inputs: [Command.input("testsrc=size=16x16:rate=10:duration=0.3", f: :lavfi)],
+      outputs: [Command.output("-", Command.input_stream(0, :video), f: :null)]
+    )
+  end
+
   defp run_ffmpeg!(command) do
-    argv = FF.to_argv(command)
-    {output, status} = System.cmd(@ffmpeg, tl(argv), stderr_to_stdout: true)
+    result = FF.run!(command, stderr: :collect)
 
-    assert status == 0,
-           "ffmpeg failed with exit #{status}\ncommand: #{FF.to_shell_string(command)}\noutput:\n#{output}"
+    assert result.exit_status == 0,
+           "ffmpeg failed with exit #{inspect(result.exit_status)}\ncommand: #{result.shell}\noutput:\n#{result.stderr}"
 
-    output
+    result
   end
 
   defp probe_codec_types!(path) do
@@ -238,6 +324,14 @@ defmodule FF.FFmpegIntegrationTest do
     |> String.trim()
     |> String.split("x", parts: 2)
     |> then(fn [width, height] -> {String.to_integer(width), String.to_integer(height)} end)
+  end
+
+  defp collect_runner_events(events) do
+    receive do
+      event -> collect_runner_events([event | events])
+    after
+      0 -> Enum.reverse(events)
+    end
   end
 
   defp assert_nonempty_file!(path) do
