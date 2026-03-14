@@ -7,19 +7,42 @@ defmodule FF.FFmpegIntegrationTest do
 
   @moduletag :integration
 
-  @sample_video Path.expand("../support/sample.mp4", __DIR__)
-  @ffmpeg System.find_executable("ffmpeg") || raise("ffmpeg is required for integration tests")
-  @ffprobe System.find_executable("ffprobe") || raise("ffprobe is required for integration tests")
+  @ffmpeg System.find_executable("ffmpeg")
+  @ffprobe System.find_executable("ffprobe")
 
-  setup do
+  if is_nil(@ffmpeg) or is_nil(@ffprobe) do
+    @moduletag skip: "ffmpeg and ffprobe are required for integration tests"
+  end
+
+  setup_all do
+    fixture_dir =
+      Path.join(
+        System.tmp_dir!(),
+        "ff-integration-fixtures-#{System.unique_integer([:positive])}"
+      )
+
+    File.mkdir_p!(fixture_dir)
+
+    sample_video = Path.join(fixture_dir, "sample.mp4")
+    create_sample_video!(sample_video)
+
+    on_exit(fn -> File.rm_rf!(fixture_dir) end)
+
+    {:ok, sample_video: sample_video}
+  end
+
+  setup context do
     tmp_dir = Path.join(System.tmp_dir!(), "ff-integration-#{System.unique_integer([:positive])}")
     File.mkdir_p!(tmp_dir)
     on_exit(fn -> File.rm_rf!(tmp_dir) end)
-    {:ok, tmp_dir: tmp_dir}
+    {:ok, tmp_dir: tmp_dir, sample_video: context.sample_video}
   end
 
-  test "runs a branching graph and writes the expected stacked frame", %{tmp_dir: tmp_dir} do
-    src = Command.input(@sample_video, ss: "00:00:01")
+  test "runs a branching graph and writes the expected stacked frame", %{
+    tmp_dir: tmp_dir,
+    sample_video: sample_video
+  } do
+    src = Command.input(sample_video)
 
     scaled = src[:video] |> Filter.scale(w: 96, h: -1)
     [left, right] = Filter.split(scaled, outputs: 2)
@@ -49,7 +72,9 @@ defmodule FF.FFmpegIntegrationTest do
     assert {192, 54} == probe_dimensions!(output_file)
   end
 
-  test "accepts a parsed round-tripped graph with escaped metadata values" do
+  test "accepts a parsed round-tripped graph with escaped metadata values", %{
+    sample_video: sample_video
+  } do
     escaped_value = ~S(hello, [world]; it's:ok\fine)
 
     graph =
@@ -73,7 +98,7 @@ defmodule FF.FFmpegIntegrationTest do
     command =
       FF.command(
         global: ffmpeg_globals(),
-        inputs: [Command.input(@sample_video, ss: "00:00:01")],
+        inputs: [Command.input(sample_video)],
         graph: parsed,
         outputs: [
           Command.output("-", [parsed[:video], parsed[:audio]], f: :null, t: 0.1, "frames:v": 1)
@@ -84,9 +109,10 @@ defmodule FF.FFmpegIntegrationTest do
   end
 
   test "runs a multi-output command with graph exports and direct input audio", %{
-    tmp_dir: tmp_dir
+    tmp_dir: tmp_dir,
+    sample_video: sample_video
   } do
-    src = Command.input(@sample_video, ss: "00:00:01")
+    src = Command.input(sample_video)
     [master, preview] = Filter.split(src[:video], outputs: 2)
 
     graph =
@@ -108,8 +134,7 @@ defmodule FF.FFmpegIntegrationTest do
         graph: graph,
         outputs: [
           Command.output(master_path, [graph[:master], src[audio: 0]],
-            vcodec: :libx264,
-            preset: :ultrafast,
+            vcodec: :mpeg4,
             acodec: :aac,
             shortest: true,
             t: 0.25
@@ -129,6 +154,45 @@ defmodule FF.FFmpegIntegrationTest do
     assert_nonempty_file!(thumb_path)
     assert ["video", "audio"] == probe_codec_types!(master_path)
     assert ["video"] == probe_codec_types!(thumb_path)
+  end
+
+  defp create_sample_video!(path) do
+    {output, status} =
+      System.cmd(
+        @ffmpeg,
+        [
+          "-y",
+          "-nostdin",
+          "-loglevel",
+          "error",
+          "-threads",
+          "1",
+          "-f",
+          "lavfi",
+          "-i",
+          "testsrc2=size=160x90:rate=10:duration=1",
+          "-f",
+          "lavfi",
+          "-i",
+          "sine=frequency=880:sample_rate=48000:duration=1",
+          "-shortest",
+          "-c:v",
+          "mpeg4",
+          "-q:v",
+          "5",
+          "-pix_fmt",
+          "yuv420p",
+          "-c:a",
+          "aac",
+          path
+        ],
+        stderr_to_stdout: true
+      )
+
+    assert status == 0,
+           "failed to create integration sample fixture at #{path}\noutput:\n#{output}"
+
+    assert_nonempty_file!(path)
   end
 
   defp ffmpeg_globals do
