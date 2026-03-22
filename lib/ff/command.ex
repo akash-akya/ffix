@@ -46,11 +46,10 @@ defmodule FF.Command do
           global_options: [option()],
           inputs: [Input.t()],
           graph: Graph.t() | nil,
-          outputs: [Output.t()],
-          metadata: map()
+          outputs: [Output.t()]
         }
 
-  defstruct global_options: [], inputs: [], graph: nil, outputs: [], metadata: %{}
+  defstruct global_options: [], inputs: [], graph: nil, outputs: []
 
   @spec new() :: t()
   def new, do: %__MODULE__{}
@@ -63,8 +62,7 @@ defmodule FF.Command do
       global_options: normalize_option_list!(Keyword.get(options, :global, []), :global),
       inputs: normalize_inputs!(Keyword.get(options, :inputs, [])),
       graph: normalize_graph!(Keyword.get(options, :graph)),
-      outputs: normalize_outputs!(Keyword.get(options, :outputs, [])),
-      metadata: Keyword.get(options, :metadata, %{})
+      outputs: normalize_outputs!(Keyword.get(options, :outputs, []))
     }
   end
 
@@ -212,7 +210,7 @@ defmodule FF.Command do
   end
 
   defp validate_command_keys!(options) do
-    unknown = Keyword.keys(options) -- [:global, :inputs, :graph, :outputs, :metadata]
+    unknown = Keyword.keys(options) -- [:global, :inputs, :graph, :outputs]
 
     if unknown != [] do
       raise ArgumentError, "unknown command keys: #{inspect(unknown)}"

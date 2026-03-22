@@ -14,22 +14,18 @@ defmodule FF.Graph do
   @type setting :: {atom() | String.t(), term()}
 
   @type t :: %__MODULE__{
-          version: pos_integer(),
           nodes: %{node_id() => Node.t()},
           order: [node_id()],
           exports: [Export.t()],
           terminals: [node_id()],
-          settings: [setting()],
-          metadata: map()
+          settings: [setting()]
         }
 
-  defstruct version: 1,
-            nodes: %{},
+  defstruct nodes: %{},
             order: [],
             exports: [],
             terminals: [],
-            settings: [],
-            metadata: %{}
+            settings: []
 
   @spec exports(t()) :: [Export.t()]
   def exports(%__MODULE__{exports: exports}), do: exports

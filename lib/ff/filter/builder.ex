@@ -23,8 +23,7 @@ defmodule FF.Filter.Builder do
             inputs: [Stream.t()],
             args: [Node.arg()],
             outputs: non_neg_integer(),
-            media: :audio | :video | :unknown,
-            metadata: map()
+            media: :audio | :video | :unknown
           }
 
     defstruct [
@@ -36,8 +35,7 @@ defmodule FF.Filter.Builder do
       inputs: [],
       args: [],
       outputs: 1,
-      media: :unknown,
-      metadata: %{}
+      media: :unknown
     ]
   end
 
@@ -107,7 +105,6 @@ defmodule FF.Filter.Builder do
   @spec graph(keyword()) :: Graph.t()
   def graph(options) when is_list(options) do
     {exports, terminals} = normalize_roots(options)
-    metadata = Keyword.get(options, :metadata, %{})
     settings = normalize_settings(Keyword.get(options, :settings, []))
 
     plans = collect_plans(exports, terminals)
@@ -126,8 +123,7 @@ defmodule FF.Filter.Builder do
       order: order,
       exports: graph_exports,
       terminals: graph_terminals,
-      settings: settings,
-      metadata: metadata
+      settings: settings
     }
   end
 
@@ -370,8 +366,7 @@ defmodule FF.Filter.Builder do
         inputs: Enum.map(plan.inputs, &to_ref(&1, id_map)),
         args: plan.args,
         outputs: plan.outputs,
-        media: plan.media,
-        metadata: plan.metadata
+        media: plan.media
       }
 
       {node_id, node}

@@ -23,11 +23,10 @@ defmodule FF.Command.Input do
           source: source(),
           id: reference() | nil,
           label: label() | nil,
-          options: [option()],
-          metadata: map()
+          options: [option()]
         }
 
-  defstruct [:source, :id, :label, options: [], metadata: %{}]
+  defstruct [:source, :id, :label, options: []]
 
   @spec fetch(t(), term()) :: {:ok, FF.Stream.t()} | :error
   def fetch(%__MODULE__{} = input, key) do

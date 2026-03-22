@@ -11,9 +11,8 @@ defmodule FF.Command.Output do
   @type t :: %__MODULE__{
           target: target(),
           sources: [Command.source()],
-          options: [option()],
-          metadata: map()
+          options: [option()]
         }
 
-  defstruct [:target, sources: [], options: [], metadata: %{}]
+  defstruct [:target, sources: [], options: []]
 end

@@ -25,8 +25,7 @@ defmodule FF.Runner.Result do
           last_progress: Progress.t() | nil,
           started_at: DateTime.t() | nil,
           finished_at: DateTime.t() | nil,
-          duration_ms: non_neg_integer() | nil,
-          metadata: map()
+          duration_ms: non_neg_integer() | nil
         }
 
   defstruct [
@@ -40,7 +39,6 @@ defmodule FF.Runner.Result do
     :started_at,
     :finished_at,
     :duration_ms,
-    logs: [],
-    metadata: %{}
+    logs: []
   ]
 end

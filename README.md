@@ -25,7 +25,17 @@ def deps do
 end
 ```
 
-If you want to execute the generated commands, `ffmpeg` needs to be available on your `PATH`.
+`ffmpeg` currently needs to be available on your `PATH` both when compiling the library and when executing generated commands. Wrapper generation still reads local `ffmpeg` filter metadata at compile time.
+
+## Current Guarantees
+
+`FF` is strongest today at:
+
+- building explicit filtergraphs and commands as Elixir data
+- rendering those graphs back to predictable `ffmpeg` argv
+- handling the filtergraphs that `FF` renders itself
+
+`FF` is not trying to be a full semantic model of all `ffmpeg` behavior yet, and the parser should be treated as pragmatic rather than universal.
 
 ## Quick Start
 
@@ -437,7 +447,7 @@ This is especially useful when you want to:
 - transform one of your own rendered graphs
 - round-trip through parse and render without hand-editing strings
 
-Parsing is pragmatic rather than ambitious: the current focus is on reliably handling the filtergraphs `FF` renders itself, plus common ffmpeg syntax around that.
+Parsing is pragmatic rather than ambitious: the current focus is on reliably handling the filtergraphs `FF` renders itself, plus common ffmpeg syntax around that. It is not positioned as a general-purpose parser for arbitrary user-provided filtergraphs.
 
 ## Summary
 
