@@ -34,16 +34,17 @@ defmodule FF.Graph do
   @spec exports(t()) :: [Export.t()]
   def exports(%__MODULE__{exports: exports}), do: exports
 
-  @spec export(t(), atom() | non_neg_integer()) :: Export.t() | nil
-  def export(%__MODULE__{exports: exports}, name) when is_atom(name) do
-    Enum.find(exports, &(&1.name == name))
+  @spec export(t(), Export.name() | non_neg_integer()) :: Export.t() | nil
+  def export(%__MODULE__{exports: exports}, name) when is_atom(name) or is_binary(name) do
+    key = export_name_key(name)
+    Enum.find(exports, &(export_name_key(&1.name) == key))
   end
 
   def export(%__MODULE__{exports: exports}, index) when is_integer(index) and index >= 0 do
     Enum.at(exports, index)
   end
 
-  @spec export!(t(), atom() | non_neg_integer()) :: Export.t()
+  @spec export!(t(), Export.name() | non_neg_integer()) :: Export.t()
   def export!(%__MODULE__{} = graph, key) do
     case export(graph, key) do
       nil -> raise ArgumentError, "unknown graph export: #{inspect(key)}"
@@ -51,8 +52,9 @@ defmodule FF.Graph do
     end
   end
 
-  @spec fetch(t(), atom() | non_neg_integer()) :: {:ok, Export.t()} | :error
-  def fetch(%__MODULE__{} = graph, key) when is_atom(key) or (is_integer(key) and key >= 0) do
+  @spec fetch(t(), Export.name() | non_neg_integer()) :: {:ok, Export.t()} | :error
+  def fetch(%__MODULE__{} = graph, key)
+      when is_atom(key) or is_binary(key) or (is_integer(key) and key >= 0) do
     case export(graph, key) do
       nil -> :error
       export -> {:ok, export}
@@ -84,12 +86,18 @@ defmodule FF.Graph do
     %{graph | settings: settings ++ [{key, value}]}
   end
 
-  @spec rename_export(t(), atom(), atom()) :: t()
+  @spec rename_export(t(), Export.name(), Export.name()) :: t()
   def rename_export(%__MODULE__{exports: exports} = graph, old_name, new_name) do
+    old_name = export_name_key(old_name)
+
     exports =
       Enum.map(exports, fn
-        %Export{name: ^old_name} = export -> %{export | name: new_name}
-        export -> export
+        %Export{name: name} = export ->
+          if export_name_key(name) == old_name do
+            %{export | name: new_name}
+          else
+            export
+          end
       end)
 
     %{graph | exports: exports}
@@ -100,4 +108,7 @@ defmodule FF.Graph do
 
   @spec to_filtergraph(t()) :: String.t()
   def to_filtergraph(%__MODULE__{} = graph), do: Render.to_filtergraph(graph)
+
+  defp export_name_key(nil), do: nil
+  defp export_name_key(name) when is_atom(name) or is_binary(name), do: to_string(name)
 end

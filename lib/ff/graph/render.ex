@@ -10,7 +10,7 @@ defmodule FF.Graph.Render do
 
   @type render_result :: %{
           graph: String.t(),
-          exports: [%{name: atom() | nil, label: String.t(), ref: Ref.t()}]
+          exports: [%{name: Export.name() | nil, label: String.t(), ref: Ref.t()}]
         }
 
   @spec render(Graph.t()) :: render_result()
@@ -204,7 +204,7 @@ defmodule FF.Graph.Render do
     Enum.with_index(exports)
     |> Enum.reduce({%{}, MapSet.new()}, fn {%Export{name: name, ref: ref}, index},
                                            {labels, used} ->
-      base_label = if name, do: Atom.to_string(name), else: "out#{index}"
+      base_label = if name, do: to_string(name), else: "out#{index}"
       label = unique_label(base_label, used)
 
       {Map.put(labels, ref_key(ref), label), MapSet.put(used, label)}

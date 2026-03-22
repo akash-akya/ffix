@@ -5,8 +5,10 @@ defmodule FF.Graph.Export do
 
   alias FF.Graph.Ref
 
+  @type name :: atom() | String.t()
+
   @type t :: %__MODULE__{
-          name: atom() | nil,
+          name: name() | nil,
           ref: Ref.t()
         }
 

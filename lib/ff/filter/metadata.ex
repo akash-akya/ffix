@@ -12,6 +12,7 @@ defmodule FF.Filter.Metadata do
   # Keep ffmpeg help scraping at compile time so the runtime builder only reads
   # normalized metadata instead of shelling out on each call.
   @filters Help.filters()
+  @filter_names Map.new(@filters, fn {name, _filter} -> {Atom.to_string(name), name} end)
   @filter_specs (
                   parse_specs = fn lines ->
                     lines
@@ -61,10 +62,25 @@ defmodule FF.Filter.Metadata do
   @spec filters() :: map()
   def filters, do: @filters
 
-  @spec filter!(atom() | String.t()) :: map()
-  def filter!(name) when is_binary(name), do: filter!(String.to_atom(name))
+  @spec filter_name!(atom() | String.t()) :: atom()
+  def filter_name!(name) when is_atom(name) do
+    case @filters[name] do
+      nil -> raise ArgumentError, "unknown filter #{inspect(name)}"
+      _filter -> name
+    end
+  end
 
-  def filter!(name) when is_atom(name) do
+  def filter_name!(name) when is_binary(name) do
+    case @filter_names[name] do
+      nil -> raise ArgumentError, "unknown filter #{inspect(name)}"
+      filter_name -> filter_name
+    end
+  end
+
+  @spec filter!(atom() | String.t()) :: map()
+  def filter!(name) do
+    name = filter_name!(name)
+
     case @filters[name] do
       nil -> raise ArgumentError, "unknown filter #{inspect(name)}"
       filter -> filter
@@ -72,8 +88,10 @@ defmodule FF.Filter.Metadata do
   end
 
   @spec filter_spec(atom() | String.t()) :: map()
-  def filter_spec(name) when is_binary(name), do: filter_spec(String.to_atom(name))
-  def filter_spec(name) when is_atom(name), do: Map.get(@filter_specs, name, %{})
+  def filter_spec(name) do
+    name = filter_name!(name)
+    Map.get(@filter_specs, name, %{})
+  end
 
   @spec dynamic_count_option(map(), :inputs | :outputs) :: atom() | nil
   def dynamic_count_option(option_specs, kind) do

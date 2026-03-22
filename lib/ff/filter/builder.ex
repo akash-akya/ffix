@@ -74,7 +74,7 @@ defmodule FF.Filter.Builder do
   @spec filter(atom() | String.t(), [Stream.t()], keyword()) ::
           Stream.t() | Terminal.t() | [Stream.t()] | tuple()
   def filter(name, inputs, options \\ []) when is_list(inputs) do
-    name = normalize_name(name)
+    name = Metadata.filter_name!(name)
     %{outputs: outputs} = Metadata.filter!(name)
     option_specs = Metadata.filter_spec(name)
 
@@ -163,9 +163,6 @@ defmodule FF.Filter.Builder do
 
     graph
   end
-
-  defp normalize_name(name) when is_atom(name), do: name
-  defp normalize_name(name) when is_binary(name), do: String.to_atom(name)
 
   defp normalize_inputs(inputs) do
     Enum.flat_map(inputs, fn

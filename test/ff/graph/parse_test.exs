@@ -37,7 +37,8 @@ defmodule FF.Graph.ParseTest do
     rendered = FF.to_filtergraph(graph)
     parsed = Graph.parse!(rendered)
 
-    assert Enum.map(parsed.exports, & &1.name) == [:video]
+    assert Enum.map(parsed.exports, & &1.name) == ["video"]
+    assert parsed[:video] == parsed["video"]
     assert length(parsed.terminals) == 1
     assert FF.to_filtergraph(parsed) == rendered
   end

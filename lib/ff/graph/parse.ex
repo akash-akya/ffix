@@ -52,7 +52,7 @@ defmodule FF.Graph.Parse do
   end
 
   defp add_filter(%{inputs: input_labels} = filter, {state, pending_outputs}) do
-    name = String.to_atom(filter.name)
+    name = Metadata.filter_name!(filter.name)
     args = parse_args(filter.args)
     {expected_inputs, expected_outputs} = filter_signature(name, args)
 
@@ -307,7 +307,7 @@ defmodule FF.Graph.Parse do
     if String.match?(label, ~r/^out\d+$/) do
       nil
     else
-      String.to_atom(label)
+      label
     end
   end
 
