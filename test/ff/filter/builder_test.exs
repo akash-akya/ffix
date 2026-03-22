@@ -12,6 +12,12 @@ defmodule FF.Filter.BuilderTest do
     end
   end
 
+  test "uses metadata defaults for dynamic output filters" do
+    assert [left, right] = Filter.split(FF.input(0, :video))
+    assert left.output == 0
+    assert right.output == 1
+  end
+
   test "normalizes enum-like values while keeping raw strings as an escape hatch" do
     video = FF.input(0, :video)
 

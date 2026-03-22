@@ -4,6 +4,11 @@ defmodule FF.Filter.Metadata do
   alias FF.Filter.Help
   alias FF.Parsers
 
+  @dynamic_count_options %{
+    inputs: [:inputs, :nb_inputs, :n, :streams],
+    outputs: [:outputs, :nb_outputs, :n, :streams]
+  }
+
   # Keep ffmpeg help scraping at compile time so the runtime builder only reads
   # normalized metadata instead of shelling out on each call.
   @filters Help.filters()
@@ -15,7 +20,24 @@ defmodule FF.Filter.Metadata do
                       [{:depth, depth}, name, {:type, type}, flags, desc],
                       %{all: all, current: current}
                       when depth in [2, 3] ->
-                        spec = %{name: name, type: type, flags: flags, desc: desc}
+                        default =
+                          case {type,
+                                Regex.run(~r/\(default (-?\d+)\)/, desc, capture: :all_but_first)} do
+                            {type, [value]} when type in [:int, :int64] ->
+                              String.to_integer(value)
+
+                            _ ->
+                              nil
+                          end
+
+                        spec = %{
+                          name: name,
+                          type: type,
+                          flags: flags,
+                          desc: desc,
+                          default: default
+                        }
+
                         %{all: all ++ [current], current: spec}
 
                       [{:depth, 5}, enum, num, flags, desc], %{current: current} = acc ->
@@ -53,6 +75,46 @@ defmodule FF.Filter.Metadata do
   def filter_spec(name) when is_binary(name), do: filter_spec(String.to_atom(name))
   def filter_spec(name) when is_atom(name), do: Map.get(@filter_specs, name, %{})
 
+  @spec dynamic_count_option(map(), :inputs | :outputs) :: atom() | nil
+  def dynamic_count_option(option_specs, kind) do
+    @dynamic_count_options
+    |> Map.fetch!(kind)
+    |> Enum.find(&Map.has_key?(option_specs, &1))
+  end
+
+  @spec dynamic_count_from_options(map(), :inputs | :outputs, keyword()) :: integer() | nil
+  def dynamic_count_from_options(option_specs, kind, options) when is_list(options) do
+    case dynamic_count_option(option_specs, kind) do
+      nil ->
+        nil
+
+      option ->
+        parse_integer(Keyword.get(options, option)) || option_default(option_specs[option])
+    end
+  end
+
+  @spec dynamic_count_from_args(map(), :inputs | :outputs, keyword()) :: integer() | nil
+  def dynamic_count_from_args(option_specs, kind, args) when is_list(args) do
+    case dynamic_count_option(option_specs, kind) do
+      nil ->
+        nil
+
+      option ->
+        option_name = Atom.to_string(option)
+
+        args
+        |> Enum.find_value(fn
+          {^option_name, value} -> parse_integer(value)
+          {_other, _value} -> nil
+        end)
+        |> Kernel.||(option_default(option_specs[option]))
+    end
+  end
+
+  @spec option_default(map() | nil) :: integer() | nil
+  def option_default(nil), do: nil
+  def option_default(%{default: default}), do: default
+
   @spec build_options_doc(map()) :: String.t()
   def build_options_doc(options) do
     options
@@ -68,6 +130,17 @@ defmodule FF.Filter.Metadata do
       [unquote_splicing(for option <- options, do: option_typespec(option))]
     end
   end
+
+  defp parse_integer(value) when is_integer(value), do: value
+
+  defp parse_integer(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {integer, ""} -> integer
+      _ -> nil
+    end
+  end
+
+  defp parse_integer(_value), do: nil
 
   defp build_option_doc(name, config) do
     case config[:sub] do

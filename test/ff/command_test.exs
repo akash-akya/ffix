@@ -339,8 +339,6 @@ defmodule FF.CommandTest do
              "ffmpeg",
              "-i",
              "input.mp4",
-             "-filter_complex",
-             "",
              "-map",
              "0:v",
              "-vcodec",

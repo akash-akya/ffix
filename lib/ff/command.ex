@@ -296,6 +296,7 @@ defmodule FF.Command do
   end
 
   defp graph_to_argv(nil), do: []
+  defp graph_to_argv(%{graph: ""}), do: []
   defp graph_to_argv(%{graph: graph}), do: ["-filter_complex", graph]
 
   defp output_to_argv(

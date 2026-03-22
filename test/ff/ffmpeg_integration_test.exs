@@ -156,6 +156,35 @@ defmodule FF.FFmpegIntegrationTest do
     assert ["video"] == probe_codec_types!(thumb_path)
   end
 
+  test "omits filter_complex for graphs that only export direct input streams", %{
+    tmp_dir: tmp_dir,
+    sample_video: sample_video
+  } do
+    src = Command.input(sample_video)
+    graph = FF.graph(outputs: [video: src[:video], audio: src[:audio]])
+    output_path = Path.join(tmp_dir, "copy.mp4")
+
+    command =
+      FF.command(
+        global: ffmpeg_globals(),
+        inputs: [src],
+        graph: graph,
+        outputs: [
+          Command.output(output_path, [graph[:video], graph[:audio]],
+            vcodec: :copy,
+            acodec: :copy
+          )
+        ]
+      )
+
+    refute Enum.member?(FF.to_argv(command), "-filter_complex")
+
+    run_ffmpeg!(command)
+
+    assert_nonempty_file!(output_path)
+    assert ["video", "audio"] == probe_codec_types!(output_path)
+  end
+
   test "runner parses ffmpeg logs and progress events" do
     parent = self()
     command = runner_observation_command()

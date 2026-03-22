@@ -202,55 +202,21 @@ defmodule FF.Graph.Parse do
 
   defp filter_signature(name, args) do
     filter = Metadata.filter!(name)
-    spec = Metadata.filter_spec(name)
+    option_specs = Metadata.filter_spec(name)
 
-    {io_count(filter.inputs, args, spec[:inputs], :inputs),
-     io_count(filter.outputs, args, spec[:outputs], :outputs)}
+    {io_count(filter.inputs, args, option_specs, :inputs),
+     io_count(filter.outputs, args, option_specs, :outputs)}
   end
 
-  defp io_count(io, args, option_spec, key) do
+  defp io_count(io, args, option_specs, kind) do
     io = Enum.reject(io, &(&1 == :|))
 
     case io do
       [] -> 0
-      [:N] -> option_integer(args, Atom.to_string(key)) || option_default(option_spec) || 1
+      [:N] -> Metadata.dynamic_count_from_args(option_specs, kind, args) || 1
       many -> length(many)
     end
   end
-
-  defp option_integer(args, key) do
-    args
-    |> Enum.find_value(fn
-      {^key, value} -> to_integer(value)
-      {_other, _value} -> nil
-    end)
-  end
-
-  defp option_default(nil), do: nil
-
-  defp option_default(%{desc: desc}) do
-    case String.split(desc, "(default ", parts: 2) do
-      [_, rest] ->
-        case String.split(rest, ")", parts: 2) do
-          [value, _] -> value |> String.trim(~s(")) |> to_integer()
-          _ -> nil
-        end
-
-      _ ->
-        nil
-    end
-  end
-
-  defp to_integer(value) when is_integer(value), do: value
-
-  defp to_integer(value) when is_binary(value) do
-    case Integer.parse(value) do
-      {integer, ""} -> integer
-      _ -> nil
-    end
-  end
-
-  defp to_integer(_value), do: nil
 
   defp parse_args(nil), do: []
   defp parse_args(""), do: []

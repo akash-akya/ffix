@@ -88,7 +88,7 @@ defmodule FF.Filter.Builder do
     validate_streams!(inputs)
     validate_options!(options, option_specs)
 
-    output_count = output_count(outputs, options)
+    output_count = output_count(outputs, options, option_specs)
     output_media = output_media(outputs, output_count, inputs)
 
     plan = %Plan{
@@ -203,25 +203,20 @@ defmodule FF.Filter.Builder do
     end)
   end
 
-  defp output_count([], _options), do: 0
-  defp output_count([:N], options), do: dynamic_output_count(options)
-  defp output_count(outputs, _options), do: length(outputs)
+  defp output_count([], _options, _option_specs), do: 0
+
+  defp output_count([:N], options, option_specs) do
+    dynamic_output_count(options, option_specs)
+  end
+
+  defp output_count(outputs, _options, _option_specs), do: length(outputs)
 
   # Dynamic filters need a concrete output count once they become graph nodes.
-  # Start with the common `outputs:` option and default to one output otherwise.
-  defp dynamic_output_count(options) do
-    case Keyword.get(options, :outputs) do
-      value when is_integer(value) and value > 0 ->
-        value
-
-      value when is_binary(value) ->
-        case Integer.parse(value) do
-          {count, ""} when count > 0 -> count
-          _ -> 1
-        end
-
-      _ ->
-        1
+  # Use the normalized option metadata so wrappers and parsing agree on the same default.
+  defp dynamic_output_count(options, option_specs) do
+    case Metadata.dynamic_count_from_options(option_specs, :outputs, options) do
+      count when is_integer(count) and count > 0 -> count
+      _ -> 1
     end
   end
 
