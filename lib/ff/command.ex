@@ -101,10 +101,6 @@ defmodule FF.Command do
     FF.input(id, selector)
   end
 
-  def input_stream(%Input{label: label}, selector) when is_binary(label) do
-    FF.input(label, selector)
-  end
-
   def input_stream(%Input{}, _selector) do
     raise ArgumentError, "command input access requires an input created with FF.Command.input/2"
   end

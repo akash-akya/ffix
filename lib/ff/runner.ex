@@ -198,7 +198,9 @@ defmodule FF.Runner do
   end
 
   defp source_stream(%Result{argv: argv}, options) do
-    Exile.stream(argv, stderr: exile_stderr_mode(options.stderr), input: options.stdin)
+    argv
+    |> Exile.stream(stderr: exile_stderr_mode(options.stderr), input: options.stdin)
+    |> Stream.map(&normalize_source_item/1)
   end
 
   defp start_event(%Result{} = base_result) do
@@ -214,12 +216,6 @@ defmodule FF.Runner do
       logs: [],
       last_progress: nil
     }
-  end
-
-  defp process_source_item(chunk, state) when is_binary(chunk) do
-    events = [{:stdout, chunk}]
-    state = %{state | stdout: capture_chunk(state.stdout, chunk)}
-    {events, state}
   end
 
   defp process_source_item({:stdout, chunk}, state) do
@@ -363,6 +359,9 @@ defmodule FF.Runner do
 
   defp resolve_executable(executable) when is_binary(executable),
     do: System.find_executable(executable)
+
+  defp normalize_source_item(chunk) when is_binary(chunk), do: {:stdout, chunk}
+  defp normalize_source_item(item), do: item
 
   defp exile_stderr_mode(:discard), do: :disable
   defp exile_stderr_mode(:collect), do: :consume
