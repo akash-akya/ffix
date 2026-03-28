@@ -104,6 +104,7 @@ defmodule FF.Filter.Builder do
 
   @spec graph(keyword()) :: Graph.t()
   def graph(options) when is_list(options) do
+    validate_graph_keys!(options)
     {exports, terminals} = normalize_roots(options)
     settings = normalize_settings(Keyword.get(options, :settings, []))
 
@@ -259,6 +260,14 @@ defmodule FF.Filter.Builder do
       %Stream{plan: plan, output: output, media: media}
     end)
     |> List.to_tuple()
+  end
+
+  defp validate_graph_keys!(options) do
+    unknown = Keyword.keys(options) -- [:output, :outputs, :terminals, :settings]
+
+    if unknown != [] do
+      raise ArgumentError, "unknown graph keys: #{inspect(unknown)}"
+    end
   end
 
   defp normalize_roots(options) do

@@ -52,4 +52,10 @@ defmodule FF.GraphTest do
              """
              |> String.trim()
   end
+
+  test "graphs reject unknown top-level keys" do
+    assert_raise ArgumentError, "unknown graph keys: [:metadata]", fn ->
+      FF.graph(outputs: [video: FF.input(0, :video)], metadata: %{debug: true})
+    end
+  end
 end
