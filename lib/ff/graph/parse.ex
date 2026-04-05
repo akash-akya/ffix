@@ -43,7 +43,7 @@ defmodule FF.Graph.Parse do
   end
 
   defp apply_statement({:setting, key, value}, state) do
-    %{state | settings: state.settings ++ [{key, parse_setting_value(value)}]}
+    %{state | settings: [{key, parse_setting_value(value)} | state.settings]}
   end
 
   defp apply_statement({:chain, filters}, state) do
@@ -100,12 +100,7 @@ defmodule FF.Graph.Parse do
       metadata: preferred_label_metadata(preferred_labels)
     }
 
-    state = %{
-      state
-      | nodes: Map.put(state.nodes, node_id, node),
-        order: state.order ++ [node_id],
-        next_id: node_id + 1
-    }
+    state = put_node(state, node)
 
     {labeled_refs, pending_refs} = Enum.split(refs, length(filter.outputs))
 
@@ -115,7 +110,7 @@ defmodule FF.Graph.Parse do
         %{
           state
           | labels: Map.put(state.labels, label, ref),
-            export_candidates: state.export_candidates ++ [%{label: label, ref: ref}]
+            export_candidates: [%{label: label, ref: ref} | state.export_candidates]
         }
       end)
 
@@ -123,11 +118,16 @@ defmodule FF.Graph.Parse do
   end
 
   defp export_pending_outputs(state, refs) do
-    candidates = Enum.map(refs, &%{label: nil, ref: &1})
-    %{state | export_candidates: state.export_candidates ++ candidates}
+    Enum.reduce(refs, state, fn ref, state ->
+      %{state | export_candidates: [%{label: nil, ref: ref} | state.export_candidates]}
+    end)
   end
 
   defp to_graph(state) do
+    order = Enum.reverse(state.order)
+    settings = Enum.reverse(state.settings)
+    export_candidates = Enum.reverse(state.export_candidates)
+
     terminals =
       state.nodes
       |> Map.values()
@@ -135,7 +135,7 @@ defmodule FF.Graph.Parse do
       |> Enum.map(& &1.id)
 
     exports =
-      Enum.flat_map(state.export_candidates, fn
+      Enum.flat_map(export_candidates, fn
         %{label: nil, ref: ref} ->
           [%Export{name: nil, ref: ref}]
 
@@ -149,10 +149,10 @@ defmodule FF.Graph.Parse do
 
     %Graph{
       nodes: state.nodes,
-      order: state.order,
+      order: order,
       exports: exports,
       terminals: terminals,
-      settings: state.settings
+      settings: settings
     }
   end
 
@@ -185,19 +185,23 @@ defmodule FF.Graph.Parse do
 
         ref = %Ref{node_id: node_id, output: 0}
 
-        state = %{
-          state
-          | nodes: Map.put(state.nodes, node_id, node),
-            order: state.order ++ [node_id],
-            next_id: node_id + 1,
-            input_nodes: Map.put(state.input_nodes, input_ref, node_id)
-        }
+        state = put_node(state, node)
+        state = %{state | input_nodes: Map.put(state.input_nodes, input_ref, node_id)}
 
         {ref, state}
 
       node_id ->
         {%Ref{node_id: node_id, output: 0}, state}
     end
+  end
+
+  defp put_node(state, %Node{id: node_id} = node) do
+    %{
+      state
+      | nodes: Map.put(state.nodes, node_id, node),
+        order: [node_id | state.order],
+        next_id: node_id + 1
+    }
   end
 
   defp filter_signature(name, args) do

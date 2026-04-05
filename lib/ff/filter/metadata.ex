@@ -8,12 +8,34 @@ defmodule FF.Filter.Metadata do
     inputs: [:inputs, :nb_inputs, :n, :streams],
     outputs: [:outputs, :nb_outputs, :n, :streams]
   }
+  @default_integer_regex ~r/\(default (-?\d+)\)/
 
   # Keep ffmpeg help scraping at compile time so the runtime builder only reads
   # normalized metadata instead of shelling out on each call.
   @filters Help.filters()
   @filter_names Map.new(@filters, fn {name, _filter} -> {Atom.to_string(name), name} end)
   @filter_specs (
+                  option_default = fn
+                    type, desc when type in [:int, :int64] ->
+                      case Regex.run(@default_integer_regex, desc, capture: :all_but_first) do
+                        [value] -> String.to_integer(value)
+                        _ -> nil
+                      end
+
+                    _type, _desc ->
+                      nil
+                  end
+
+                  build_option_spec = fn name, type, flags, desc ->
+                    %{
+                      name: name,
+                      type: type,
+                      flags: flags,
+                      desc: desc,
+                      default: option_default.(type, desc)
+                    }
+                  end
+
                   parse_specs = fn lines ->
                     lines
                     |> Enum.map(&Parsers.FilterSpec.parse/1)
@@ -21,25 +43,10 @@ defmodule FF.Filter.Metadata do
                       [{:depth, depth}, name, {:type, type}, flags, desc],
                       %{all: all, current: current}
                       when depth in [2, 3] ->
-                        default =
-                          case {type,
-                                Regex.run(~r/\(default (-?\d+)\)/, desc, capture: :all_but_first)} do
-                            {type, [value]} when type in [:int, :int64] ->
-                              String.to_integer(value)
-
-                            _ ->
-                              nil
-                          end
-
-                        spec = %{
-                          name: name,
-                          type: type,
-                          flags: flags,
-                          desc: desc,
-                          default: default
+                        %{
+                          all: all ++ [current],
+                          current: build_option_spec.(name, type, flags, desc)
                         }
-
-                        %{all: all ++ [current], current: spec}
 
                       [{:depth, 5}, enum, num, flags, desc], %{current: current} = acc ->
                         enum_spec = %{enum: enum, num: num, flags: flags, desc: desc}
@@ -78,20 +85,10 @@ defmodule FF.Filter.Metadata do
   end
 
   @spec filter!(atom() | String.t()) :: map()
-  def filter!(name) do
-    name = filter_name!(name)
-
-    case @filters[name] do
-      nil -> raise ArgumentError, "unknown filter #{inspect(name)}"
-      filter -> filter
-    end
-  end
+  def filter!(name), do: @filters[filter_name!(name)]
 
   @spec filter_spec(atom() | String.t()) :: map()
-  def filter_spec(name) do
-    name = filter_name!(name)
-    Map.get(@filter_specs, name, %{})
-  end
+  def filter_spec(name), do: Map.get(@filter_specs, filter_name!(name), %{})
 
   @spec dynamic_count_option(map(), :inputs | :outputs) :: atom() | nil
   def dynamic_count_option(option_specs, kind) do
