@@ -185,6 +185,8 @@ When a filter's real output shape depends on options that `FF` cannot infer clea
   |> FF.shape([:audio, :video])
 ```
 
+`FF.shape/2` is for the small set of filters where ffmpeg's output pads depend on option combinations rather than a simple fixed signature. Most filters do not need it.
+
 That keeps the default API simple while still making unusual dynamic-output filters buildable.
 
 ## Step 4: Build Bigger Filtergraphs
@@ -353,6 +355,28 @@ output("archive.mkv",
 
 Use `video:` / `audio:` first. Reach for `sources:` only when you need explicit ordering or unusual mappings.
 
+Whole-input maps are available too when you want ffmpeg behavior like `-map 0`:
+
+```elixir
+output("remux.mkv",
+  sources: [src[:input]],
+  c: :copy
+)
+```
+
+Raw selectors still work as the low-level escape hatch for unusual stream specifiers:
+
+```elixir
+output("subtitles.mkv",
+  sources: [src[raw: "s?"], src[raw: "a:m:language:eng"]]
+)
+```
+
+A couple of graph rules are worth keeping in mind:
+
+- every produced filter output must be consumed, exported, or sent to a sink
+- exported filtered outputs must be mapped exactly once at the command boundary
+
 ## Step 7: Turn a Command into `ffmpeg`
 
 `FF` keeps execution based on argv.
@@ -440,7 +464,7 @@ A couple of small conveniences still help here:
 
 - `graph[:preview]` looks up a named graph export
 - `graph[0]` looks up an export by position
-- `src[:video]` and `src[audio: 1]` still work on plain `%FF.Command.Input{}` values
+- `src[:input]`, `src[:video]`, and `src[audio: 1]` still work on plain `%FF.Command.Input{}` values
 
 ## Step 9: Parse and Re-Render Filtergraphs
 
