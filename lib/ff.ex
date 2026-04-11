@@ -9,7 +9,7 @@ defmodule FF do
 
   defmacro __using__(_options) do
     quote do
-      import FF, only: [expr: 1]
+      import FF, only: [expr: 1, shape: 2]
       import FF.Filter
       import FF.DSL
     end
@@ -32,6 +32,10 @@ defmodule FF do
   def filter(name, inputs, options \\ []) when is_list(inputs) do
     Builder.filter(name, inputs, options)
   end
+
+  @spec shape(Stream.t() | [Stream.t()] | tuple(), [FF.Filter.Builder.output_media()]) ::
+          Stream.t() | [Stream.t()]
+  def shape(result, outputs), do: Builder.shape(result, outputs)
 
   @spec graph(keyword()) :: Graph.t()
   def graph(options), do: Builder.graph(options)

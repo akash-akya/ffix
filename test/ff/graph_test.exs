@@ -58,4 +58,14 @@ defmodule FF.GraphTest do
       FF.graph(outputs: [video: FF.input(0, :video)], metadata: %{debug: true})
     end
   end
+
+  test "graphs reject unconnected filter outputs" do
+    [main, _debug] = FF.input(0, :video) |> Filter.split(outputs: 2)
+
+    assert_raise ArgumentError,
+                 "unconnected filter output {2, 1}; every produced output must be consumed or exported",
+                 fn ->
+                   FF.graph(outputs: [main: main]) |> FF.validate!()
+                 end
+  end
 end

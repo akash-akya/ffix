@@ -100,6 +100,28 @@ defmodule FF.Graph.ParseTest do
              ~S([0:v]drawtext=text=it\'s\:ok:x=20:y=20[video];)
   end
 
+  test "parses explicitly labeled dynamic outputs we render via shape/2" do
+    graph =
+      FF.input(0, :audio)
+      |> Filter.ebur128(video: true)
+      |> FF.shape([:audio, :video])
+      |> then(fn [audio, video] -> FF.graph(outputs: [audio: audio, video: video]) end)
+
+    rendered = FF.to_filtergraph(graph)
+    assert FF.to_filtergraph(Graph.parse!(rendered)) == rendered
+  end
+
+  test "parses shaped concat graphs with one explicit output" do
+    graph =
+      [FF.input(0, :video), FF.input(1, :video)]
+      |> Filter.concat()
+      |> FF.shape([:video])
+      |> then(&FF.graph(outputs: [video: &1]))
+
+    rendered = FF.to_filtergraph(graph)
+    assert FF.to_filtergraph(Graph.parse!(rendered)) == rendered
+  end
+
   test "parses mixed positional and named args" do
     source = "[0:v]fade=in:0:30:alpha=1[out]"
 

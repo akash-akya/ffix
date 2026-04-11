@@ -191,6 +191,27 @@ defmodule FF.CommandTest do
            ]
   end
 
+  test "supports whole-input maps" do
+    src = Command.input("input.mp4")
+
+    command =
+      FF.command(
+        inputs: [src],
+        outputs: [Command.output("out.mkv", src[:input], c: :copy)]
+      )
+
+    assert FF.to_argv(command) == [
+             "ffmpeg",
+             "-i",
+             "input.mp4",
+             "-map",
+             "0",
+             "-c",
+             "copy",
+             "out.mkv"
+           ]
+  end
+
   test "rejects duplicate command input declarations" do
     src = Command.input("input.mp4")
 
@@ -425,5 +446,46 @@ defmodule FF.CommandTest do
              "0",
              "thumb-%03d.jpg"
            ]
+  end
+
+  test "rejects duplicated mappings for filter graph outputs" do
+    graph = FF.graph(outputs: [video: FF.input(0, :video) |> Filter.scale(w: 320, h: -1)])
+
+    command =
+      FF.command(
+        inputs: [Command.input("input.mp4")],
+        graph: graph,
+        outputs: [
+          Command.output("a.mp4", :video, vcodec: :libx264),
+          Command.output("b.mp4", :video, vcodec: :libx264)
+        ]
+      )
+
+    assert_raise ArgumentError,
+                 "graph output :video is mapped 2 times; complex filter outputs must be mapped exactly once",
+                 fn ->
+                   FF.to_argv(command)
+                 end
+  end
+
+  test "rejects unmapped filter graph outputs" do
+    graph =
+      FF.graph(
+        outputs: [
+          master: FF.input(0, :video) |> Filter.scale(w: 1280, h: -1),
+          preview: FF.input(0, :video) |> Filter.scale(w: 320, h: -1)
+        ]
+      )
+
+    command =
+      FF.command(
+        inputs: [Command.input("input.mp4")],
+        graph: graph,
+        outputs: [Command.output("out.mp4", :master, vcodec: :libx264)]
+      )
+
+    assert_raise ArgumentError, "graph output :preview must be mapped exactly once", fn ->
+      FF.to_argv(command)
+    end
   end
 end

@@ -6,7 +6,8 @@ defmodule FF.Graph.InputRef do
   @type input_id :: non_neg_integer() | String.t() | reference()
 
   @type selector ::
-          :video
+          :input
+          | :video
           | :audio
           | {:video, non_neg_integer()}
           | {:audio, non_neg_integer()}

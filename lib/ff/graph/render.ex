@@ -122,6 +122,9 @@ defmodule FF.Graph.Render do
     |> String.replace("'", "\\'")
   end
 
+  defp input_ref_to_string(%InputRef{input: input, selector: :input}),
+    do: "#{graph_input_id!(input)}"
+
   defp input_ref_to_string(%InputRef{input: input, selector: :video}),
     do: "#{graph_input_id!(input)}:v"
 

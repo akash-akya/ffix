@@ -7,6 +7,7 @@ defmodule FF.Command.Input do
       src = FF.Command.input("input.mp4", ss: "00:00:03")
       logo = FF.Command.input("logo.png", label: :logo, loop: 1, framerate: 1)
 
+      src[:input]
       src[:video]
       src[:audio]
       src[audio: 1]
@@ -41,6 +42,7 @@ defmodule FF.Command.Input do
     raise ArgumentError, "FF.Command.Input access is read-only"
   end
 
+  defp selector_from_access!(:input), do: :input
   defp selector_from_access!(:video), do: :video
   defp selector_from_access!(:audio), do: :audio
   defp selector_from_access!(video: index), do: {:video, normalize_track_index!(index)}
@@ -52,7 +54,7 @@ defmodule FF.Command.Input do
 
   defp selector_from_access!(key) do
     raise ArgumentError,
-          "invalid input selector #{inspect(key)}; expected :video, :audio, [video: n], [audio: n], or {:raw, selector}"
+          "invalid input selector #{inspect(key)}; expected :input, :video, :audio, [video: n], [audio: n], or {:raw, selector}"
   end
 
   defp normalize_track_index!(index) when is_integer(index) and index >= 0, do: index

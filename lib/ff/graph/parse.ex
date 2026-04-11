@@ -54,7 +54,14 @@ defmodule FF.Graph.Parse do
   defp add_filter(%{inputs: input_labels} = filter, {state, pending_outputs}) do
     name = Metadata.filter_name!(filter.name)
     args = parse_args(filter.args)
-    {expected_inputs, expected_outputs} = filter_signature(name, args)
+
+    {expected_inputs, expected_outputs} =
+      filter_signature(
+        name,
+        args,
+        length(input_labels) + length(pending_outputs),
+        length(filter.outputs)
+      )
 
     if length(input_labels) > expected_inputs do
       raise ArgumentError, "too many input labels for #{filter.name}"
@@ -204,22 +211,65 @@ defmodule FF.Graph.Parse do
     }
   end
 
-  defp filter_signature(name, args) do
+  defp filter_signature(:concat, args, fallback_inputs, _fallback_outputs) do
+    option_specs = Metadata.filter_spec(:concat)
+
+    segments =
+      integer_arg(args, "n") || Metadata.option_default(option_specs[:n]) || fallback_inputs || 1
+
+    video_outputs = integer_arg(args, "v") || Metadata.option_default(option_specs[:v]) || 0
+    audio_outputs = integer_arg(args, "a") || Metadata.option_default(option_specs[:a]) || 0
+
+    {segments * (video_outputs + audio_outputs), video_outputs + audio_outputs}
+  end
+
+  defp filter_signature(name, args, fallback_inputs, fallback_outputs) do
     filter = Metadata.filter!(name)
     option_specs = Metadata.filter_spec(name)
 
-    {io_count(filter.inputs, args, option_specs, :inputs),
-     io_count(filter.outputs, args, option_specs, :outputs)}
+    {input_count(filter.inputs, args, option_specs, fallback_inputs),
+     output_count(filter.outputs, args, option_specs, fallback_outputs)}
   end
 
-  defp io_count(io, args, option_specs, kind) do
+  defp input_count(io, args, option_specs, fallback_count) do
     io = Enum.reject(io, &(&1 == :|))
 
     case io do
       [] -> 0
-      [:N] -> Metadata.dynamic_count_from_args(option_specs, kind, args) || 1
+      [:N] -> Metadata.dynamic_count_from_args(option_specs, :inputs, args) || fallback_count || 1
       many -> length(many)
     end
+  end
+
+  defp output_count(io, args, option_specs, fallback_count) do
+    io = Enum.reject(io, &(&1 == :|))
+
+    case io do
+      [] ->
+        0
+
+      [:N] ->
+        Metadata.dynamic_count_from_args(option_specs, :outputs, args) || fallback_count || 1
+
+      many ->
+        length(many)
+    end
+  end
+
+  defp integer_arg(args, key) do
+    Enum.find_value(args, fn
+      {^key, value} when is_integer(value) ->
+        value
+
+      {^key, value} when is_binary(value) ->
+        case Integer.parse(value) do
+          {integer, ""} -> integer
+          _ -> nil
+        end
+
+      {_other, _value} ->
+        nil
+    end)
   end
 
   defp parse_args(nil), do: []
@@ -267,6 +317,7 @@ defmodule FF.Graph.Parse do
 
   defp parse_input_ref(label) do
     case String.split(label, ":") do
+      [input] -> build_input_ref(input, :input)
       [input, "v"] -> build_input_ref(input, :video)
       [input, "a"] -> build_input_ref(input, :audio)
       [input, "v", stream] -> build_stream_input_ref(input, stream, :video)

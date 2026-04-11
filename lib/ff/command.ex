@@ -152,28 +152,30 @@ defmodule FF.Command do
 
     input_count = length(command.inputs)
 
-    case command.graph do
-      nil ->
-        :ok
+    graph =
+      case command.graph do
+        nil ->
+          nil
 
-      %Graph{} = graph ->
-        graph |> resolve_graph_inputs!(input_count, input_index_map) |> FF.validate!()
+        %Graph{} = graph ->
+          graph |> resolve_graph_inputs!(input_count, input_index_map) |> FF.validate!()
 
-      other ->
-        raise ArgumentError, "invalid command graph: #{inspect(other)}"
-    end
+        other ->
+          raise ArgumentError, "invalid command graph: #{inspect(other)}"
+      end
 
     Enum.each(command.outputs, fn
       %Output{sources: []} ->
         raise ArgumentError, "output requires at least one source"
 
       %Output{sources: sources} ->
-        Enum.each(sources, &validate_source!(&1, command.graph, input_count, input_index_map))
+        Enum.each(sources, &validate_source!(&1, graph, input_count, input_index_map))
 
       other ->
         raise ArgumentError, "invalid command output: #{inspect(other)}"
     end)
 
+    validate_graph_export_mappings!(command.outputs, graph)
     command
   end
 
@@ -284,6 +286,61 @@ defmodule FF.Command do
   defp validate_source!(source, _graph, _input_count, _input_index_map) do
     raise ArgumentError, "invalid output source: #{inspect(source)}"
   end
+
+  defp validate_graph_export_mappings!(_outputs, nil), do: :ok
+
+  defp validate_graph_export_mappings!(outputs, %Graph{} = graph) do
+    export_counts =
+      Enum.reduce(outputs, %{}, fn %Output{sources: sources}, counts ->
+        Enum.reduce(sources, counts, fn source, counts ->
+          case mapped_filter_export(source, graph) do
+            nil -> counts
+            %Export{ref: ref} -> Map.update(counts, ref_key(ref), 1, &(&1 + 1))
+          end
+        end)
+      end)
+
+    Enum.each(graph.exports, fn %Export{} = export ->
+      if filter_export?(graph, export) do
+        count = Map.get(export_counts, ref_key(export.ref), 0)
+
+        case count do
+          1 ->
+            :ok
+
+          0 ->
+            raise ArgumentError,
+                  "graph output #{inspect(export.name || export.ref)} must be mapped exactly once"
+
+          count ->
+            raise ArgumentError,
+                  "graph output #{inspect(export.name || export.ref)} is mapped #{count} times; complex filter outputs must be mapped exactly once"
+        end
+      end
+    end)
+  end
+
+  defp mapped_filter_export(%Export{} = export, %Graph{} = graph) do
+    if filter_export?(graph, export), do: export, else: nil
+  end
+
+  defp mapped_filter_export(source, %Graph{} = graph)
+       when is_atom(source) or (is_integer(source) and source >= 0) do
+    graph
+    |> Graph.export!(source)
+    |> mapped_filter_export(graph)
+  end
+
+  defp mapped_filter_export(%Stream{}, %Graph{}), do: nil
+
+  defp filter_export?(%Graph{} = graph, %Export{ref: ref}) do
+    case Map.fetch!(graph.nodes, ref.node_id) do
+      %{kind: :filter} -> true
+      _node -> false
+    end
+  end
+
+  defp ref_key(%FF.Graph.Ref{node_id: node_id, output: output}), do: {node_id, output}
 
   defp input_to_argv(%Input{source: source, options: options}) do
     encode_options(options) ++ ["-i", encode_input_source(source)]
@@ -468,6 +525,7 @@ defmodule FF.Command do
   defp encode_output_target({:url, url}) when is_binary(url), do: url
   defp encode_output_target(target) when is_binary(target), do: target
 
+  defp encode_input_ref(%InputRef{input: input, selector: :input}), do: "#{input}"
   defp encode_input_ref(%InputRef{input: input, selector: :video}), do: "#{input}:v"
   defp encode_input_ref(%InputRef{input: input, selector: :audio}), do: "#{input}:a"
 

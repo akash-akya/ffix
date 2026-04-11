@@ -18,6 +18,35 @@ defmodule FF.Filter.BuilderTest do
     assert right.output == 1
   end
 
+  test "concat infers mixed output media from v/a options" do
+    [video, audio] =
+      Filter.concat(
+        [
+          FF.input(0, :video),
+          FF.input(0, :audio),
+          FF.input(1, :video),
+          FF.input(1, :audio)
+        ],
+        n: 2,
+        v: 1,
+        a: 1
+      )
+
+    assert video.media == :video
+    assert audio.media == :audio
+  end
+
+  test "shape/2 reshapes ambiguous filter outputs" do
+    outputs =
+      FF.input(0, :audio)
+      |> Filter.ebur128(video: true)
+      |> FF.shape([:audio, :video])
+
+    assert [audio, video] = outputs
+    assert audio.media == :audio
+    assert video.media == :video
+  end
+
   test "normalizes enum-like values while keeping raw strings as an escape hatch" do
     video = FF.input(0, :video)
 

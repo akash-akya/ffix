@@ -81,6 +81,7 @@ A few things are already happening here:
 
 - `inputs:` declares named command inputs
 - `src[:video]` and `src[:audio]` select streams from that input
+- `src[:input]` is available when you need to map a whole input like `-map 0`
 - `outputs:` describes the output in terms of stream roles like `video:` and `audio:`
 
 That output API is deliberate: most of the time you want to say what each stream *is for*, not manually assemble low-level `-map` entries.
@@ -174,6 +175,17 @@ This example shows a few important ideas:
 - one graph can branch into multiple named outputs
 - one command can write multiple files
 - `graph:` can take a real graph value, not just inline DSL sugar
+
+When a filter's real output shape depends on options that `FF` cannot infer cleanly, use `FF.shape/2` as the escape hatch.
+
+```elixir
+[audio, video] =
+  src[:audio]
+  |> ebur128(video: true)
+  |> FF.shape([:audio, :video])
+```
+
+That keeps the default API simple while still making unusual dynamic-output filters buildable.
 
 ## Step 4: Build Bigger Filtergraphs
 
