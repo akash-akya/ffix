@@ -96,19 +96,6 @@ defmodule FF.Command do
           "command input options must be a keyword list, got: #{inspect({source, options})}"
   end
 
-  @spec stream_ref(Input.t() | InputRef.input_id() | atom(), InputRef.selector()) :: Stream.t()
-  def stream_ref(%Input{id: id}, selector) when is_reference(id) do
-    FF.stream_ref(id, selector)
-  end
-
-  def stream_ref(%Input{}, _selector) do
-    raise ArgumentError, "command stream refs require an input created with FF.Command.input/2"
-  end
-
-  def stream_ref(input, selector) do
-    FF.stream_ref(input, selector)
-  end
-
   @spec graph(t(), Graph.t()) :: t()
   def graph(%__MODULE__{} = command, %Graph{} = graph) do
     %{command | graph: graph}

@@ -9,9 +9,13 @@ defmodule FF.Graph do
   alias __MODULE__.Node
   alias __MODULE__.Parse
   alias __MODULE__.Render
+  alias __MODULE__.InputRef
+  alias FF.Filter.Builder
 
   @type node_id :: pos_integer()
   @type setting :: {atom() | String.t(), term()}
+  @type input_id :: InputRef.input_id() | atom()
+  @type input_selector :: InputRef.selector()
 
   @type t :: %__MODULE__{
           nodes: %{node_id() => Node.t()},
@@ -26,6 +30,12 @@ defmodule FF.Graph do
             exports: [],
             terminals: [],
             settings: []
+
+  @spec input(input_id(), input_selector()) :: FF.Stream.t()
+  def input(input, selector), do: Builder.input(input, selector)
+
+  @spec input_raw(String.t()) :: FF.Stream.t()
+  def input_raw(spec), do: Builder.input_raw(spec)
 
   @spec exports(t()) :: [Export.t()]
   def exports(%__MODULE__{exports: exports}), do: exports

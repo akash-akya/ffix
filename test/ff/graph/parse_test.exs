@@ -6,7 +6,7 @@ defmodule FF.Graph.ParseTest do
 
   test "round-trips a rendered graph with an unnamed export" do
     graph =
-      FF.stream_ref(0, :video)
+      FF.Graph.input(0, :video)
       |> Filter.scale(w: 1280, h: -1)
       |> Filter.drawtext(text: "Hello", x: FF.expr("w-tw-20"), y: 20)
       |> then(&FF.graph(output: &1))
@@ -19,7 +19,7 @@ defmodule FF.Graph.ParseTest do
   end
 
   test "round-trips a rendered graph with settings, exports, and terminals" do
-    video = FF.stream_ref(0, :video)
+    video = FF.Graph.input(0, :video)
     [main, debug] = Filter.split(video, outputs: 2)
 
     sink =
@@ -47,29 +47,29 @@ defmodule FF.Graph.ParseTest do
     graphs = [
       FF.graph(
         outputs: [
-          video: FF.stream_ref(0, :video) |> Filter.drawtext(text: "hello, world", x: 20, y: 20)
+          video: FF.Graph.input(0, :video) |> Filter.drawtext(text: "hello, world", x: 20, y: 20)
         ]
       ),
       FF.graph(
         outputs: [
           video:
-            FF.stream_ref(0, :video)
+            FF.Graph.input(0, :video)
             |> Filter.drawtext(text: "hello:world", x: FF.expr("w-tw-20"), y: 20)
         ]
       ),
       FF.graph(
         outputs: [
-          video: FF.stream_ref(0, :video) |> Filter.drawtext(text: "hello;world", x: 20, y: 20)
+          video: FF.Graph.input(0, :video) |> Filter.drawtext(text: "hello;world", x: 20, y: 20)
         ]
       ),
       FF.graph(
         outputs: [
-          video: FF.stream_ref(0, :video) |> Filter.drawtext(text: "hello[world]", x: 20, y: 20)
+          video: FF.Graph.input(0, :video) |> Filter.drawtext(text: "hello[world]", x: 20, y: 20)
         ]
       ),
       FF.graph(
         outputs: [
-          video: FF.stream_ref(0, :video) |> Filter.drawtext(text: "it\'s\\ok", x: 20, y: 20)
+          video: FF.Graph.input(0, :video) |> Filter.drawtext(text: "it\'s\\ok", x: 20, y: 20)
         ]
       )
     ]
@@ -104,7 +104,7 @@ defmodule FF.Graph.ParseTest do
 
   test "parses explicitly labeled dynamic outputs we render via shape/2" do
     graph =
-      FF.stream_ref(0, :audio)
+      FF.Graph.input(0, :audio)
       |> Filter.ebur128(video: true)
       |> FF.shape([:audio, :video])
       |> then(fn [audio, video] -> FF.graph(outputs: [audio: audio, video: video]) end)
@@ -115,7 +115,7 @@ defmodule FF.Graph.ParseTest do
 
   test "parses shaped concat graphs with one explicit output" do
     graph =
-      [FF.stream_ref(0, :video), FF.stream_ref(1, :video)]
+      [FF.Graph.input(0, :video), FF.Graph.input(1, :video)]
       |> Filter.concat()
       |> FF.shape([:video])
       |> then(&FF.graph(outputs: [video: &1]))

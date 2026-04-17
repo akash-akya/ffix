@@ -81,11 +81,11 @@ defmodule FF.FFmpegIntegrationTest do
       FF.graph(
         outputs: [
           video:
-            FF.stream_ref(0, :video)
+            FF.Graph.input(0, :video)
             |> Filter.scale(w: 160, h: -1)
             |> Filter.metadata(mode: :add, key: "comment", value: escaped_value),
           audio:
-            FF.stream_ref(0, :audio)
+            FF.Graph.input(0, :audio)
             |> Filter.ametadata(mode: :add, key: "comment", value: escaped_value)
         ]
       )
@@ -317,7 +317,7 @@ defmodule FF.FFmpegIntegrationTest do
     FF.command(
       global: [nostdin: true, loglevel: "level+info", stats_period: 0.1, threads: 1],
       inputs: [Command.input("testsrc=size=16x16:rate=10:duration=0.3", f: :lavfi)],
-      outputs: [Command.output("-", Command.stream_ref(0, :video), f: :null)]
+      outputs: [Command.output("-", FF.Graph.input(0, :video), f: :null)]
     )
   end
 

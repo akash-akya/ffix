@@ -19,28 +19,18 @@ defmodule FF do
           input: 2,
           output: 2,
           output: 3,
-          shape: 2,
-          stream_ref: 2
+          shape: 2
         ]
 
       import FF.Filter
     end
   end
 
-  @type input_id :: FF.Graph.InputRef.input_id() | atom()
-  @type input_selector :: FF.Graph.InputRef.selector()
-
   @spec input(Command.Input.source()) :: Command.Input.t()
   def input(source), do: Command.input(source)
 
   @spec input(Command.Input.source(), keyword()) :: Command.Input.t()
   def input(source, options) when is_list(options), do: Command.input(source, options)
-
-  @spec stream_ref(input_id(), input_selector()) :: Stream.t()
-  def stream_ref(input, selector), do: Builder.input(input, selector)
-
-  @spec stream_ref_raw(String.t()) :: Stream.t()
-  def stream_ref_raw(spec), do: Builder.input_raw(spec)
 
   @spec expr(String.t()) :: Expr.t()
   def expr(source) when is_binary(source), do: %Expr{source: source}

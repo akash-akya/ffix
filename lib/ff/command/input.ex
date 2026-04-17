@@ -30,8 +30,12 @@ defmodule FF.Command.Input do
   defstruct [:source, :id, :label, options: []]
 
   @spec fetch(t(), term()) :: {:ok, FF.Stream.t()} | :error
-  def fetch(%__MODULE__{} = input, key) do
-    {:ok, FF.Command.stream_ref(input, selector_from_access!(key))}
+  def fetch(%__MODULE__{id: id}, key) when is_reference(id) do
+    {:ok, FF.Graph.input(id, selector_from_access!(key))}
+  end
+
+  def fetch(%__MODULE__{}, _key) do
+    raise ArgumentError, "command input access requires an input created with FF.Command.input/2"
   end
 
   def get_and_update(%__MODULE__{}, _key, _fun) do

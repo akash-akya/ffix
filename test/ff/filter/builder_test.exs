@@ -5,7 +5,7 @@ defmodule FF.Filter.BuilderTest do
   alias FF.Graph
 
   test "generated wrappers reject unknown options" do
-    video = FF.stream_ref(0, :video)
+    video = FF.Graph.input(0, :video)
 
     assert_raise ArgumentError, "foo is not a valid option", fn ->
       Filter.scale(video, foo: 1)
@@ -13,7 +13,7 @@ defmodule FF.Filter.BuilderTest do
   end
 
   test "uses metadata defaults for dynamic output filters" do
-    assert [left, right] = Filter.split(FF.stream_ref(0, :video))
+    assert [left, right] = Filter.split(FF.Graph.input(0, :video))
     assert left.output == 0
     assert right.output == 1
   end
@@ -22,10 +22,10 @@ defmodule FF.Filter.BuilderTest do
     [video, audio] =
       Filter.concat(
         [
-          FF.stream_ref(0, :video),
-          FF.stream_ref(0, :audio),
-          FF.stream_ref(1, :video),
-          FF.stream_ref(1, :audio)
+          FF.Graph.input(0, :video),
+          FF.Graph.input(0, :audio),
+          FF.Graph.input(1, :video),
+          FF.Graph.input(1, :audio)
         ],
         n: 2,
         v: 1,
@@ -38,7 +38,7 @@ defmodule FF.Filter.BuilderTest do
 
   test "shape/2 reshapes ambiguous filter outputs" do
     outputs =
-      FF.stream_ref(0, :audio)
+      FF.Graph.input(0, :audio)
       |> Filter.ebur128(video: true)
       |> FF.shape([:audio, :video])
 
@@ -48,7 +48,7 @@ defmodule FF.Filter.BuilderTest do
   end
 
   test "normalizes enum-like values while keeping raw strings as an escape hatch" do
-    video = FF.stream_ref(0, :video)
+    video = FF.Graph.input(0, :video)
 
     graph =
       video
@@ -71,7 +71,7 @@ defmodule FF.Filter.BuilderTest do
   end
 
   test "normalizes flag lists but keeps raw flag strings and numeric values" do
-    video = FF.stream_ref(0, :video)
+    video = FF.Graph.input(0, :video)
 
     graph =
       video

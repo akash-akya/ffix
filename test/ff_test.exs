@@ -6,7 +6,7 @@ defmodule FFTest do
 
   test "builds and renders a single exported graph" do
     video =
-      FF.stream_ref(0, :video)
+      FF.Graph.input(0, :video)
       |> Filter.scale(w: 1280, h: -1)
       |> Filter.drawtext(text: "Hello", x: FF.expr("w-tw-20"), y: 20)
 
@@ -23,7 +23,7 @@ defmodule FFTest do
   end
 
   test "builds a graph with multiple exported outputs" do
-    video = FF.stream_ref(0, :video)
+    video = FF.Graph.input(0, :video)
     [master, preview] = Filter.split(video, outputs: 2)
 
     preview =

@@ -5,7 +5,7 @@ defmodule FF.GraphTest do
 
   test "builds a sink-only graph" do
     sink =
-      FF.stream_ref(0, :video)
+      FF.Graph.input(0, :video)
       |> Filter.showinfo()
       |> Filter.nullsink()
 
@@ -23,7 +23,7 @@ defmodule FF.GraphTest do
   end
 
   test "builds a graph with exported outputs, sinks, and graph settings" do
-    video = FF.stream_ref(0, :video)
+    video = FF.Graph.input(0, :video)
     [main, debug] = Filter.split(video, outputs: 2)
 
     sink =
@@ -55,12 +55,12 @@ defmodule FF.GraphTest do
 
   test "graphs reject unknown top-level keys" do
     assert_raise ArgumentError, "unknown graph keys: [:metadata]", fn ->
-      FF.graph(outputs: [video: FF.stream_ref(0, :video)], metadata: %{debug: true})
+      FF.graph(outputs: [video: FF.Graph.input(0, :video)], metadata: %{debug: true})
     end
   end
 
   test "graphs reject unconnected filter outputs" do
-    [main, _debug] = FF.stream_ref(0, :video) |> Filter.split(outputs: 2)
+    [main, _debug] = FF.Graph.input(0, :video) |> Filter.split(outputs: 2)
 
     assert_raise ArgumentError,
                  "unconnected filter output {2, 1}; every produced output must be consumed or exported",
