@@ -5,7 +5,7 @@ defmodule FF.CommandTest do
   alias FF.Filter
 
   test "graphs support access by named and positional outputs" do
-    video = FF.input(0, :video)
+    video = FF.stream_ref(0, :video)
     [master, preview] = Filter.split(video, outputs: 2)
     graph = FF.graph(outputs: [master: master, preview: preview])
 
@@ -17,7 +17,7 @@ defmodule FF.CommandTest do
   end
 
   test "builds argv with inline graph output shorthands" do
-    audio = Command.input_stream(0, :audio)
+    audio = Command.stream_ref(0, :audio)
 
     command =
       FF.command(
@@ -26,10 +26,10 @@ defmodule FF.CommandTest do
           FF.graph(
             outputs: [
               master:
-                FF.input(0, :video)
+                FF.stream_ref(0, :video)
                 |> Filter.scale(w: 1280, h: -1),
               preview:
-                FF.input(0, :video)
+                FF.stream_ref(0, :video)
                 |> Filter.scale(w: 320, h: -1)
                 |> Filter.fps(fps: 1)
             ]
@@ -77,7 +77,7 @@ defmodule FF.CommandTest do
     command =
       FF.command(
         inputs: [Command.input("input.mp4")],
-        graph: FF.graph(outputs: [video: FF.input(0, :video)]),
+        graph: FF.graph(outputs: [video: FF.stream_ref(0, :video)]),
         outputs: [Command.output("out.mp4", :preview)]
       )
 
@@ -147,14 +147,14 @@ defmodule FF.CommandTest do
            ]
   end
 
-  test "input_stream/2 accepts command input declarations" do
+  test "stream_ref/2 accepts command input declarations" do
     src = Command.input("input.mp4")
 
     command =
       FF.command(
         inputs: [src],
         outputs: [
-          Command.output("out.mka", Command.input_stream(src, {:audio, 1}), acodec: :copy)
+          Command.output("out.mka", Command.stream_ref(src, {:audio, 1}), acodec: :copy)
         ]
       )
 
@@ -231,7 +231,7 @@ defmodule FF.CommandTest do
           Command.input("a.mp4", label: :src),
           Command.input("b.mp4", label: "src")
         ],
-        outputs: [Command.output("out.mp4", Command.input_stream(0, :video))]
+        outputs: [Command.output("out.mp4", Command.stream_ref(0, :video))]
       )
       |> FF.to_argv()
     end
@@ -241,7 +241,7 @@ defmodule FF.CommandTest do
     command =
       FF.command(
         inputs: [Command.input("input.mp4", label: :src)],
-        graph: FF.graph(outputs: [video: FF.input(:missing, :video)]),
+        graph: FF.graph(outputs: [video: FF.stream_ref(:missing, :video)]),
         outputs: [Command.output("out.mp4", :video)]
       )
 
@@ -258,7 +258,7 @@ defmodule FF.CommandTest do
           Command.input("input.mp4", ss: "00:00:03", stream_loop: -1),
           Command.input("logo.png", loop: 1, framerate: 1)
         ],
-        outputs: [Command.output("out.mp4", Command.input_stream(0, :video), vcodec: :copy)]
+        outputs: [Command.output("out.mp4", Command.stream_ref(0, :video), vcodec: :copy)]
       )
 
     assert FF.to_argv(command) == [
@@ -289,7 +289,7 @@ defmodule FF.CommandTest do
       FF.command(
         inputs: [Command.input("input.mp4")],
         outputs: [
-          Command.output("out.mp4", Command.input_stream(0, :video), t: 0.25, vcodec: :copy)
+          Command.output("out.mp4", Command.stream_ref(0, :video), t: 0.25, vcodec: :copy)
         ]
       )
 
@@ -309,12 +309,12 @@ defmodule FF.CommandTest do
 
   test "builds argv from command, input, and output constructors" do
     video =
-      FF.input(0, :video)
+      FF.stream_ref(0, :video)
       |> Filter.scale(w: 1280, h: -1)
       |> Filter.drawtext(text: "Hello", x: FF.expr("w-tw-20"), y: 20)
 
     graph = FF.graph(outputs: [video: video])
-    audio = Command.input_stream(0, :audio)
+    audio = Command.stream_ref(0, :audio)
 
     command =
       FF.command(
@@ -348,7 +348,7 @@ defmodule FF.CommandTest do
   end
 
   test "maps graph exports backed by inputs as input stream refs" do
-    graph = FF.graph(outputs: [raw: FF.input(0, :video)])
+    graph = FF.graph(outputs: [raw: FF.stream_ref(0, :video)])
 
     command =
       FF.command()
@@ -370,7 +370,7 @@ defmodule FF.CommandTest do
 
   test "renders a shell-safe command string for debugging" do
     video =
-      FF.input(0, :video)
+      FF.stream_ref(0, :video)
       |> Filter.scale(w: 1280, h: -1)
       |> Filter.drawtext(text: "hello world", x: FF.expr("w-tw-20"), y: 20)
 
@@ -391,7 +391,7 @@ defmodule FF.CommandTest do
   end
 
   test "rejects input refs that do not exist in the command" do
-    graph = FF.graph(outputs: [video: FF.input(1, :video)])
+    graph = FF.graph(outputs: [video: FF.stream_ref(1, :video)])
 
     command =
       FF.command()
@@ -405,7 +405,7 @@ defmodule FF.CommandTest do
   end
 
   test "builds argv for multiple outputs from one graph" do
-    video = FF.input(0, :video)
+    video = FF.stream_ref(0, :video)
     [master, preview] = Filter.split(video, outputs: 2)
 
     preview =
@@ -414,7 +414,7 @@ defmodule FF.CommandTest do
       |> Filter.scale(w: 320, h: -1)
 
     graph = FF.graph(outputs: [master: master, preview: preview])
-    audio = Command.input_stream(0, :audio)
+    audio = Command.stream_ref(0, :audio)
 
     command =
       FF.command()
@@ -449,7 +449,7 @@ defmodule FF.CommandTest do
   end
 
   test "rejects duplicated mappings for filter graph outputs" do
-    graph = FF.graph(outputs: [video: FF.input(0, :video) |> Filter.scale(w: 320, h: -1)])
+    graph = FF.graph(outputs: [video: FF.stream_ref(0, :video) |> Filter.scale(w: 320, h: -1)])
 
     command =
       FF.command(
@@ -472,8 +472,8 @@ defmodule FF.CommandTest do
     graph =
       FF.graph(
         outputs: [
-          master: FF.input(0, :video) |> Filter.scale(w: 1280, h: -1),
-          preview: FF.input(0, :video) |> Filter.scale(w: 320, h: -1)
+          master: FF.stream_ref(0, :video) |> Filter.scale(w: 1280, h: -1),
+          preview: FF.stream_ref(0, :video) |> Filter.scale(w: 320, h: -1)
         ]
       )
 

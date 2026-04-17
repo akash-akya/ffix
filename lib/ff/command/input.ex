@@ -31,7 +31,7 @@ defmodule FF.Command.Input do
 
   @spec fetch(t(), term()) :: {:ok, FF.Stream.t()} | :error
   def fetch(%__MODULE__{} = input, key) do
-    {:ok, FF.Command.input_stream(input, selector_from_access!(key))}
+    {:ok, FF.Command.stream_ref(input, selector_from_access!(key))}
   end
 
   def get_and_update(%__MODULE__{}, _key, _fun) do

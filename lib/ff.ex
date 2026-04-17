@@ -1,6 +1,7 @@
 defmodule FF do
   alias FF.Command
   alias FF.Expr
+  alias FF.Command.Build
   alias FF.Filter.Builder
   alias FF.Graph
   alias FF.Runner
@@ -9,20 +10,37 @@ defmodule FF do
 
   defmacro __using__(_options) do
     quote do
-      import FF, only: [expr: 1, shape: 2]
+      import FF,
+        only: [
+          command: 1,
+          expr: 1,
+          graph: 1,
+          input: 1,
+          input: 2,
+          output: 2,
+          output: 3,
+          shape: 2,
+          stream_ref: 2
+        ]
+
       import FF.Filter
-      import FF.DSL
     end
   end
 
   @type input_id :: FF.Graph.InputRef.input_id() | atom()
   @type input_selector :: FF.Graph.InputRef.selector()
 
-  @spec input(input_id(), input_selector()) :: Stream.t()
-  def input(index, selector), do: Builder.input(index, selector)
+  @spec input(Command.Input.source()) :: Command.Input.t()
+  def input(source), do: Command.input(source)
 
-  @spec input_raw(String.t()) :: Stream.t()
-  def input_raw(spec), do: Builder.input_raw(spec)
+  @spec input(Command.Input.source(), keyword()) :: Command.Input.t()
+  def input(source, options) when is_list(options), do: Command.input(source, options)
+
+  @spec stream_ref(input_id(), input_selector()) :: Stream.t()
+  def stream_ref(input, selector), do: Builder.input(input, selector)
+
+  @spec stream_ref_raw(String.t()) :: Stream.t()
+  def stream_ref_raw(spec), do: Builder.input_raw(spec)
 
   @spec expr(String.t()) :: Expr.t()
   def expr(source) when is_binary(source), do: %Expr{source: source}
@@ -40,11 +58,19 @@ defmodule FF do
   @spec graph(keyword()) :: Graph.t()
   def graph(options), do: Builder.graph(options)
 
+  @spec output(Command.Output.target(), keyword() | Command.source() | [Command.source()]) ::
+          Command.Output.t()
+  def output(target, options_or_sources), do: Build.output(target, options_or_sources)
+
+  @spec output(Command.Output.target(), Command.source() | [Command.source()], keyword()) ::
+          Command.Output.t()
+  def output(target, sources, options), do: Command.output(target, sources, options)
+
   @spec command() :: Command.t()
   def command, do: Command.new()
 
   @spec command(keyword()) :: Command.t()
-  def command(options) when is_list(options), do: Command.new(options)
+  def command(options) when is_list(options), do: Build.command(options)
 
   @spec to_filtergraph(Graph.t()) :: String.t()
   def to_filtergraph(%Graph{} = graph) do
