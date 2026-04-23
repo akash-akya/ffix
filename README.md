@@ -1,21 +1,14 @@
 # FF
 
-`FF` builds `ffmpeg` filtergraphs and full `ffmpeg` commands as Elixir data.
+`FF` builds ffmpeg filtergraphs and full ffmpeg commands as Elixir data.
 
-It is designed for people who want something more structured than hand-built `-filter_complex` and `-map` strings, but still want the generated command to stay explicit and predictable.
-
-The library is built around a simple model:
-
-1. declare command inputs
-2. build a graph from streams
-3. export named graph outputs
-4. map those outputs into one or more files
-
-Most examples below use the macro DSL via `use FF`, but the macro is only authoring sugar. The real model is an explicit `%FF.Graph{}` plus `%FF.Command{}`. That graph model is what makes branching, reusable graph functions, terminals, and predictable rendering work.
+The goal is to avoid hand-built `-filter_complex` and `-map` strings while
+keeping the final command explicit. You build inputs, streams, graphs, and
+outputs, then serialize the command directly to argv.
 
 ## Installation
 
-Add `ff` to your dependencies in `mix.exs`:
+Add `ff` to your dependencies:
 
 ```elixir
 def deps do
@@ -25,70 +18,11 @@ def deps do
 end
 ```
 
-`ffmpeg` currently needs to be available on your `PATH` both when compiling the library and when executing generated commands. Wrapper generation still reads local `ffmpeg` filter metadata at compile time.
-
-## Current Guarantees
-
-`FF` is strongest today at:
-
-- building explicit filtergraphs and commands as Elixir data
-- rendering those graphs back to predictable `ffmpeg` argv
-- handling the filtergraphs that `FF` renders itself
-
-`FF` is not trying to be a full semantic model of all `ffmpeg` behavior yet, and the parser should be treated as pragmatic rather than universal.
+`ffmpeg` must be available on `PATH` when compiling the library because filter
+helpers are generated from local ffmpeg filter metadata. It is also needed when
+running commands.
 
 ## Quick Start
-
-In a module, `use FF` imports:
-
-- the high-level `command(...)` DSL
-- generated filter functions like `scale/2`, `fps/2`, `overlay/3`
-- `expr/1` for raw ffmpeg expressions when needed
-
-```elixir
-defmodule VideoPipeline do
-  use FF
-end
-```
-
-## Step 1: Start Simple
-
-Here is the smallest useful command: take one input and write one output.
-
-```elixir
-defmodule VideoPipeline do
-  use FF
-
-  def copy do
-    command(
-      inputs: [
-        src: input("input.mp4")
-      ],
-      outputs: [
-        output("out.mp4",
-          video: src[:video],
-          audio: src[:audio],
-          vcodec: :copy,
-          acodec: :copy
-        )
-      ]
-    )
-  end
-end
-```
-
-A few things are already happening here:
-
-- `inputs:` declares named command inputs
-- `src[:video]` and `src[:audio]` select streams from that input
-- `src[:input]` is available when you need to map a whole input like `-map 0`
-- `outputs:` describes the output in terms of stream roles like `video:` and `audio:`
-
-That output API is deliberate: most of the time you want to say what each stream *is for*, not manually assemble low-level `-map` entries.
-
-## Step 2: Add a Filter Graph
-
-Now let’s actually transform the video.
 
 ```elixir
 defmodule VideoPipeline do
@@ -99,37 +33,254 @@ defmodule VideoPipeline do
       inputs: [
         src: input("input.mp4")
       ],
-      graph: [
-        main: src[:video] |> scale(w: 1280, h: -1)
-      ],
-      outputs: [
+      graph: fn inputs ->
+        [
+          main: inputs.src[:video] |> scale(w: 1280, h: -1)
+        ]
+      end,
+      outputs: fn graph, %{inputs: inputs} ->
         output("out.mp4",
-          video: :main,
-          audio: src[:audio],
+          video: graph.main,
+          audio: inputs.src[:audio],
           vcodec: :libx264,
           acodec: :aac
         )
-      ]
+      end
     )
   end
 end
 ```
 
-Here the mental model is:
+```elixir
+command = VideoPipeline.resize()
 
-- `graph:` builds filtered streams
-- `main:` gives one of those streams a name
-- `output(..., video: :main, ...)` consumes that named graph export
+FF.to_argv(command)
+FF.to_shell_string(command)
+FF.run(command)
+```
 
-When `graph:` is written as a keyword list, it is just sugar for `FF.graph(outputs: [...])`.
+`FF.to_argv/1` is the canonical boundary. `FF.to_shell_string/1` is for logs and
+debugging.
 
-That graph model is the main feature of the library. The macro is there to make authoring nicer, but the valuable part is that you are building a real graph value instead of assembling a fragile `-filter_complex` string.
+## Command Shape
 
-## Step 3: Reuse Graphs as Ordinary Functions
+`FF.command/1` accepts four top-level keys:
 
-Graphs do not have to be inline.
+```elixir
+command(
+  global: [y: true],
+  inputs: [
+    src: input("input.mp4", ss: "00:00:03"),
+    music: input("music.mp3")
+  ],
+  graph: fn inputs ->
+    [
+      preview: inputs.src[:video] |> scale(w: 320, h: -1)
+    ]
+  end,
+  outputs: fn graph, %{inputs: inputs} ->
+    [
+      output("preview.mp4",
+        video: graph.preview,
+        audio: inputs.src[:audio],
+        vcodec: :libx264,
+        acodec: :aac
+      ),
+      output("audio.mka",
+        audio: [inputs.src[:audio], inputs.music[:audio]],
+        acodec: :copy
+      )
+    ]
+  end
+)
+```
 
-This is the preferred way to build reusable pieces: write ordinary Elixir functions that accept streams and return a `%FF.Graph{}`.
+`global:` is a flat list of ffmpeg global options.
+
+`inputs:` is a keyword list of named inputs. Each value must be built with
+`input/1` or `input/2`. Named inputs are passed to graph and output callbacks
+exactly as a map.
+
+`graph:` is optional. It can be a one-argument function or a `%FF.Graph{}`.
+
+`outputs:` can be a single output, a list of outputs, or a callback.
+
+## Inputs
+
+Declare command inputs with `input/1` or `input/2`.
+
+```elixir
+inputs: [
+  src: input("input.mp4"),
+  logo: input("logo.png", loop: 1, framerate: 1),
+  mic: input(:stdin, f: :wav)
+]
+```
+
+For inputs without options, a string source shortcut is also accepted:
+
+```elixir
+inputs: [
+  src: "input.mp4"
+]
+```
+
+Use `input/2` when the input needs options.
+
+Select streams from an input with access syntax:
+
+```elixir
+inputs.src[:input]       # whole input, rendered like -map 0
+inputs.src[:video]       # rendered like 0:v
+inputs.src[:audio]       # rendered like 0:a
+inputs.src[audio: 1]     # rendered like 0:a:1
+inputs.src[raw: "s?"]    # raw ffmpeg stream selector escape hatch
+```
+
+Outside a command callback, build graph input streams explicitly:
+
+```elixir
+video = FF.Graph.input(0, :video)
+audio = FF.Graph.input(0, :audio)
+```
+
+## Graph Callbacks
+
+A graph callback receives the input map directly:
+
+```elixir
+graph: fn inputs ->
+  [
+    main: inputs.src[:video] |> scale(w: 1280, h: -1),
+    thumb: inputs.src[:video] |> fps(fps: 1) |> scale(w: 320, h: -1)
+  ]
+end
+```
+
+The callback may return one of these shapes:
+
+```elixir
+# A keyword list of exported streams.
+[
+  main: stream,
+  preview: stream
+]
+
+# A complete graph value.
+FF.graph(
+  outputs: [main: stream],
+  terminals: [debug_sink]
+)
+
+# No filtergraph.
+nil
+```
+
+Keyword returns are always treated as graph exports. If you need terminals,
+settings, or other graph options, return an explicit `%FF.Graph{}` from
+`FF.graph/1`.
+
+## Output Callbacks
+
+An output callback may accept one or two arguments.
+
+A one-argument callback receives graph exports directly:
+
+```elixir
+outputs: fn graph ->
+  output("thumb-%03d.jpg",
+    video: graph.preview,
+    f: :image2,
+    vsync: 0
+  )
+end
+```
+
+A two-argument callback receives graph exports and a context map. The context is
+currently `%{inputs: inputs}`:
+
+```elixir
+outputs: fn graph, %{inputs: inputs} ->
+  output("master.mp4",
+    video: graph.main,
+    audio: inputs.src[:audio],
+    vcodec: :libx264,
+    acodec: :aac
+  )
+end
+```
+
+The callback may return a single output or a list of outputs.
+
+When there is no graph, the first argument is an empty map:
+
+```elixir
+command(
+  inputs: [src: input("input.mp4")],
+  outputs: fn _graph, %{inputs: inputs} ->
+    output("copy.mp4",
+      video: inputs.src[:video],
+      audio: inputs.src[:audio],
+      vcodec: :copy,
+      acodec: :copy
+    )
+  end
+)
+```
+
+## Outputs
+
+Use `video:` and `audio:` for common output mappings:
+
+```elixir
+output("master.mp4",
+  video: graph.main,
+  audio: inputs.src[:audio],
+  vcodec: :libx264,
+  acodec: :aac
+)
+```
+
+Multiple streams for the same role can be passed as a list:
+
+```elixir
+output("with-extra-audio.mkv",
+  video: graph.main,
+  audio: [inputs.src[audio: 0], inputs.src[audio: 1]],
+  acodec: :copy
+)
+```
+
+Use `sources:` when exact `-map` ordering matters:
+
+```elixir
+output("archive.mkv",
+  sources: [graph.main, inputs.src[audio: 1], inputs.src[audio: 0]],
+  acodec: :copy
+)
+```
+
+Output options are intentionally flat and ffmpeg-shaped. Keys are rendered as
+CLI option names:
+
+```elixir
+output("out.mp4",
+  video: graph.main,
+  "c:v": :libx264,
+  "c:a": :aac,
+  crf: 23,
+  preset: :slow,
+  movflags: [:faststart]
+)
+```
+
+String keys or quoted atom keys are useful for stream-specific options such as
+`"c:v"` or `"metadata:s:a:0"`.
+
+## Reusable Graph Functions
+
+Graphs are ordinary Elixir values, so reusable graph pieces can just be
+functions that accept and return streams or graphs.
 
 ```elixir
 defmodule VideoPipeline do
@@ -146,278 +297,88 @@ defmodule VideoPipeline do
     )
   end
 
-  def master_and_thumbnails do
+  def package do
     command(
-      inputs: [
-        src: input("input.mp4")
-      ],
-      graph: variants(src[:video]),
-      outputs: [
-        output("master.mp4",
-          video: :master,
-          audio: src[:audio],
-          vcodec: :libx264,
-          acodec: :aac
-        ),
-        output("thumb-%03d.jpg",
-          video: :preview,
-          f: :image2,
-          vsync: 0
-        )
-      ]
+      inputs: [src: input("input.mp4")],
+      graph: fn inputs ->
+        variants(inputs.src[:video])
+      end,
+      outputs: fn graph, %{inputs: inputs} ->
+        [
+          output("master.mp4",
+            video: graph.master,
+            audio: inputs.src[:audio],
+            vcodec: :libx264,
+            acodec: :aac
+          ),
+          output("thumb-%03d.jpg",
+            video: graph.preview,
+            f: :image2,
+            vsync: 0
+          )
+        ]
+      end
     )
   end
 end
 ```
 
-This example shows a few important ideas:
-
-- one graph can branch into multiple named outputs
-- one command can write multiple files
-- `graph:` can take a real graph value, not just inline DSL sugar
-
-When a filter's real output shape depends on options that `FF` cannot infer cleanly, use `FF.shape/2` as the escape hatch.
+For filters whose output shape depends on options, use `FF.shape/2`:
 
 ```elixir
-[audio, video] =
-  src[:audio]
+[metered_audio, meter_video] =
+  input_audio
   |> ebur128(video: true)
   |> FF.shape([:audio, :video])
 ```
 
-`FF.shape/2` is for the small set of filters where ffmpeg's output pads depend on option combinations rather than a simple fixed signature. Most filters do not need it.
+## Low-Level API
 
-That keeps the default API simple while still making unusual dynamic-output filters buildable.
-
-## Step 4: Build Bigger Filtergraphs
-
-This is where `FF` is most useful: bigger, more branchy filtergraphs that would be annoying to manage as strings.
-
-A graph can:
-
-- branch one input stream into multiple processing paths
-- export several named results
-- keep internal debug or analysis branches that do not become outputs
-- combine streams from different command inputs
-- stay reusable as ordinary Elixir code
-
-### Branch and keep a debug branch
+The same model is available without `use FF`.
 
 ```elixir
-defmodule VideoPipeline do
-  use FF
+src = FF.input("input.mp4")
 
-  def variants_with_debug(video) do
-    [master, preview, debug] = split(video, outputs: 3)
+preview =
+  src[:video]
+  |> FF.Filter.scale(w: 320, h: -1)
 
-    debug_sink =
-      debug
-      |> fps(fps: 1)
-      |> showinfo()
-      |> nullsink()
+graph = FF.graph(outputs: [preview: preview])
 
-    FF.graph(
-      outputs: [
-        master: master |> scale(w: 1280, h: -1),
-        preview: preview |> fps(fps: 1) |> scale(w: 320, h: -1)
-      ],
-      terminals: [debug_sink]
-    )
-  end
-end
+command =
+  FF.command(
+    inputs: [src: src],
+    graph: graph,
+    outputs: [
+      FF.output("thumb-%03d.jpg", graph[:preview], f: :image2, vsync: 0)
+    ]
+  )
 ```
 
-Here, `master` and `preview` are exported, while the `debug` branch stays inside the graph and ends intentionally in `nullsink()`.
+`%FF.Command{}` and `%FF.Graph{}` are regular structs, and the lower-level
+`FF.Command` functions can be used when step-by-step construction is clearer.
 
-### Build a longer graph from several streams
+## Validation and Execution
 
-```elixir
-defmodule VideoPipeline do
-  use FF
+`FF.validate!/1` performs structural checks without probing media files or
+running ffmpeg. Validation is best-effort and focuses on the command/graph model:
 
-  def promo_assets(video, narration, logo) do
-    [master, preview] = split(video, outputs: 2)
+- command outputs must have sources
+- graph input refs must point at declared command inputs
+- filtered graph exports must be mapped exactly once
+- graph nodes and refs must be structurally valid
 
-    FF.graph(
-      outputs: [
-        master:
-          master
-          |> trim(duration: 30)
-          |> setpts(expr: expr("PTS-STARTPTS"))
-          |> scale(w: 1280, h: -1)
-          |> overlay(logo, x: expr("W-w-24"), y: 24),
-        preview:
-          preview
-          |> trim(duration: 30)
-          |> fps(fps: 1)
-          |> scale(w: 320, h: -1),
-        audio:
-          narration
-          |> atrim(duration: 30)
-          |> asetpts(expr: expr("PTS-STARTPTS"))
-      ]
-    )
-  end
-
-  def promo_package do
-    command(
-      inputs: [
-        src: input("input.mp4"),
-        logo: input("logo.png", loop: 1, framerate: 1),
-        narration: input("narration.wav")
-      ],
-      graph: promo_assets(src[:video], narration[:audio], logo[:video]),
-      outputs: [
-        output("promo.mp4",
-          video: :master,
-          audio: :audio,
-          vcodec: :libx264,
-          acodec: :aac
-        ),
-        output("promo-thumb-%03d.jpg",
-          video: :preview,
-          f: :image2,
-          vsync: 0
-        )
-      ]
-    )
-  end
-end
-```
-
-This is the core pitch of the library: long, practical filtergraphs can stay as ordinary Elixir values with named exports, instead of becoming one large quoted string.
-
-## Step 5: Use Expressions When Needed
-
-Most options can stay plain Elixir values. For raw ffmpeg expressions, use `expr/1`.
+Execution stays at the edge:
 
 ```elixir
-defmodule VideoPipeline do
-  use FF
-
-  def with_logo do
-    command(
-      inputs: [
-        src: input("input.mp4"),
-        logo: input("logo.png", loop: 1, framerate: 1)
-      ],
-      graph: [
-        video:
-          src[:video]
-          |> overlay(logo[:video], x: expr("W-w-20"), y: 20)
-      ],
-      outputs: [
-        output("out.mp4",
-          video: :video,
-          audio: src[:audio],
-          vcodec: :libx264,
-          acodec: :copy
-        )
-      ]
-    )
-  end
-end
-```
-
-The goal is to keep most values normal and only reach for raw ffmpeg syntax at the boundary where it is actually needed.
-
-## Step 6: Output Mapping, from Common to Advanced
-
-For most commands, the high-level role-based API is enough:
-
-```elixir
-output("master.mp4",
-  video: :master,
-  audio: src[:audio],
-  vcodec: :libx264,
-  acodec: :aac
-)
-```
-
-Multiple streams of the same kind can be passed as a list:
-
-```elixir
-output("with-extra-audio.mkv",
-  video: :master,
-  audio: [src[audio: 0], src[audio: 1]],
-  acodec: :copy
-)
-```
-
-When exact stream order matters, use `sources:` as the low-level escape hatch:
-
-```elixir
-output("archive.mkv",
-  sources: [:master, src[audio: 1], src[audio: 0]],
-  acodec: :copy
-)
-```
-
-Use `video:` / `audio:` first. Reach for `sources:` only when you need explicit ordering or unusual mappings.
-
-Whole-input maps are available too when you want ffmpeg behavior like `-map 0`:
-
-```elixir
-output("remux.mkv",
-  sources: [src[:input]],
-  c: :copy
-)
-```
-
-Raw selectors still work as the low-level escape hatch for unusual stream specifiers:
-
-```elixir
-output("subtitles.mkv",
-  sources: [src[raw: "s?"], src[raw: "a:m:language:eng"]]
-)
-```
-
-A couple of graph rules are worth keeping in mind:
-
-- every produced filter output must be consumed, exported, or sent to a sink
-- exported filtered outputs must be mapped exactly once at the command boundary
-
-## Step 7: Turn a Command into `ffmpeg`
-
-`FF` keeps execution based on argv.
-
-```elixir
-command = VideoPipeline.master_and_thumbnails()
-
 argv = FF.to_argv(command)
 shell = FF.to_shell_string(command)
-```
-
-A few rules of thumb:
-
-- `FF.to_argv/1` is the canonical form for execution
-- `FF.to_shell_string/1` is for logging and debugging
-- `FF.run/1,2` and `FF.run!/1,2` execute commands and return typed results
-- `FF.stream/1,2` and `FF.stream!/1,2` expose a lazy event stream when you want pull-based output handling
-- `FF.validate!/1` is useful when you want to fail early
-
-For example:
-
-```elixir
-command = VideoPipeline.resize()
-
-FF.validate!(command)
 
 {:ok, result} = FF.run(command)
-
-result.exit_status
-#=> 0
-```
-
-`FF.run!/2` is available when you want a raising variant:
-
-```elixir
 result = FF.run!(command, stderr: :collect)
-
-result.stderr
 ```
 
-When you want to consume output lazily with back-pressure, use `FF.stream/2`:
+For pull-based execution events:
 
 ```elixir
 FF.stream(command, progress: true)
@@ -430,45 +391,10 @@ FF.stream(command, progress: true)
 end)
 ```
 
-## Step 8: The Plain Runtime API Is Still There
+## Parsing Filtergraphs
 
-The macro DSL is only surface sugar. Underneath, the runtime API stays explicit.
-
-```elixir
-src = FF.Command.input("input.mp4")
-
-graph =
-  FF.graph(
-    outputs: [
-      preview: src[:video] |> FF.Filter.scale(w: 320, h: -1)
-    ]
-  )
-
-command =
-  FF.command(
-    inputs: [src],
-    graph: graph,
-    outputs: [
-      FF.Command.output("thumb-%03d.jpg", graph[:preview], f: :image2, vsync: 0)
-    ]
-  )
-```
-
-This is useful when:
-
-- you want to construct commands dynamically
-- you do not want macro sugar in a particular part of the codebase
-- you want to manipulate `%FF.Command{}` and `%FF.Graph{}` values directly
-
-A couple of small conveniences still help here:
-
-- `graph[:preview]` looks up a named graph export
-- `graph[0]` looks up an export by position
-- `src[:input]`, `src[:video]`, and `src[audio: 1]` still work on plain `%FF.Command.Input{}` values
-
-## Step 9: Parse and Re-Render Filtergraphs
-
-`FF` can also parse filtergraphs and turn them back into the canonical graph representation.
+`FF.Graph.parse!/1` can parse common filtergraph syntax into the same graph
+model used by the builder.
 
 ```elixir
 graph = FF.Graph.parse!("[0:v]scale=w=320:h=-1[preview]")
@@ -477,23 +403,18 @@ FF.to_filtergraph(graph)
 #=> "[0:v]scale=w=320:h=-1[preview];"
 ```
 
-This is especially useful when you want to:
+The parser is pragmatic. It is meant to round-trip graphs produced by `FF` and
+common ffmpeg graph syntax, not to model every possible hand-written graph.
 
-- inspect a filtergraph as data
-- transform one of your own rendered graphs
-- round-trip through parse and render without hand-editing strings
+## Current Scope
 
-Parsing is pragmatic rather than ambitious: the current focus is on reliably handling the filtergraphs `FF` renders itself, plus common ffmpeg syntax around that. It is not positioned as a general-purpose parser for arbitrary user-provided filtergraphs.
+`FF` currently focuses on:
 
-## Summary
+- explicit graph and command data
+- predictable argv serialization
+- generated filter helpers from local ffmpeg metadata
+- thin execution helpers around argv
 
-`FF` tries to make `ffmpeg` feel like structured Elixir instead of shell-string assembly:
-
-- inputs are named and reusable
-- graphs are explicit values
-- outputs read in terms of stream roles
-- commands serialize back to normal `ffmpeg` argv
-
-Use the macro DSL when you want the nicest authoring experience.
-Use the plain runtime API when you want maximum explicitness.
-Both lead to the same graph-first command model.
+It does not currently probe media files, run ffmpeg for validation, or maintain
+a separate compile stage. Build a command, inspect or validate it if needed, and
+pass it directly to `FF.to_argv/1` or `FF.run/1`.

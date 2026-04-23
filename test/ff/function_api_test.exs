@@ -87,19 +87,6 @@ defmodule FF.FunctionAPITest do
       )
     end
 
-    def shorthand_input_command do
-      FF.command(
-        inputs: [
-          src: "input.mp4"
-        ],
-        outputs: fn _graph, %{inputs: inputs} ->
-          [
-            FF.output("out.mp4", video: inputs.src[:video], vcodec: :copy)
-          ]
-        end
-      )
-    end
-
     def graph_only_output_command do
       command(
         inputs: [
@@ -112,6 +99,22 @@ defmodule FF.FunctionAPITest do
         end,
         outputs: fn graph ->
           output("thumb-%03d.jpg", video: graph.preview, f: :image2, vsync: 0)
+        end
+      )
+    end
+
+    def graph_export_named_outputs_command do
+      command(
+        inputs: [
+          src: input("input.mp4")
+        ],
+        graph: fn inputs ->
+          [
+            outputs: inputs.src[:video]
+          ]
+        end,
+        outputs: fn graph ->
+          output("out.mp4", video: graph.outputs, vcodec: :copy)
         end
       )
     end
@@ -199,19 +202,6 @@ defmodule FF.FunctionAPITest do
            ]
   end
 
-  test "supports string input shorthand" do
-    assert FF.to_argv(Example.shorthand_input_command()) == [
-             "ffmpeg",
-             "-i",
-             "input.mp4",
-             "-map",
-             "0:v",
-             "-vcodec",
-             "copy",
-             "out.mp4"
-           ]
-  end
-
   test "passes graph values directly to one-arity output callbacks" do
     assert FF.to_argv(Example.graph_only_output_command()) == [
              "ffmpeg",
@@ -229,9 +219,53 @@ defmodule FF.FunctionAPITest do
            ]
   end
 
+  test "treats graph callback keyword returns as exports" do
+    assert FF.to_argv(Example.graph_export_named_outputs_command()) == [
+             "ffmpeg",
+             "-i",
+             "input.mp4",
+             "-map",
+             "0:v",
+             "-vcodec",
+             "copy",
+             "out.mp4"
+           ]
+  end
+
   test "rejects mixing role outputs with sources" do
     assert_raise ArgumentError, "output/2 accepts either media roles or :sources, not both", fn ->
       FF.output("out.mp4", video: :preview, sources: [:audio])
     end
+  end
+
+  test "rejects output/2 source lists" do
+    assert_raise ArgumentError,
+                 "output/2 expects keyword options with :video, :audio, or :sources",
+                 fn ->
+                   FF.output("out.mp4", [:preview])
+                 end
+  end
+
+  test "rejects unsupported output media roles" do
+    assert_raise ArgumentError,
+                 "unsupported output media roles: [:subtitle]; use :video, :audio, or :sources",
+                 fn ->
+                   FF.output("out.mkv", subtitle: :subtitles, c: :copy)
+                 end
+  end
+
+  test "rejects direct keyword graph specs in commands" do
+    error =
+      assert_raise ArgumentError, fn ->
+        FF.command(
+          inputs: [src: FF.input("input.mp4")],
+          graph: [video: FF.Graph.input(0, :video)],
+          outputs: fn graph ->
+            FF.output("out.mp4", video: graph.video, vcodec: :copy)
+          end
+        )
+      end
+
+    assert Exception.message(error) =~ "command graph must be a %FF.Graph{} or one-arity callback"
   end
 end

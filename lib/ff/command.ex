@@ -2,6 +2,14 @@ defmodule FF.Command do
   @moduledoc """
   Canonical representation of a full ffmpeg command.
 
+  A command stores global options, ordered inputs, an optional filtergraph, and
+  ordered outputs. It is still just data until `FF.to_argv/1`, `FF.run/1`, or
+  another boundary function serializes it.
+
+  Prefer `FF.command/1` for the function-based API. Use this module directly
+  when you want to construct or transform `%FF.Command{}` values in smaller
+  steps.
+
   ## Examples
 
       input = FF.Command.input("input.mp4", ss: "00:00:03", stream_loop: -1)
@@ -10,7 +18,7 @@ defmodule FF.Command do
       command =
         FF.command(
           global: [y: true],
-          inputs: [input],
+          inputs: [src: input],
           outputs: [FF.Command.output("out.mp4", video, vcodec: :copy)]
         )
 
@@ -30,6 +38,10 @@ defmodule FF.Command do
       #=>   "copy",
       #=>   "out.mp4"
       #=> ]
+
+  Output option keys are rendered as ffmpeg CLI option names. For options with
+  stream specifiers, use an atom or string key that already contains the
+  specifier, for example `:"c:v"` or `"metadata:s:a:0"`.
   """
 
   alias __MODULE__.Input
@@ -78,8 +90,11 @@ defmodule FF.Command do
   def input(%__MODULE__{} = command, source), do: input(command, source, [])
 
   def input(source, options) when is_list(options) do
-    {label, options} = Keyword.pop(options, :label)
-    %Input{id: make_ref(), source: source, label: normalize_input_label!(label), options: options}
+    if Keyword.has_key?(options, :label) do
+      raise ArgumentError, "input labels are not supported; name inputs in command inputs instead"
+    end
+
+    %Input{id: make_ref(), source: source, options: options}
   end
 
   def input(source, options) do
@@ -392,18 +407,8 @@ defmodule FF.Command do
   defp input_index_map!(inputs) do
     inputs
     |> Enum.with_index()
-    |> Enum.reduce(%{}, fn {%Input{id: id, label: label}, index}, index_map ->
-      index_map
-      |> put_input_key!(id, index, fn -> "duplicate command input declaration" end)
-      |> maybe_put_input_label!(label, index)
-    end)
-  end
-
-  defp maybe_put_input_label!(index_map, nil, _index), do: index_map
-
-  defp maybe_put_input_label!(index_map, label, index) do
-    put_input_key!(index_map, label, index, fn ->
-      "duplicate command input label #{inspect(label)}"
+    |> Enum.reduce(%{}, fn {%Input{id: id}, index}, index_map ->
+      put_input_key!(index_map, id, index, fn -> "duplicate command input declaration" end)
     end)
   end
 
@@ -414,15 +419,6 @@ defmodule FF.Command do
       raise ArgumentError, message_fun.()
     else
       Map.put(index_map, key, index)
-    end
-  end
-
-  defp normalize_input_label!(nil), do: nil
-
-  defp normalize_input_label!(label) do
-    case InputRef.normalize_input_id!(label) do
-      label when is_binary(label) -> label
-      _label -> raise ArgumentError, "input label must be an atom or non-empty string"
     end
   end
 

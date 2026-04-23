@@ -1,6 +1,27 @@
 defmodule FF.Graph do
   @moduledoc """
   Canonical representation of a complete filtergraph.
+
+  A graph contains filter/input nodes plus named exports that command outputs
+  can map later. Build graph input streams with `FF.Graph.input/2` when you are
+  outside a `FF.command/1` callback, or use command input access inside
+  callbacks:
+
+      video = FF.Graph.input(0, :video)
+
+      command(
+        inputs: [src: input("input.mp4")],
+        graph: fn inputs ->
+          [preview: inputs.src[:video] |> scale(w: 320, h: -1)]
+        end,
+        outputs: fn graph ->
+          output("thumb-%03d.jpg", video: graph.preview, f: :image2)
+        end
+      )
+
+  `graph[:name]` and `graph[index]` return exported streams from a graph value.
+  In `FF.command/1` output callbacks the first argument is already a plain map
+  of graph exports, so use `graph.name` there.
   """
 
   @behaviour Access
@@ -85,28 +106,6 @@ defmodule FF.Graph do
   @spec update_node(t(), node_id(), (Node.t() -> Node.t())) :: t()
   def update_node(%__MODULE__{nodes: nodes} = graph, node_id, fun) do
     %{graph | nodes: Map.update!(nodes, node_id, fun)}
-  end
-
-  @spec put_setting(t(), atom() | String.t(), term()) :: t()
-  def put_setting(%__MODULE__{settings: settings} = graph, key, value) do
-    %{graph | settings: settings ++ [{key, value}]}
-  end
-
-  @spec rename_export(t(), Export.name(), Export.name()) :: t()
-  def rename_export(%__MODULE__{exports: exports} = graph, old_name, new_name) do
-    old_name = export_name_key(old_name)
-
-    exports =
-      Enum.map(exports, fn
-        %Export{name: name} = export ->
-          if export_name_key(name) == old_name do
-            %{export | name: new_name}
-          else
-            export
-          end
-      end)
-
-    %{graph | exports: exports}
   end
 
   @spec parse!(String.t()) :: t()

@@ -54,7 +54,7 @@ defmodule FF.FFmpegIntegrationTest do
     command =
       FF.command(
         global: ffmpeg_globals(),
-        inputs: [src],
+        inputs: [src: src],
         graph: FF.graph(outputs: [stacked: stacked]),
         outputs: [
           Command.output(output_pattern, :stacked, [
@@ -98,7 +98,7 @@ defmodule FF.FFmpegIntegrationTest do
     command =
       FF.command(
         global: ffmpeg_globals(),
-        inputs: [Command.input(sample_video)],
+        inputs: [src: Command.input(sample_video)],
         graph: parsed,
         outputs: [
           Command.output("-", [parsed[:video], parsed[:audio]], f: :null, t: 0.1, "frames:v": 1)
@@ -130,7 +130,7 @@ defmodule FF.FFmpegIntegrationTest do
     command =
       FF.command(
         global: ffmpeg_globals(),
-        inputs: [src],
+        inputs: [src: src],
         graph: graph,
         outputs: [
           Command.output(master_path, [graph[:master], src[audio: 0]],
@@ -167,7 +167,7 @@ defmodule FF.FFmpegIntegrationTest do
     command =
       FF.command(
         global: ffmpeg_globals(),
-        inputs: [src],
+        inputs: [src: src],
         graph: graph,
         outputs: [
           Command.output(output_path, [graph[:video], graph[:audio]],
@@ -316,7 +316,7 @@ defmodule FF.FFmpegIntegrationTest do
   defp runner_observation_command do
     FF.command(
       global: [nostdin: true, loglevel: "level+info", stats_period: 0.1, threads: 1],
-      inputs: [Command.input("testsrc=size=16x16:rate=10:duration=0.3", f: :lavfi)],
+      inputs: [src: Command.input("testsrc=size=16x16:rate=10:duration=0.3", f: :lavfi)],
       outputs: [Command.output("-", FF.Graph.input(0, :video), f: :null)]
     )
   end

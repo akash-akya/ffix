@@ -1,4 +1,53 @@
 defmodule FF do
+  @moduledoc """
+  Public entry point for building ffmpeg filtergraphs and commands.
+
+  `FF` keeps graph construction, command construction, and execution as separate
+  data-first steps:
+
+    * `input/1,2` declares command inputs.
+    * `graph/1` builds a `%FF.Graph{}` from streams.
+    * `output/2,3` declares command outputs and stream mappings.
+    * `command/1` assembles those pieces into a `%FF.Command{}`.
+    * `to_argv/1` serializes the command to the exact argv passed to ffmpeg.
+
+  `use FF` only imports these functions plus generated filter helpers. It does
+  not introduce a separate command DSL.
+
+  The high-level `command/1` API accepts callback functions for the graph and
+  outputs:
+
+      command(
+        inputs: [
+          src: input("input.mp4")
+        ],
+        graph: fn inputs ->
+          [
+            preview: inputs.src[:video] |> scale(w: 320, h: -1)
+          ]
+        end,
+        outputs: fn graph, %{inputs: inputs} ->
+          output("preview.mp4",
+            video: graph.preview,
+            audio: inputs.src[:audio],
+            vcodec: :libx264,
+            acodec: :aac
+          )
+        end
+      )
+
+  A graph callback receives the named command inputs and may return:
+
+    * a `%FF.Graph{}`
+    * a keyword list of graph exports, such as `[preview: stream]`
+    * `nil` when the command does not need a filtergraph
+
+  An outputs callback can accept either one or two arguments. A one-argument
+  callback receives the graph export map directly. A two-argument callback
+  receives the graph export map plus a context map currently shaped as
+  `%{inputs: inputs}`.
+  """
+
   alias FF.Command
   alias FF.Expr
   alias FF.Command.Build
@@ -48,8 +97,7 @@ defmodule FF do
   @spec graph(keyword()) :: Graph.t()
   def graph(options), do: Builder.graph(options)
 
-  @spec output(Command.Output.target(), keyword() | Command.source() | [Command.source()]) ::
-          Command.Output.t()
+  @spec output(Command.Output.target(), keyword()) :: Command.Output.t()
   def output(target, options_or_sources), do: Build.output(target, options_or_sources)
 
   @spec output(Command.Output.target(), Command.source() | [Command.source()], keyword()) ::

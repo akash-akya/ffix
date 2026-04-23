@@ -1,6 +1,14 @@
 defmodule FF.Command.Output do
   @moduledoc """
   One ffmpeg output declaration.
+
+  `sources` is the ordered list of graph exports or input streams that become
+  `-map` entries. `options` is a flat keyword/list of ffmpeg output options and
+  is rendered after the maps and before the output target.
+
+  The public `FF.output/2` helper accepts media-role options such as `video:`
+  and `audio:` and lowers them into this source list. Use `sources:` when exact
+  map ordering matters.
   """
 
   alias FF.Command

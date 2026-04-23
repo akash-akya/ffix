@@ -2,10 +2,21 @@ defmodule FF.Command.Input do
   @moduledoc """
   One ffmpeg input declaration.
 
+  Accessing an input returns `FF.Stream` references that can be used in graphs
+  or mapped directly to outputs. The access keys mirror common ffmpeg stream
+  selectors:
+
+    * `input[:input]` maps the whole input, like `-map 0`
+    * `input[:video]` maps/selects the first video stream class, like `0:v`
+    * `input[:audio]` maps/selects the first audio stream class, like `0:a`
+    * `input[audio: 1]` maps/selects a specific stream class index, like
+      `0:a:1`
+    * `input[raw: "s?"]` keeps an explicit ffmpeg selector escape hatch
+
   ## Examples
 
       src = FF.Command.input("input.mp4", ss: "00:00:03")
-      logo = FF.Command.input("logo.png", label: :logo, loop: 1, framerate: 1)
+      logo = FF.Command.input("logo.png", loop: 1, framerate: 1)
 
       src[:input]
       src[:video]
@@ -18,16 +29,14 @@ defmodule FF.Command.Input do
 
   @type source :: String.t() | :stdin | {:pipe, non_neg_integer()} | {:url, String.t()}
   @type option :: {atom() | String.t(), term()}
-  @type label :: String.t()
 
   @type t :: %__MODULE__{
           source: source(),
           id: reference() | nil,
-          label: label() | nil,
           options: [option()]
         }
 
-  defstruct [:source, :id, :label, options: []]
+  defstruct [:source, :id, options: []]
 
   @spec fetch(t(), term()) :: {:ok, FF.Stream.t()} | :error
   def fetch(%__MODULE__{id: id}, key) when is_reference(id) do

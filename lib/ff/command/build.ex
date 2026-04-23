@@ -7,11 +7,10 @@ defmodule FF.Command.Build do
   alias FF.Filter.Builder
   alias FF.Graph
   alias FF.Graph.Export
-  alias FF.Graph.InputRef
 
-  @role_keys [:video, :audio, :subtitle, :subtitles, :data, :attachment]
+  @role_keys [:video, :audio]
+  @removed_role_keys [:subtitle, :subtitles, :data, :attachment]
   @command_keys [:global, :inputs, :graph, :outputs]
-  @graph_keys [:output, :outputs, :terminals, :settings]
 
   @spec command(keyword()) :: Command.t()
   def command(options) when is_list(options) do
@@ -35,16 +34,18 @@ defmodule FF.Command.Build do
     )
   end
 
-  @spec output(Output.target(), keyword() | Command.source() | [Command.source()]) :: Output.t()
-  def output(target, options_or_sources) when is_list(options_or_sources) do
-    if Keyword.keyword?(options_or_sources) do
-      output_from_options!(target, options_or_sources)
+  @spec output(Output.target(), keyword()) :: Output.t()
+  def output(target, options) when is_list(options) do
+    if Keyword.keyword?(options) do
+      output_from_options!(target, options)
     else
-      Command.output(target, options_or_sources)
+      raise ArgumentError, "output/2 expects keyword options with :video, :audio, or :sources"
     end
   end
 
-  def output(target, source), do: Command.output(target, source)
+  def output(_target, _source) do
+    raise ArgumentError, "output/2 expects keyword options with :video, :audio, or :sources"
+  end
 
   defp validate_command_keys!(options) do
     unknown = Keyword.keys(options) -- @command_keys
@@ -55,103 +56,44 @@ defmodule FF.Command.Build do
   end
 
   defp normalize_inputs!(inputs) when is_list(inputs) do
-    cond do
-      inputs == [] ->
-        {[], %{}}
-
-      Keyword.keyword?(inputs) ->
-        normalize_input_bindings!(inputs)
-
-      true ->
-        normalize_input_list!(inputs)
+    if Keyword.keyword?(inputs) do
+      normalize_input_bindings!(inputs)
+    else
+      raise ArgumentError, "command inputs must be a keyword list of input/1 or input/2 values"
     end
   end
 
   defp normalize_inputs!(_inputs) do
-    raise ArgumentError, "command inputs must be a list"
+    raise ArgumentError, "command inputs must be a keyword list of input/1 or input/2 values"
   end
 
   defp normalize_input_bindings!(bindings) do
-    labels = Keyword.keys(bindings)
+    names = Keyword.keys(bindings)
 
-    if length(labels) != length(Enum.uniq(labels)) do
+    if length(names) != length(Enum.uniq(names)) do
       raise ArgumentError,
-            "duplicate command input labels: #{inspect(labels -- Enum.uniq(labels))}"
+            "duplicate command input names: #{inspect(names -- Enum.uniq(names))}"
     end
 
     entries =
-      Enum.map(bindings, fn {label, spec} ->
-        {label, normalize_input_binding!(label, spec)}
+      Enum.map(bindings, fn {name, input} ->
+        {name, normalize_input_binding!(name, input)}
       end)
 
     {Enum.map(entries, &elem(&1, 1)), Map.new(entries)}
   end
 
-  defp normalize_input_binding!(label, %Input{} = input) do
-    put_input_label!(input, label)
+  defp normalize_input_binding!(_name, %Input{} = input) do
+    %{input | id: input.id || make_ref()}
   end
 
-  defp normalize_input_binding!(label, {source, options}) when is_list(options) do
-    source
-    |> Command.input(options)
-    |> put_input_label!(label)
+  defp normalize_input_binding!(_name, source) when is_binary(source) do
+    Command.input(source)
   end
 
-  defp normalize_input_binding!(label, source) do
-    source
-    |> Command.input()
-    |> put_input_label!(label)
-  end
-
-  defp normalize_input_list!(inputs) do
-    Enum.each(inputs, fn
-      %Input{} -> :ok
-      other -> raise ArgumentError, "invalid command input: #{inspect(other)}"
-    end)
-
-    {inputs, input_context_from_list(inputs)}
-  end
-
-  defp input_context_from_list(inputs) do
-    Enum.reduce(inputs, %{}, fn
-      %Input{label: nil}, context ->
-        context
-
-      %Input{label: label} = input, context ->
-        context
-        |> Map.put(label, input)
-        |> maybe_put_existing_atom(label, input)
-    end)
-  end
-
-  defp maybe_put_existing_atom(context, label, input) when is_binary(label) do
-    atom_label = String.to_existing_atom(label)
-    Map.put(context, atom_label, input)
-  rescue
-    ArgumentError -> context
-  end
-
-  defp put_input_label!(%Input{} = input, label) do
-    normalized_label = normalize_input_label!(label)
-
-    case input.label do
-      nil ->
-        %{input | id: input.id || make_ref(), label: normalized_label}
-
-      ^normalized_label ->
-        %{input | id: input.id || make_ref()}
-
-      other ->
-        raise ArgumentError,
-              "input label #{inspect(other)} does not match declared input name #{inspect(normalized_label)}"
-    end
-  end
-
-  defp normalize_input_label!(label) do
-    case InputRef.normalize_input_id!(label) do
-      label when is_binary(label) -> label
-      _label -> raise ArgumentError, "input label must be an atom or non-empty string"
-    end
+  defp normalize_input_binding!(name, other) do
+    raise ArgumentError,
+          "command input #{inspect(name)} must be built with input/1, input/2, or a string source, got: #{inspect(other)}"
   end
 
   defp normalize_graph!(nil, _input_context), do: nil
@@ -163,12 +105,9 @@ defmodule FF.Command.Build do
     |> graph_from_callback_result!()
   end
 
-  defp normalize_graph!(graph_spec, _input_context) when is_list(graph_spec) do
-    graph_from_callback_result!(graph_spec)
-  end
-
   defp normalize_graph!(other, _input_context) do
-    raise ArgumentError, "invalid command graph: #{inspect(other)}"
+    raise ArgumentError,
+          "command graph must be a %FF.Graph{} or one-arity callback, got: #{inspect(other)}"
   end
 
   defp graph_from_callback_result!(nil), do: nil
@@ -177,21 +116,13 @@ defmodule FF.Command.Build do
 
   defp graph_from_callback_result!([]), do: nil
 
-  defp graph_from_callback_result!(graph_options) when is_list(graph_options) do
-    if graph_options?(graph_options) do
-      Builder.graph(graph_options)
-    else
-      Builder.graph(outputs: graph_options)
-    end
+  defp graph_from_callback_result!(exports) when is_list(exports) do
+    Builder.graph(outputs: exports)
   end
 
   defp graph_from_callback_result!(other) do
     raise ArgumentError,
-          "graph callback must return a graph, keyword outputs, graph options, or nil, got: #{inspect(other)}"
-  end
-
-  defp graph_options?(options) do
-    Keyword.keyword?(options) and Enum.any?(Keyword.keys(options), &(&1 in @graph_keys))
+          "graph callback must return a %FF.Graph{}, keyword exports, or nil, got: #{inspect(other)}"
   end
 
   defp graph_context(nil), do: %{}
@@ -248,6 +179,13 @@ defmodule FF.Command.Build do
   end
 
   defp output_from_options!(target, options) do
+    removed_roles = Keyword.keys(options) |> Enum.filter(&(&1 in @removed_role_keys))
+
+    if removed_roles != [] do
+      raise ArgumentError,
+            "unsupported output media roles: #{inspect(removed_roles)}; use :video, :audio, or :sources"
+    end
+
     role_options = Keyword.take(options, @role_keys)
     sources = Keyword.get(options, :sources)
 

@@ -21,7 +21,7 @@ defmodule FF.CommandTest do
 
     command =
       FF.command(
-        inputs: [Command.input("input.mp4")],
+        inputs: [src: Command.input("input.mp4")],
         graph:
           FF.graph(
             outputs: [
@@ -76,7 +76,7 @@ defmodule FF.CommandTest do
   test "rejects missing inline graph output shorthands" do
     command =
       FF.command(
-        inputs: [Command.input("input.mp4")],
+        inputs: [src: Command.input("input.mp4")],
         graph: FF.graph(outputs: [video: FF.Graph.input(0, :video)]),
         outputs: [Command.output("out.mp4", :preview)]
       )
@@ -86,13 +86,13 @@ defmodule FF.CommandTest do
     end
   end
 
-  test "builds argv with labeled command inputs" do
-    src = Command.input("input.mp4", label: :src)
-    logo = Command.input("logo.png", label: :logo)
+  test "builds argv with named command inputs" do
+    src = Command.input("input.mp4")
+    logo = Command.input("logo.png")
 
     command =
       FF.command(
-        inputs: [src, logo],
+        inputs: [src: src, logo: logo],
         graph:
           FF.graph(
             outputs: [
@@ -127,11 +127,11 @@ defmodule FF.CommandTest do
   end
 
   test "input access supports indexed tracks" do
-    src = Command.input("input.mp4", label: :src)
+    src = Command.input("input.mp4")
 
     command =
       FF.command(
-        inputs: [src],
+        inputs: [src: src],
         outputs: [Command.output("out.mka", src[audio: 1], acodec: :copy)]
       )
 
@@ -152,7 +152,7 @@ defmodule FF.CommandTest do
 
     command =
       FF.command(
-        inputs: [src],
+        inputs: [src: src],
         outputs: [
           Command.output("out.mka", src[audio: 1], acodec: :copy)
         ]
@@ -170,12 +170,12 @@ defmodule FF.CommandTest do
            ]
   end
 
-  test "supports access on unlabeled command inputs" do
+  test "supports access on command inputs" do
     src = Command.input("input.mp4")
 
     command =
       FF.command(
-        inputs: [src],
+        inputs: [src: src],
         outputs: [Command.output("out.mp4", src[:video], vcodec: :copy)]
       )
 
@@ -196,7 +196,7 @@ defmodule FF.CommandTest do
 
     command =
       FF.command(
-        inputs: [src],
+        inputs: [src: src],
         outputs: [Command.output("out.mkv", src[:input], c: :copy)]
       )
 
@@ -212,35 +212,63 @@ defmodule FF.CommandTest do
            ]
   end
 
-  test "rejects duplicate command input declarations" do
-    src = Command.input("input.mp4")
-
-    assert_raise ArgumentError, "duplicate command input declaration", fn ->
-      FF.command(
-        inputs: [src, src],
-        outputs: [Command.output("out.mp4", src[:video], vcodec: :copy)]
-      )
-      |> FF.to_argv()
-    end
-  end
-
-  test "rejects duplicate command input labels" do
-    assert_raise ArgumentError, "duplicate command input label \"src\"", fn ->
+  test "rejects duplicate command input names" do
+    assert_raise ArgumentError, "duplicate command input names: [:src]", fn ->
       FF.command(
         inputs: [
-          Command.input("a.mp4", label: :src),
-          Command.input("b.mp4", label: "src")
+          src: Command.input("a.mp4"),
+          src: Command.input("b.mp4")
         ],
-        outputs: [Command.output("out.mp4", FF.Graph.input(0, :video))]
+        outputs: [Command.output("out.mp4", FF.Graph.input(0, :video), vcodec: :copy)]
       )
       |> FF.to_argv()
     end
   end
 
-  test "rejects missing labeled inputs" do
+  test "rejects input labels" do
+    assert_raise ArgumentError,
+                 "input labels are not supported; name inputs in command inputs instead",
+                 fn ->
+                   Command.input("input.mp4", label: :src)
+                 end
+  end
+
+  test "rejects non-keyword command inputs" do
+    assert_raise ArgumentError,
+                 "command inputs must be a keyword list of input/1 or input/2 values",
+                 fn ->
+                   FF.command(
+                     inputs: [Command.input("input.mp4")],
+                     outputs: [Command.output("out.mp4", FF.Graph.input(0, :video))]
+                   )
+                 end
+  end
+
+  test "supports string source shorthand in command inputs" do
     command =
       FF.command(
-        inputs: [Command.input("input.mp4", label: :src)],
+        inputs: [src: "input.mp4"],
+        outputs: fn _graph, %{inputs: inputs} ->
+          FF.output("out.mp4", video: inputs.src[:video], vcodec: :copy)
+        end
+      )
+
+    assert FF.to_argv(command) == [
+             "ffmpeg",
+             "-i",
+             "input.mp4",
+             "-map",
+             "0:v",
+             "-vcodec",
+             "copy",
+             "out.mp4"
+           ]
+  end
+
+  test "rejects missing named graph inputs" do
+    command =
+      FF.command(
+        inputs: [src: Command.input("input.mp4")],
         graph: FF.graph(outputs: [video: FF.Graph.input(:missing, :video)]),
         outputs: [Command.output("out.mp4", :video)]
       )
@@ -255,8 +283,8 @@ defmodule FF.CommandTest do
       FF.command(
         global: [y: true],
         inputs: [
-          Command.input("input.mp4", ss: "00:00:03", stream_loop: -1),
-          Command.input("logo.png", loop: 1, framerate: 1)
+          src: Command.input("input.mp4", ss: "00:00:03", stream_loop: -1),
+          logo: Command.input("logo.png", loop: 1, framerate: 1)
         ],
         outputs: [Command.output("out.mp4", FF.Graph.input(0, :video), vcodec: :copy)]
       )
@@ -287,7 +315,7 @@ defmodule FF.CommandTest do
   test "encodes float command options as plain decimal strings" do
     command =
       FF.command(
-        inputs: [Command.input("input.mp4")],
+        inputs: [src: Command.input("input.mp4")],
         outputs: [
           Command.output("out.mp4", FF.Graph.input(0, :video), t: 0.25, vcodec: :copy)
         ]
@@ -319,7 +347,7 @@ defmodule FF.CommandTest do
     command =
       FF.command(
         global: [y: true, loglevel: :error],
-        inputs: [Command.input("input.mp4")],
+        inputs: [src: Command.input("input.mp4")],
         graph: graph,
         outputs: [
           Command.output("out.mp4", [graph[:video], audio], vcodec: :libx264, acodec: :copy)
@@ -453,7 +481,7 @@ defmodule FF.CommandTest do
 
     command =
       FF.command(
-        inputs: [Command.input("input.mp4")],
+        inputs: [src: Command.input("input.mp4")],
         graph: graph,
         outputs: [
           Command.output("a.mp4", :video, vcodec: :libx264),
@@ -479,7 +507,7 @@ defmodule FF.CommandTest do
 
     command =
       FF.command(
-        inputs: [Command.input("input.mp4")],
+        inputs: [src: Command.input("input.mp4")],
         graph: graph,
         outputs: [Command.output("out.mp4", :master, vcodec: :libx264)]
       )
