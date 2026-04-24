@@ -21,8 +21,14 @@ erl_crash.dump
 
 # Ignore package tarball (built via "mix hex.build").
 ff-*.tar
+/ff-*/
 
 # Temporary files, for example, from tests.
 /tmp/
 /.dexter.*
 /.tmux/
+
+# Local media fixtures used during development. Integration tests generate
+# their own fixtures at runtime.
+/test/support/*.mp4
+/test/support/*.png

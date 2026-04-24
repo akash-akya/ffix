@@ -18,9 +18,17 @@ def deps do
 end
 ```
 
-`ffmpeg` must be available on `PATH` when compiling the library because filter
-helpers are generated from local ffmpeg filter metadata. It is also needed when
-running commands.
+## Requirements
+
+`ffmpeg` must be available on `PATH` when compiling the library. `FF` generates
+filter helpers from local ffmpeg filter metadata at compile time, so the helper
+functions reflect the ffmpeg version available in the build environment.
+Set `FFMPEG_BIN=/path/to/ffmpeg` when the executable is not named `ffmpeg` or is
+not on `PATH`.
+
+`ffmpeg` is also required when running commands through `FF.run/1`,
+`FF.run!/1`, `FF.stream/1`, or `FF.stream!/1`. Building commands and rendering
+argv does not run ffmpeg.
 
 ## Quick Start
 
@@ -391,6 +399,11 @@ FF.stream(command, progress: true)
 end)
 ```
 
+## Testing
+
+The test suite includes ffmpeg integration tests. They run when both `ffmpeg`
+and `ffprobe` are available and are skipped otherwise.
+
 ## Parsing Filtergraphs
 
 `FF.Graph.parse!/1` can parse common filtergraph syntax into the same graph
@@ -415,6 +428,24 @@ common ffmpeg graph syntax, not to model every possible hand-written graph.
 - generated filter helpers from local ffmpeg metadata
 - thin execution helpers around argv
 
-It does not currently probe media files, run ffmpeg for validation, or maintain
-a separate compile stage. Build a command, inspect or validate it if needed, and
-pass it directly to `FF.to_argv/1` or `FF.run/1`.
+The current API supports:
+
+- function-based command construction with named inputs
+- graph callbacks that return exports or `%FF.Graph{}` values
+- output callbacks that receive graph exports and, optionally, command context
+- flat ffmpeg-shaped global, input, and output options
+- `video:`, `audio:`, and `sources:` output mapping
+- structural validation of command and graph data
+
+It does not currently support:
+
+- media probing
+- runtime ffmpeg validation
+- structured typed output-option mapping
+- first-class subtitle, data, or attachment output roles
+- a separate compile stage
+- complete parsing guarantees for every possible hand-written filtergraph
+
+Validation is best-effort and does not inspect media files. Build a command,
+inspect or validate it if needed, and pass it directly to `FF.to_argv/1` or
+`FF.run/1`.

@@ -1,13 +1,20 @@
 defmodule FF.MixProject do
   use Mix.Project
 
+  @version "0.1.0"
+  @scm_url "https://github.com/akash-akya/ff"
+
   def project do
     [
       app: :ff,
-      version: "0.1.0",
+      version: @version,
       elixir: "~> 1.16",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
+      package: package(),
+      description: description(),
+      source_url: @scm_url,
+      homepage_url: @scm_url,
       docs: docs()
     ]
   end
@@ -28,10 +35,27 @@ defmodule FF.MixProject do
     ]
   end
 
+  defp description do
+    "Elixir data model and builder for ffmpeg filtergraphs and commands"
+  end
+
+  defp package do
+    [
+      maintainers: ["Akash Hiremath"],
+      licenses: ["MIT"],
+      files: ~w(lib mix.exs README.md LICENSE),
+      links: %{
+        GitHub: @scm_url,
+        ffmpeg: "https://ffmpeg.org"
+      }
+    ]
+  end
+
   defp docs do
     [
       main: "readme",
-      extras: ["README.md"]
+      source_ref: "v#{@version}",
+      extras: ["README.md", "LICENSE"]
     ]
   end
 end

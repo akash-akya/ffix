@@ -1,7 +1,8 @@
 defmodule FF.Filter.Help do
   @moduledoc false
 
-  @ffmpeg System.find_executable("ffmpeg")
+  @ffmpeg_bin System.get_env("FFMPEG_BIN")
+  @ffmpeg if @ffmpeg_bin in [nil, ""], do: System.find_executable("ffmpeg"), else: @ffmpeg_bin
   @quiet ["-v", "quiet"]
 
   def filter(name) do
@@ -42,6 +43,44 @@ defmodule FF.Filter.Help do
   end
 
   def exec(args) do
-    System.cmd(@ffmpeg, @quiet ++ args)
+    ffmpeg = ffmpeg!()
+
+    case System.cmd(ffmpeg, @quiet ++ args) do
+      {output, 0} ->
+        {output, 0}
+
+      {output, status} ->
+        raise """
+        ffmpeg metadata command failed with status #{status}.
+
+        FF needs ffmpeg at compile time to generate filter helpers.
+        Command: #{Enum.join([ffmpeg | @quiet ++ args], " ")}
+        Output:
+        #{output}
+        """
+    end
+  rescue
+    error in ErlangError ->
+      raise """
+      failed to run ffmpeg for compile-time filter metadata.
+
+      FF needs ffmpeg at compile time to generate filter helpers.
+      Install ffmpeg or set FFMPEG_BIN to the ffmpeg executable path.
+
+      Error: #{Exception.message(error)}
+      """
+  end
+
+  defp ffmpeg! do
+    if @ffmpeg do
+      @ffmpeg
+    else
+      raise """
+      ffmpeg executable was not found.
+
+      FF needs ffmpeg at compile time to generate filter helpers.
+      Install ffmpeg or set FFMPEG_BIN to the ffmpeg executable path.
+      """
+    end
   end
 end
