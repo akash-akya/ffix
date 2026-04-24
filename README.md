@@ -350,7 +350,7 @@ command =
     inputs: [src: src],
     graph: graph,
     outputs: [
-      FF.output("thumb-%03d.jpg", graph[:preview], f: :image2, vsync: 0)
+      FF.output("thumb-%03d.jpg", video: graph[:preview], f: :image2, vsync: 0)
     ]
   )
 ```

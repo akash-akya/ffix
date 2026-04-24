@@ -254,6 +254,10 @@ defmodule FF.FunctionAPITest do
                  end
   end
 
+  test "does not expose top-level output/3" do
+    refute function_exported?(FF, :output, 3)
+  end
+
   test "rejects direct keyword graph specs in commands" do
     error =
       assert_raise ArgumentError, fn ->

@@ -7,7 +7,7 @@ defmodule FF do
 
     * `input/1,2` declares command inputs.
     * `graph/1` builds a `%FF.Graph{}` from streams.
-    * `output/2,3` declares command outputs and stream mappings.
+    * `output/2` declares command outputs and stream mappings.
     * `command/1` assembles those pieces into a `%FF.Command{}`.
     * `to_argv/1` serializes the command to the exact argv passed to ffmpeg.
 
@@ -67,7 +67,6 @@ defmodule FF do
           input: 1,
           input: 2,
           output: 2,
-          output: 3,
           shape: 2
         ]
 
@@ -99,10 +98,6 @@ defmodule FF do
 
   @spec output(Command.Output.target(), keyword()) :: Command.Output.t()
   def output(target, options_or_sources), do: Build.output(target, options_or_sources)
-
-  @spec output(Command.Output.target(), Command.source() | [Command.source()], keyword()) ::
-          Command.Output.t()
-  def output(target, sources, options), do: Command.output(target, sources, options)
 
   @spec command() :: Command.t()
   def command, do: Command.new()
