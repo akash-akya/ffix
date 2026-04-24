@@ -89,7 +89,12 @@ defmodule FF do
     Builder.filter(name, inputs, options)
   end
 
-  @spec shape(Stream.t() | [Stream.t()] | tuple(), [FF.Filter.Builder.output_media()]) ::
+  @typedoc """
+  Media type for a shaped filter output.
+  """
+  @type output_media :: :audio | :video | :unknown
+
+  @spec shape(Stream.t() | [Stream.t()] | tuple(), [output_media()]) ::
           Stream.t() | [Stream.t()]
   def shape(result, outputs), do: Builder.shape(result, outputs)
 

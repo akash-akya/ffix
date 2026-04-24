@@ -7,7 +7,8 @@ defmodule FF.MixProject do
       version: "0.1.0",
       elixir: "~> 1.16",
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      docs: docs()
     ]
   end
 
@@ -24,6 +25,13 @@ defmodule FF.MixProject do
       {:nimble_parsec, "~> 1.4"},
       {:exile, "~> 0.14"},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false}
+    ]
+  end
+
+  defp docs do
+    [
+      main: "readme",
+      extras: ["README.md"]
     ]
   end
 end
