@@ -49,6 +49,10 @@ defmodule FFix.Runner do
   Later command options still win, so callers can override log level or stats in
   the command itself.
   """
+  @moduledoc groups: [
+               "Collected execution",
+               "Streaming execution"
+             ]
 
   alias FFix.Command
   alias FFix.Runner.Error
@@ -77,6 +81,7 @@ defmodule FFix.Runner do
 
   @default_stderr_tail 65_536
 
+  @doc group: "Collected execution"
   @doc """
   Runs a command and returns a collected result tuple.
 
@@ -108,6 +113,7 @@ defmodule FFix.Runner do
           "runner options must be a keyword list, got: #{inspect({command, options})}"
   end
 
+  @doc group: "Collected execution"
   @doc """
   Runs a command and raises `FFix.Runner.Error` on spawn failure or non-zero exit.
   """
@@ -119,6 +125,7 @@ defmodule FFix.Runner do
     end
   end
 
+  @doc group: "Streaming execution"
   @doc """
   Runs a command as a lazy event stream.
 
@@ -151,6 +158,7 @@ defmodule FFix.Runner do
           "runner options must be a keyword list, got: #{inspect({command, options})}"
   end
 
+  @doc group: "Streaming execution"
   @doc """
   Runs a command as a lazy event stream and raises on non-zero exit.
   """

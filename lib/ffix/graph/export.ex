@@ -4,9 +4,9 @@ defmodule FFix.Graph.Export do
 
   Output callbacks receive graph exports in the first argument:
 
-      command(
+      FFix.command(
         "input.mp4",
-        fn src -> src[:video] |> scale(w: 1280, h: -1) end,
+        fn src -> src[:video] |> FFix.Filter.scale(w: 1280, h: -1) end,
         fn video ->
           FFix.output("out.mp4", video: video, "c:v": :libx264)
         end

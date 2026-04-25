@@ -3,8 +3,9 @@ defmodule FFix.Filter do
   Generated helpers for ffmpeg filters.
 
   Each function mirrors one filter reported by the local `ffmpeg` executable at
-  compile time. Function arguments are `FFix.Stream` values; the final argument is
-  a keyword list of ffmpeg filter options.
+  compile time. Function names and option keys stay close to ffmpeg. Function
+  arguments are `FFix.Stream` values; the final argument is a keyword list of
+  ffmpeg filter options.
 
       video
       |> scale(w: 1280, h: -1)
@@ -24,16 +25,53 @@ defmodule FFix.Filter do
         |> ebur128(video: true)
         |> FFix.shape([:audio, :video])
 
-  Option keys are ffmpeg option names. Values are normalized where metadata is
-  available, but raw strings remain an escape hatch for ffmpeg-specific syntax.
+  Generated metadata is useful but not perfect. Use `FFix.filter/3` when the
+  filter name is dynamic, raw strings for ffmpeg-specific option syntax, and
+  `FFix.shape/2` when a dynamic filter needs an explicit output shape.
   """
+  @moduledoc groups: [
+               "Source filters",
+               "Video filters",
+               "Audio filters",
+               "Audio/video filters",
+               "Multi-stream filters",
+               "Sink filters",
+               "Other filters"
+             ]
 
   alias FFix.Filter.Builder
   alias FFix.Filter.Metadata
 
+  filter_group = fn inputs, outputs ->
+    cond do
+      inputs == [] ->
+        "Source filters"
+
+      outputs == [] ->
+        "Sink filters"
+
+      :N in inputs or :N in outputs ->
+        "Multi-stream filters"
+
+      :A in inputs or :A in outputs ->
+        if :V in inputs or :V in outputs do
+          "Audio/video filters"
+        else
+          "Audio filters"
+        end
+
+      :V in inputs or :V in outputs ->
+        "Video filters"
+
+      true ->
+        "Other filters"
+    end
+  end
+
   Enum.each(Metadata.filters(), fn {name, %{inputs: inputs, outputs: outputs, desc: desc}} ->
     inputs = Enum.reject(inputs, &(&1 == :|))
     outputs = Enum.reject(outputs, &(&1 == :|))
+    group = filter_group.(inputs, outputs)
 
     input_args =
       inputs
@@ -75,6 +113,7 @@ defmodule FFix.Filter do
     options_doc = Metadata.build_options_doc(option_specs)
     options_typespec = Metadata.build_options_typespec(option_specs)
 
+    @doc group: group
     @doc """
     #{desc}
 

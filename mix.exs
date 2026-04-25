@@ -55,7 +55,37 @@ defmodule FFix.MixProject do
     [
       main: "readme",
       source_ref: "v#{@version}",
-      extras: ["README.md", "LICENSE"]
+      extras: ["README.md", "LICENSE"],
+      groups_for_modules: [
+        "Main API": [
+          FFix
+        ],
+        "Filters and Graphs": [
+          FFix.Filter,
+          FFix.Graph,
+          FFix.Graph.Export,
+          FFix.Stream,
+          FFix.Terminal,
+          FFix.Expr
+        ],
+        Commands: [
+          FFix.Command,
+          FFix.Command.Input,
+          FFix.Command.Output
+        ],
+        Execution: [
+          FFix.Runner,
+          FFix.Runner.Result,
+          FFix.Runner.Progress,
+          FFix.Runner.Log,
+          FFix.Runner.Error
+        ]
+      ],
+      nest_modules_by_prefix: [
+        FFix.Command,
+        FFix.Graph,
+        FFix.Runner
+      ]
     ]
   end
 end

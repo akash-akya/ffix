@@ -1,17 +1,18 @@
 defmodule FFix do
   @moduledoc """
-  Public entry point for building ffmpeg filtergraphs and commands.
+  Build ffmpeg filtergraphs and commands from Elixir.
 
-  `FFix` keeps the workflow data-first:
+  The usual workflow is:
 
     * pass input sources to `command/3`
     * build streams with generated `FFix.Filter` helpers
     * map streams to outputs with `output/2`
     * serialize with `to_argv/1` or execute with `run/2`
 
-  `use FFix` imports the top-level helpers plus generated filter functions. It
-  does not introduce a separate DSL; callbacks receive and return ordinary
-  Elixir values.
+  `use FFix` imports the top-level helpers plus generated filter functions.
+  Callbacks receive and return ordinary Elixir values. Examples in this module
+  assume `use FFix`; without it, call `FFix.command/3`, `FFix.output/2`, and
+  `FFix.Filter` functions directly.
 
   ## Quick Start
 
@@ -31,6 +32,14 @@ defmodule FFix do
 
   This reads `input.mp4`, crops the video stream, maps the original audio
   stream, and writes `square.mp4`.
+
+  ## Choosing an API Layer
+
+    * `FFix.command/3` is the main API for building ffmpeg commands.
+    * `FFix.Command` is for constructing or transforming command structs.
+    * `FFix.Graph` is for parsing, serializing, or reusing filtergraphs.
+    * `FFix.Runner` is the execution boundary for running commands and
+      streaming events.
 
   ## Command Model
 
@@ -98,8 +107,8 @@ defmodule FFix do
   normalized to `%FFix.Command.Input{}` values. The output callback receives graph
   exports in the same shape returned by the graph callback.
 
-  For multiple graph results, return a list. The output callback can also return
-  one output or a list of outputs:
+  For multiple graph results, return a list. The output callback can return one
+  output or a list of outputs, so one ffmpeg command can write multiple targets:
 
       command(
         "input.mp4",
@@ -179,6 +188,17 @@ defmodule FFix do
   muxer options such as `"c:v"`, `"c:a"`, `f:`, and `movflags:` belong in
   `output/2`.
 
+  Copying is still ffmpeg's rule: direct input streams can usually be copied,
+  but filtered streams must be encoded again. When mixing them, set codecs per
+  stream:
+
+      output("out.mp4",
+        video: scaled,
+        audio: src[:audio],
+        "c:v": :libx264,
+        "c:a": :copy
+      )
+
   ## Output Mapping
 
   Use `video:` and `audio:` for common mappings:
@@ -203,6 +223,15 @@ defmodule FFix do
   `to_argv/1` is the canonical serialization boundary. `to_shell_string/1` is
   useful for logs, but argv should be preferred when executing.
   """
+  @moduledoc groups: [
+               "Setup",
+               "Command building",
+               "Inputs and outputs",
+               "Filtergraphs",
+               "Serialization",
+               "Execution",
+               "Validation"
+             ]
 
   alias FFix.Command
   alias FFix.Expr
@@ -213,8 +242,13 @@ defmodule FFix do
   alias FFix.Stream
   alias FFix.Terminal
 
+  @doc group: "Setup"
   @doc """
   Imports the high-level `FFix` helpers and generated filter functions.
+
+  This is useful for concise pipeline modules. If you prefer explicit names,
+  skip `use FFix` and call `FFix.command/3`, `FFix.output/2`, and
+  `FFix.Filter.scale/2` directly.
 
       defmodule Pipeline do
         use FFix
@@ -242,6 +276,7 @@ defmodule FFix do
     end
   end
 
+  @doc group: "Inputs and outputs"
   @doc """
   Declares an ffmpeg input without input options.
 
@@ -261,6 +296,7 @@ defmodule FFix do
   @spec input(Command.Input.source()) :: Command.Input.t()
   def input(source), do: Command.input(source)
 
+  @doc group: "Inputs and outputs"
   @doc """
   Declares an ffmpeg input with input options.
 
@@ -274,6 +310,7 @@ defmodule FFix do
   @spec input(Command.Input.source(), keyword()) :: Command.Input.t()
   def input(source, options) when is_list(options), do: Command.input(source, options)
 
+  @doc group: "Filtergraphs"
   @doc """
   Wraps a raw ffmpeg expression so it is serialized as an expression value.
 
@@ -282,6 +319,7 @@ defmodule FFix do
   @spec expr(String.t()) :: Expr.t()
   def expr(source) when is_binary(source), do: %Expr{source: source}
 
+  @doc group: "Filtergraphs"
   @doc """
   Applies a filter by name.
 
@@ -302,6 +340,7 @@ defmodule FFix do
   """
   @type output_media :: :audio | :video | :unknown
 
+  @doc group: "Filtergraphs"
   @doc """
   Assigns a concrete output shape to a dynamic or ambiguous filter result.
 
@@ -317,6 +356,7 @@ defmodule FFix do
           Stream.t() | [Stream.t()]
   def shape(result, outputs), do: Builder.shape(result, outputs)
 
+  @doc group: "Filtergraphs"
   @doc """
   Builds a `%FFix.Graph{}` from exported streams and terminal sinks.
 
@@ -338,6 +378,7 @@ defmodule FFix do
   @spec graph(keyword()) :: Graph.t()
   def graph(options), do: Builder.graph(options)
 
+  @doc group: "Inputs and outputs"
   @doc """
   Declares an output target and stream mappings.
 
@@ -363,6 +404,7 @@ defmodule FFix do
   @spec output(Command.Output.target(), keyword()) :: Command.Output.t()
   def output(target, options_or_sources), do: Build.output(target, options_or_sources)
 
+  @doc group: "Command building"
   @doc """
   Returns an empty low-level `%FFix.Command{}`.
 
@@ -375,6 +417,7 @@ defmodule FFix do
   @spec command(keyword()) :: Command.t()
   def command(options) when is_list(options), do: Build.command(options)
 
+  @doc group: "Command building"
   @doc """
   Builds a command from inputs, a graph callback, and an output callback.
 
@@ -447,6 +490,7 @@ defmodule FFix do
         ) :: Command.t()
   def command(inputs, graph_fun, outputs_fun), do: Build.command(inputs, graph_fun, outputs_fun)
 
+  @doc group: "Command building"
   @doc """
   Builds a command with command-level options.
 
@@ -481,6 +525,7 @@ defmodule FFix do
   def command(inputs, graph_fun, outputs_fun, options),
     do: Build.command(inputs, graph_fun, outputs_fun, options)
 
+  @doc group: "Serialization"
   @doc """
   Validates and serializes a graph to ffmpeg filtergraph syntax.
   """
@@ -491,6 +536,7 @@ defmodule FFix do
     |> FFix.Graph.Render.to_filtergraph()
   end
 
+  @doc group: "Serialization"
   @doc """
   Serializes a command to the argv list that should be passed to an OS process.
 
@@ -500,6 +546,7 @@ defmodule FFix do
   @spec to_argv(Command.t()) :: [String.t()]
   def to_argv(%Command{} = command), do: Command.to_argv(command)
 
+  @doc group: "Serialization"
   @doc """
   Serializes a command as a shell-escaped string for logs and debugging.
 
@@ -508,6 +555,7 @@ defmodule FFix do
   @spec to_shell_string(Command.t()) :: String.t()
   def to_shell_string(%Command{} = command), do: Command.to_shell_string(command)
 
+  @doc group: "Execution"
   @doc """
   Runs a command and returns `{:ok, result}` or `{:error, error}`.
 
@@ -518,12 +566,14 @@ defmodule FFix do
           {:ok, Runner.Result.t()} | {:error, Runner.Error.t()}
   def run(command, options \\ []), do: Runner.run(command, options)
 
+  @doc group: "Execution"
   @doc """
   Runs a command and returns the result, raising `FFix.Runner.Error` on failure.
   """
   @spec run!(Command.t() | nonempty_list(String.t()), [Runner.option()]) :: Runner.Result.t()
   def run!(command, options \\ []), do: Runner.run!(command, options)
 
+  @doc group: "Execution"
   @doc """
   Runs a command as a lazy stream of execution events.
 
@@ -537,12 +587,14 @@ defmodule FFix do
   @spec stream(Command.t() | nonempty_list(String.t()), [Runner.option()]) :: term()
   def stream(command, options \\ []), do: Runner.stream(command, options)
 
+  @doc group: "Execution"
   @doc """
   Runs a command as a lazy stream and raises on non-zero exit.
   """
   @spec stream!(Command.t() | nonempty_list(String.t()), [Runner.option()]) :: term()
   def stream!(command, options \\ []), do: Runner.stream!(command, options)
 
+  @doc group: "Validation"
   @doc """
   Performs structural validation on a graph or command.
 

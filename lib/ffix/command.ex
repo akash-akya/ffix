@@ -43,6 +43,14 @@ defmodule FFix.Command do
   stream specifiers, use an atom or string key that already contains the
   specifier, for example `:"c:v"` or `"metadata:s:a:0"`.
   """
+  @moduledoc groups: [
+               "Construction",
+               "Inputs",
+               "Filtergraph",
+               "Outputs",
+               "Validation",
+               "Serialization"
+             ]
 
   alias __MODULE__.Input
   alias __MODULE__.Output
@@ -63,15 +71,17 @@ defmodule FFix.Command do
 
   defstruct global_options: [], inputs: [], graph: nil, outputs: []
 
-  @spec new() :: t()
+  @doc group: "Construction"
   @doc """
   Returns an empty command.
 
   This is useful when building a command step by step with `global/2`,
   `input/3`, `graph/2`, and `output/4`.
   """
+  @spec new() :: t()
   def new, do: %__MODULE__{}
 
+  @doc group: "Construction"
   @doc """
   Builds a command from already-normalized command data.
 
@@ -97,6 +107,7 @@ defmodule FFix.Command do
     }
   end
 
+  @doc group: "Construction"
   @doc """
   Appends global ffmpeg options to a command.
 
@@ -111,6 +122,7 @@ defmodule FFix.Command do
     %{command | global_options: global_options ++ options}
   end
 
+  @doc group: "Inputs"
   @doc """
   Builds an input declaration.
 
@@ -123,9 +135,25 @@ defmodule FFix.Command do
   Prefer shaping inputs in `FFix.command/3` rather than storing labels on the
   input itself.
   """
-  @spec input(Input.source(), keyword()) :: Input.t()
+  @spec input(Input.source()) :: Input.t()
   def input(source), do: input(source, [])
 
+  @doc group: "Inputs"
+  @doc """
+  Builds an input with options, or appends an input to a command.
+
+  Called as `input(source, options)`, it returns an `%FFix.Command.Input{}`:
+
+      src = FFix.Command.input("input.mp4", ss: "00:00:03")
+
+  Called as `input(command, source)`, it appends an input without options and
+  returns the updated command:
+
+      FFix.Command.new()
+      |> FFix.Command.input("input.mp4")
+  """
+  @spec input(Input.source(), keyword()) :: Input.t()
+  @spec input(t(), Input.source()) :: t()
   def input(%__MODULE__{} = command, source), do: input(command, source, [])
 
   def input(source, options) when is_list(options) do
@@ -141,6 +169,14 @@ defmodule FFix.Command do
           "input options must be a keyword list, got: #{inspect({source, options})}"
   end
 
+  @doc group: "Inputs"
+  @doc """
+  Appends an input declaration with options to a command.
+
+      FFix.Command.new()
+      |> FFix.Command.input("input.mp4", ss: "00:00:03")
+  """
+  @spec input(t(), Input.source(), keyword()) :: t()
   def input(%__MODULE__{} = command, source, options) when is_list(options) do
     %{command | inputs: command.inputs ++ [input(source, options)]}
   end
@@ -150,6 +186,7 @@ defmodule FFix.Command do
           "command input options must be a keyword list, got: #{inspect({source, options})}"
   end
 
+  @doc group: "Filtergraph"
   @doc """
   Sets the filtergraph for a command.
   """
@@ -158,6 +195,7 @@ defmodule FFix.Command do
     %{command | graph: graph}
   end
 
+  @doc group: "Outputs"
   @doc """
   Builds an output declaration from explicit sources.
 
@@ -169,9 +207,23 @@ defmodule FFix.Command do
 
   Output options are rendered after `-map` entries and before the target.
   """
-  @spec output(Output.target(), source() | [source()], keyword()) :: Output.t()
+  @spec output(Output.target(), source() | [source()]) :: Output.t()
   def output(target, sources), do: output(target, sources, [])
 
+  @doc group: "Outputs"
+  @doc """
+  Builds an output with options, or appends an output to a command.
+
+  Called as `output(target, sources, options)`, it returns an
+  `%FFix.Command.Output{}`:
+
+      FFix.Command.output("copy.mp4", [src[:video], src[:audio]], c: :copy)
+
+  Called as `output(command, target, sources)`, it appends an output without
+  options and returns the updated command.
+  """
+  @spec output(Output.target(), source() | [source()], keyword()) :: Output.t()
+  @spec output(t(), Output.target(), source() | [source()]) :: t()
   def output(%__MODULE__{} = command, target, sources), do: output(command, target, sources, [])
 
   def output(target, sources, options) when is_list(options) do
@@ -183,6 +235,15 @@ defmodule FFix.Command do
           "output options must be a keyword list, got: #{inspect({target, sources, options})}"
   end
 
+  @doc group: "Outputs"
+  @doc """
+  Appends an output declaration with options to a command.
+
+      FFix.Command.new()
+      |> FFix.Command.input("input.mp4")
+      |> FFix.Command.output("copy.mp4", 0, c: :copy)
+  """
+  @spec output(t(), Output.target(), source() | [source()], keyword()) :: t()
   def output(%__MODULE__{} = command, target, sources, options) when is_list(options) do
     %{command | outputs: command.outputs ++ [output(target, sources, options)]}
   end
@@ -192,6 +253,7 @@ defmodule FFix.Command do
           "command output options must be a keyword list, got: #{inspect({target, sources, options})}"
   end
 
+  @doc group: "Validation"
   @doc """
   Validates command structure.
 
@@ -240,8 +302,12 @@ defmodule FFix.Command do
     command
   end
 
+  @doc group: "Serialization"
   @doc """
   Serializes a command to ffmpeg argv.
+
+  The returned list is the canonical boundary for executing a command. Prefer it
+  over shell strings when passing argv to another process.
   """
   @spec to_argv(t()) :: [String.t()]
   def to_argv(%__MODULE__{} = command) do
@@ -264,6 +330,7 @@ defmodule FFix.Command do
       )
   end
 
+  @doc group: "Serialization"
   @doc """
   Serializes a command as a shell-escaped string for logs and debugging.
   """

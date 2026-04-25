@@ -8,13 +8,13 @@ defmodule FFix.Graph do
 
   Most users build filter pipelines inside `FFix.command/3` callbacks:
 
-      command(
+      FFix.command(
         "input.mp4",
         fn src ->
-          src[:video] |> scale(w: 1280, h: -1)
+          src[:video] |> FFix.Filter.scale(w: 1280, h: -1)
         end,
         fn video, src ->
-          output("out.mp4", video: video, audio: src[:audio])
+          FFix.output("out.mp4", video: video, audio: src[:audio])
         end
       )
 
@@ -41,6 +41,11 @@ defmodule FFix.Graph do
     * `{:video, 1}` or `{:audio, 1}` selects a stream-class index
     * `{:raw, "s?"}` keeps an ffmpeg selector escape hatch
   """
+  @moduledoc groups: [
+               "Inputs",
+               "Exports",
+               "Parsing and serialization"
+             ]
 
   @behaviour Access
 
@@ -74,6 +79,7 @@ defmodule FFix.Graph do
             terminals: [],
             settings: []
 
+  @doc group: "Inputs"
   @doc """
   Builds a stream reference for an ffmpeg command input.
 
@@ -102,6 +108,7 @@ defmodule FFix.Graph do
   @spec input(input_id(), input_selector()) :: FFix.Stream.t()
   def input(input, selector), do: Builder.input(input, selector)
 
+  @doc group: "Inputs"
   @doc """
   Builds a stream reference from a raw ffmpeg input selector.
 
@@ -111,12 +118,14 @@ defmodule FFix.Graph do
   @spec input_raw(String.t()) :: FFix.Stream.t()
   def input_raw(spec), do: Builder.input_raw(spec)
 
+  @doc group: "Exports"
   @doc """
   Returns graph exports in declaration order.
   """
   @spec exports(t()) :: [Export.t()]
   def exports(%__MODULE__{exports: exports}), do: exports
 
+  @doc group: "Exports"
   @doc """
   Looks up a graph export by name or zero-based position.
 
@@ -132,6 +141,7 @@ defmodule FFix.Graph do
     Enum.at(exports, index)
   end
 
+  @doc group: "Exports"
   @doc """
   Looks up a graph export by name or position, raising when it is missing.
   """
@@ -177,6 +187,7 @@ defmodule FFix.Graph do
     %{graph | nodes: Map.update!(nodes, node_id, fun)}
   end
 
+  @doc group: "Parsing and serialization"
   @doc """
   Parses a filtergraph string into `%FFix.Graph{}`.
 
@@ -193,6 +204,7 @@ defmodule FFix.Graph do
   @spec parse!(String.t()) :: t()
   def parse!(source) when is_binary(source), do: Parse.parse!(source)
 
+  @doc group: "Parsing and serialization"
   @doc """
   Serializes a graph to ffmpeg filtergraph syntax.
 
