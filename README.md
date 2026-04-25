@@ -3,8 +3,9 @@
 `FF` builds ffmpeg filtergraphs and commands as Elixir data.
 
 Use it when you want to assemble filter pipelines programmatically without
-hand-building `-filter_complex` and `-map` strings. The command stays inspectable
-until you serialize it to argv or run it.
+hand-building `-filter_complex` and `-map` strings. It acts as a small
+translation layer from Elixir callbacks and data structures to ffmpeg argv; the
+command stays inspectable until you serialize it or run it.
 
 ## Requirements
 
@@ -114,6 +115,7 @@ debugging.
 
 ## More
 
-Start with the `FF` module docs for command callbacks, graph return shapes, and
-output mapping. See `FF.Graph` for graph construction and parsing, `FF.Filter`
-for generated filter helpers, and `FF.Runner` for streaming execution events.
+Start with the `FF` module docs for the command model, option placement, graph
+return shapes, and output mapping. See `FF.Graph` for graph construction and
+parsing, `FF.Filter` for generated filter helpers, and `FF.Runner` for
+streaming execution events.
