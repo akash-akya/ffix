@@ -1,23 +1,53 @@
 defmodule FF.Runner do
   @moduledoc """
-  Runs `%FF.Command{}` values or raw argv lists and exposes both collected and
-  pull-based execution APIs.
+  Thin execution layer for `%FF.Command{}` values or raw argv lists.
 
-  The runner stays intentionally small:
+  The core library models commands as data. `FF.Runner` is the boundary that
+  starts an OS process and turns stdout, stderr, logs, progress, and exit status
+  into Elixir data.
 
-  - `%FF.Command{}` stays the core command model
-  - `run/2` and `run!/2` return `%FF.Runner.Result{}` values
-  - `stream/2` and `stream!/2` expose a lazy event stream with back-pressure
-  - non-zero exits are represented as `%FF.Runner.Error{}` at the boundary
+  ## Collected Execution
+
+      {:ok, result} =
+        FF.run(command,
+          stdout: :discard,
+          stderr: :collect
+        )
+
+      result.exit_status
+      result.stderr
+
+  `run/2` returns `{:ok, result}` for exit status `0` and `{:error, error}` for
+  non-zero exits or spawn failures. `run!/2` returns the result or raises
+  `FF.Runner.Error`.
+
+  ## Streaming Events
+
+      FF.stream(command, progress: true, stderr: :collect)
+      |> Enum.each(fn
+        {:log, log} -> IO.puts("[\#{log.level}] \#{log.message}")
+        {:progress, progress} -> IO.inspect(progress.status)
+        {:exit, result} -> IO.inspect(result.exit_status)
+        _event -> :ok
+      end)
+
+  `stream/2` is lazy and emits:
+
+    * `{:start, info}`
+    * `{:stdout, chunk}`
+    * `{:stderr, chunk}`
+    * `{:log, %FF.Runner.Log{}}`
+    * `{:progress, %FF.Runner.Progress{}}`
+    * `{:exit, %FF.Runner.Result{}}`
 
   When running `ffmpeg`, the runner prepends a few quiet-by-default execution flags:
 
-  - `-hide_banner`
-  - `-nostats`
-  - `-loglevel level+warning`
+    * `-hide_banner`
+    * `-nostats`
+    * `-loglevel level+warning`
 
-  Later command options still win, so callers can override the default log level or
-  re-enable stats through the command itself.
+  Later command options still win, so callers can override log level or stats in
+  the command itself.
   """
 
   alias FF.Command
@@ -47,6 +77,21 @@ defmodule FF.Runner do
 
   @default_stderr_tail 65_536
 
+  @doc """
+  Runs a command and returns a collected result tuple.
+
+  Options:
+
+    * `:stdin` - enumerable input for process stdin
+    * `:stdout` - `:discard` or `:collect`
+    * `:stderr` - `:discard`, `:collect`, or `{:tail, bytes}`
+    * `:progress` - when `true`, adds `-progress pipe:2` for ffmpeg commands
+    * `:on_event` - callback invoked with each emitted event
+
+  By default stdout is discarded and only the trailing stderr is kept.
+
+      FF.run(command, stderr: :collect)
+  """
   @spec run(Command.t() | nonempty_list(String.t()), [option()]) ::
           {:ok, Result.t()} | {:error, Error.t()}
   def run(command, options \\ [])
@@ -63,6 +108,9 @@ defmodule FF.Runner do
           "runner options must be a keyword list, got: #{inspect({command, options})}"
   end
 
+  @doc """
+  Runs a command and raises `FF.Runner.Error` on spawn failure or non-zero exit.
+  """
   @spec run!(Command.t() | nonempty_list(String.t()), [option()]) :: Result.t()
   def run!(command, options \\ []) do
     case run(command, options) do
@@ -71,6 +119,20 @@ defmodule FF.Runner do
     end
   end
 
+  @doc """
+  Runs a command as a lazy event stream.
+
+  This is useful for progress reporting, log streaming, or large stdout streams
+  that should not be collected into memory.
+
+      FF.stream(command, progress: true, stdout: :collect)
+      |> Enum.each(fn
+        {:stdout, chunk} -> IO.binwrite(chunk)
+        {:progress, progress} -> IO.inspect(progress.frame)
+        {:exit, result} -> IO.inspect(result.exit_status)
+        _event -> :ok
+      end)
+  """
   @spec stream(Command.t() | nonempty_list(String.t()), [option()]) :: term()
   def stream(command, options \\ [])
 
@@ -89,6 +151,9 @@ defmodule FF.Runner do
           "runner options must be a keyword list, got: #{inspect({command, options})}"
   end
 
+  @doc """
+  Runs a command as a lazy event stream and raises on non-zero exit.
+  """
   @spec stream!(Command.t() | nonempty_list(String.t()), [option()]) :: term()
   def stream!(command, options \\ [])
 

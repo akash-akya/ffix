@@ -1,7 +1,5 @@
 defmodule FF.Graph.Node do
-  @moduledoc """
-  A single input or filter node inside a canonical filtergraph.
-  """
+  @moduledoc false
 
   alias FF.Expr
   alias FF.Graph

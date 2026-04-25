@@ -1,6 +1,10 @@
 defmodule FF.Terminal do
   @moduledoc """
   Opaque handle for a sink-ending pipeline.
+
+  Terminal values are produced by sink filters and can be attached to a graph
+  with `FF.graph(terminals: [...])` when a branch is meant to end inside the
+  filtergraph instead of becoming an output mapping.
   """
 
   @opaque t :: %__MODULE__{

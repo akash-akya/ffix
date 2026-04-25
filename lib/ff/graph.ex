@@ -1,45 +1,69 @@
 defmodule FF.Graph do
   @moduledoc """
-  Canonical representation of a complete filtergraph.
+  Filtergraph data model.
 
-  A graph contains filter/input nodes plus named exports that command outputs
-  can map later. Build graph input streams with `FF.Graph.input/2` when you are
-  outside a `FF.command/1` callback, or use command input access inside
-  callbacks:
+  A graph is a pure Elixir value containing input references, filter nodes,
+  exported streams, terminal sinks, and graph-level settings. It is serialized
+  to ffmpeg syntax only at `FF.to_filtergraph/1`, `FF.to_argv/1`, or `FF.run/1`.
 
-      video = FF.Graph.input(0, :video)
+  Most users build graphs inside `FF.command/1` callbacks using named inputs:
 
       command(
         inputs: [src: input("input.mp4")],
         graph: fn inputs ->
-          [preview: inputs.src[:video] |> scale(w: 320, h: -1)]
+          [
+            main: inputs.src[:video] |> scale(w: 1280, h: -1)
+          ]
         end,
-        outputs: fn graph ->
-          output("thumb-%03d.jpg", video: graph.preview, f: :image2)
+        outputs: fn graph, %{inputs: inputs} ->
+          output("out.mp4", video: graph.main, audio: inputs.src[:audio])
         end
       )
 
-  `graph[:name]` and `graph[index]` return exported streams from a graph value.
-  In `FF.command/1` output callbacks the first argument is already a plain map
-  of graph exports, so use `graph.name` there.
+  Use `input/2` when building a reusable graph outside a command callback:
+
+      video = FF.Graph.input(0, :video)
+
+      graph =
+        FF.graph(
+          outputs: [
+            preview: video |> FF.Filter.scale(w: 320, h: -1)
+          ]
+        )
+
+  `graph[:name]` and `graph[index]` return exported streams from a `%FF.Graph{}`
+  value. In a `FF.command/1` output callback, the first argument is already a
+  plain map of graph exports, so use `graph.name` there.
+
+  ## Selectors
+
+    * `:input` maps the whole input, like `-map 0`
+    * `:video` maps/selects the video stream class, like `0:v`
+    * `:audio` maps/selects the audio stream class, like `0:a`
+    * `{:video, 1}` or `{:audio, 1}` selects a stream-class index
+    * `{:raw, "s?"}` keeps an ffmpeg selector escape hatch
   """
 
   @behaviour Access
 
   alias __MODULE__.Export
-  alias __MODULE__.Node
   alias __MODULE__.Parse
   alias __MODULE__.Render
-  alias __MODULE__.InputRef
   alias FF.Filter.Builder
 
   @type node_id :: pos_integer()
   @type setting :: {atom() | String.t(), term()}
-  @type input_id :: InputRef.input_id() | atom()
-  @type input_selector :: InputRef.selector()
+  @type input_id :: non_neg_integer() | atom() | String.t() | reference()
+  @type input_selector ::
+          :input
+          | :video
+          | :audio
+          | {:video, non_neg_integer()}
+          | {:audio, non_neg_integer()}
+          | {:raw, String.t()}
 
   @type t :: %__MODULE__{
-          nodes: %{node_id() => Node.t()},
+          nodes: %{node_id() => term()},
           order: [node_id()],
           exports: [Export.t()],
           terminals: [node_id()],
@@ -52,15 +76,54 @@ defmodule FF.Graph do
             terminals: [],
             settings: []
 
+  @doc """
+  Builds a stream reference for an ffmpeg command input.
+
+  Use this outside command callbacks, where named input access is not available.
+  Inside `FF.command/1`, prefer `inputs.src[:video]`, `inputs.src[:audio]`, and
+  related access forms.
+
+  ## Examples
+
+      video = FF.Graph.input(0, :video)
+      audio = FF.Graph.input(0, :audio)
+
+      graph =
+        FF.graph(
+          outputs: [
+            main: video |> FF.Filter.scale(w: 1280, h: -1)
+          ]
+        )
+
+      FF.command(
+        inputs: [src: FF.input("input.mp4")],
+        graph: graph,
+        outputs: [FF.Command.output("out.mp4", [graph[:main], audio])]
+      )
+  """
   @spec input(input_id(), input_selector()) :: FF.Stream.t()
   def input(input, selector), do: Builder.input(input, selector)
 
+  @doc """
+  Builds a stream reference from a raw ffmpeg input selector.
+
+  This is an escape hatch for selectors that do not have a structured form yet.
+  It currently expects an indexed selector such as `"0:v"` or `"1:s?"`.
+  """
   @spec input_raw(String.t()) :: FF.Stream.t()
   def input_raw(spec), do: Builder.input_raw(spec)
 
+  @doc """
+  Returns graph exports in declaration order.
+  """
   @spec exports(t()) :: [Export.t()]
   def exports(%__MODULE__{exports: exports}), do: exports
 
+  @doc """
+  Looks up a graph export by name or zero-based position.
+
+  Returns `nil` when the export does not exist.
+  """
   @spec export(t(), Export.name() | non_neg_integer()) :: Export.t() | nil
   def export(%__MODULE__{exports: exports}, name) when is_atom(name) or is_binary(name) do
     key = export_name_key(name)
@@ -71,6 +134,9 @@ defmodule FF.Graph do
     Enum.at(exports, index)
   end
 
+  @doc """
+  Looks up a graph export by name or position, raising when it is missing.
+  """
   @spec export!(t(), Export.name() | non_neg_integer()) :: Export.t()
   def export!(%__MODULE__{} = graph, key) do
     case export(graph, key) do
@@ -79,6 +145,7 @@ defmodule FF.Graph do
     end
   end
 
+  @doc false
   @spec fetch(t(), Export.name() | non_neg_integer()) :: {:ok, Export.t()} | :error
   def fetch(%__MODULE__{} = graph, key)
       when is_atom(key) or is_binary(key) or (is_integer(key) and key >= 0) do
@@ -90,27 +157,49 @@ defmodule FF.Graph do
 
   def fetch(%__MODULE__{}, _key), do: :error
 
+  @doc false
   def get_and_update(%__MODULE__{}, _key, _fun) do
     raise ArgumentError, "FF.Graph access is read-only"
   end
 
+  @doc false
   def pop(%__MODULE__{}, _key) do
     raise ArgumentError, "FF.Graph access is read-only"
   end
 
-  @spec nodes(t()) :: [Node.t()]
+  @doc false
+  @spec nodes(t()) :: [term()]
   def nodes(%__MODULE__{nodes: nodes, order: order}) do
     Enum.map(order, &Map.fetch!(nodes, &1))
   end
 
-  @spec update_node(t(), node_id(), (Node.t() -> Node.t())) :: t()
+  @doc false
+  @spec update_node(t(), node_id(), (term() -> term())) :: t()
   def update_node(%__MODULE__{nodes: nodes} = graph, node_id, fun) do
     %{graph | nodes: Map.update!(nodes, node_id, fun)}
   end
 
+  @doc """
+  Parses a filtergraph string into `%FF.Graph{}`.
+
+  The parser is pragmatic: it targets graphs produced by `FF` and common
+  ffmpeg filtergraph syntax. It is not meant to accept every hand-written
+  filtergraph form.
+
+  ## Examples
+
+      graph = FF.Graph.parse!("[0:v]scale=w=320:h=-1[preview]")
+      FF.to_filtergraph(graph)
+      #=> "[0:v]scale=w=320:h=-1[preview];"
+  """
   @spec parse!(String.t()) :: t()
   def parse!(source) when is_binary(source), do: Parse.parse!(source)
 
+  @doc """
+  Serializes a graph to ffmpeg filtergraph syntax.
+
+  Prefer `FF.to_filtergraph/1` when you want validation before serialization.
+  """
   @spec to_filtergraph(t()) :: String.t()
   def to_filtergraph(%__MODULE__{} = graph), do: Render.to_filtergraph(graph)
 

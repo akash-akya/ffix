@@ -38,6 +38,7 @@ defmodule FF.Command.Input do
 
   defstruct [:source, :id, options: []]
 
+  @doc false
   @spec fetch(t(), term()) :: {:ok, FF.Stream.t()} | :error
   def fetch(%__MODULE__{id: id}, key) when is_reference(id) do
     {:ok, FF.Graph.input(id, selector_from_access!(key))}
@@ -47,10 +48,12 @@ defmodule FF.Command.Input do
     raise ArgumentError, "command input access requires an input created with FF.Command.input/2"
   end
 
+  @doc false
   def get_and_update(%__MODULE__{}, _key, _fun) do
     raise ArgumentError, "FF.Command.Input access is read-only"
   end
 
+  @doc false
   def pop(%__MODULE__{}, _key) do
     raise ArgumentError, "FF.Command.Input access is read-only"
   end

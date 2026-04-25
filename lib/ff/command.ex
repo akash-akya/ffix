@@ -64,8 +64,27 @@ defmodule FF.Command do
   defstruct global_options: [], inputs: [], graph: nil, outputs: []
 
   @spec new() :: t()
+  @doc """
+  Returns an empty command.
+
+  This is useful when building a command step by step with `global/2`,
+  `input/3`, `graph/2`, and `output/4`.
+  """
   def new, do: %__MODULE__{}
 
+  @doc """
+  Builds a command from already-normalized command data.
+
+  This lower-level constructor expects ordered input and output structs. For the
+  function callback API, use `FF.command/1`.
+
+      src = FF.Command.input("input.mp4")
+
+      FF.Command.new(
+        inputs: [src],
+        outputs: [FF.Command.output("out.mp4", src[:video], "c:v": :copy)]
+      )
+  """
   @spec new(keyword()) :: t()
   def new(options) when is_list(options) do
     validate_command_keys!(options)
@@ -78,12 +97,32 @@ defmodule FF.Command do
     }
   end
 
+  @doc """
+  Appends global ffmpeg options to a command.
+
+  Global options are rendered before inputs:
+
+      FF.Command.new()
+      |> FF.Command.global(y: true, loglevel: :error)
+  """
   @spec global(t(), keyword()) :: t()
   def global(%__MODULE__{global_options: global_options} = command, options)
       when is_list(options) do
     %{command | global_options: global_options ++ options}
   end
 
+  @doc """
+  Builds an input declaration.
+
+  Input options are rendered before `-i`:
+
+      src = FF.Command.input("input.mp4", ss: "00:00:03")
+      src[:video]
+      src[:audio]
+
+  Prefer naming inputs in `FF.command/1` rather than storing labels on the
+  input itself.
+  """
   @spec input(Input.source(), keyword()) :: Input.t()
   def input(source), do: input(source, [])
 
@@ -111,11 +150,25 @@ defmodule FF.Command do
           "command input options must be a keyword list, got: #{inspect({source, options})}"
   end
 
+  @doc """
+  Sets the filtergraph for a command.
+  """
   @spec graph(t(), Graph.t()) :: t()
   def graph(%__MODULE__{} = command, %Graph{} = graph) do
     %{command | graph: graph}
   end
 
+  @doc """
+  Builds an output declaration from explicit sources.
+
+  This is lower-level than `FF.output/2`: pass graph exports, graph export names,
+  graph export indexes, or direct input streams explicitly.
+
+      src = FF.Command.input("input.mp4")
+      FF.Command.output("copy.mp4", [src[:video], src[:audio]], c: :copy)
+
+  Output options are rendered after `-map` entries and before the target.
+  """
   @spec output(Output.target(), source() | [source()], keyword()) :: Output.t()
   def output(target, sources), do: output(target, sources, [])
 
@@ -139,6 +192,12 @@ defmodule FF.Command do
           "command output options must be a keyword list, got: #{inspect({target, sources, options})}"
   end
 
+  @doc """
+  Validates command structure.
+
+  This checks declared inputs, graph references, output sources, and filtered
+  graph export mappings. It does not run ffmpeg or inspect media files.
+  """
   @spec validate!(t()) :: t()
   def validate!(%__MODULE__{} = command) do
     Enum.each(command.inputs, fn
@@ -181,6 +240,9 @@ defmodule FF.Command do
     command
   end
 
+  @doc """
+  Serializes a command to ffmpeg argv.
+  """
   @spec to_argv(t()) :: [String.t()]
   def to_argv(%__MODULE__{} = command) do
     command = validate!(command)
@@ -202,6 +264,9 @@ defmodule FF.Command do
       )
   end
 
+  @doc """
+  Serializes a command as a shell-escaped string for logs and debugging.
+  """
   @spec to_shell_string(t()) :: String.t()
   def to_shell_string(%__MODULE__{} = command) do
     command

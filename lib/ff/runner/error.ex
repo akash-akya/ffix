@@ -16,6 +16,7 @@ defmodule FF.Runner.Error do
 
   defexception [:kind, :message, :exit_status, :result]
 
+  @doc false
   @spec spawn(String.t(), Result.t()) :: t()
   def spawn(reason, %Result{} = result) do
     %__MODULE__{
@@ -26,6 +27,7 @@ defmodule FF.Runner.Error do
     }
   end
 
+  @doc false
   @spec exit(Result.t()) :: t()
   def exit(%Result{exit_status: exit_status} = result) do
     %__MODULE__{

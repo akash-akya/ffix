@@ -1,7 +1,5 @@
 defmodule FF.Graph.Ref do
-  @moduledoc """
-  Reference to a specific output pad of a graph node.
-  """
+  @moduledoc false
 
   alias FF.Graph
 

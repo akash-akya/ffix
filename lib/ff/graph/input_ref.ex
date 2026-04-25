@@ -1,7 +1,5 @@
 defmodule FF.Graph.InputRef do
-  @moduledoc """
-  Structured reference to an external ffmpeg input stream.
-  """
+  @moduledoc false
 
   @type input_id :: non_neg_integer() | String.t() | reference()
 

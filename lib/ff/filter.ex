@@ -1,4 +1,33 @@
 defmodule FF.Filter do
+  @moduledoc """
+  Generated helpers for ffmpeg filters.
+
+  Each function mirrors one filter reported by the local `ffmpeg` executable at
+  compile time. Function arguments are `FF.Stream` values; the final argument is
+  a keyword list of ffmpeg filter options.
+
+      video
+      |> scale(w: 1280, h: -1)
+      |> fps(fps: 30)
+
+  Most filters return a single `FF.Stream`. Multi-output filters return a tuple
+  or list:
+
+      [left, right] = split(video, outputs: 2)
+      stacked = hstack([left, hflip(right)])
+
+  Some ffmpeg filters have dynamic output shapes. Use `FF.shape/2` when the
+  generated metadata cannot infer the shape you need:
+
+      [audio, video] =
+        audio_in
+        |> ebur128(video: true)
+        |> FF.shape([:audio, :video])
+
+  Option keys are ffmpeg option names. Values are normalized where metadata is
+  available, but raw strings remain an escape hatch for ffmpeg-specific syntax.
+  """
+
   alias FF.Filter.Builder
   alias FF.Filter.Metadata
 
