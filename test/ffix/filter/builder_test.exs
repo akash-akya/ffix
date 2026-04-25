@@ -107,6 +107,38 @@ defmodule FFix.Filter.BuilderTest do
              "[0:v]drawtext=text=hi:x=0:y=0:text_align=3[out0];"
   end
 
+  test "accepts implicit timeline enable options" do
+    video = FFix.Graph.input(0, :video)
+
+    graph =
+      video
+      |> Filter.drawtext(text: "hi", x: 0, y: 0, enable: FFix.expr("between(t,10,20)"))
+      |> then(&FFix.graph(output: &1))
+
+    assert FFix.to_filtergraph(graph) ==
+             "[0:v]drawtext=text=hi:x=0:y=0:enable=between(t\\,10\\,20)[out0];"
+  end
+
+  test "accepts implicit framesync options" do
+    video = FFix.Graph.input(0, :video)
+    overlay = FFix.Graph.input(1, :video)
+
+    graph =
+      video
+      |> Filter.overlay(overlay,
+        x: 0,
+        y: 0,
+        eof_action: :pass,
+        shortest: true,
+        repeatlast: false,
+        ts_sync_mode: :nearest
+      )
+      |> then(&FFix.graph(output: &1))
+
+    assert FFix.to_filtergraph(graph) ==
+             "[0:v][1:v]overlay=x=0:y=0:eof_action=pass:shortest=true:repeatlast=false:ts_sync_mode=nearest[out0];"
+  end
+
   defp filter_node(%Graph{} = graph, name) do
     Enum.find(Graph.nodes(graph), &(&1.kind == :filter and &1.name == name))
   end

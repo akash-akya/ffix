@@ -28,6 +28,10 @@ defmodule FFix.Filter do
   Generated metadata is useful but not perfect. Use `FFix.filter/3` when the
   filter name is dynamic, raw strings for ffmpeg-specific option syntax, and
   `FFix.shape/2` when a dynamic filter needs an explicit output shape.
+
+  Timeline-capable filters accept ffmpeg's implicit `enable:` option. Filters
+  backed by ffmpeg framesync also accept the common `eof_action:`, `shortest:`,
+  `repeatlast:`, and `ts_sync_mode:` options.
   """
   @moduledoc groups: [
                "Source filters",

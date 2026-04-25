@@ -61,8 +61,27 @@ defmodule FFix.Filter.Metadata do
                     |> Map.new(&{String.to_atom(&1.name), &1})
                   end
 
-                  Map.new(@filters, fn {name, _filter} ->
-                    {name, parse_specs.(Help.filter(name))}
+                  timeline_enable_spec = %{
+                    name: "enable",
+                    type: :string,
+                    flags: [],
+                    desc:
+                      "timeline expression evaluated before each frame; the filter is enabled when non-zero",
+                    default: nil,
+                    implicit: :timeline
+                  }
+
+                  add_implicit_options = fn specs, filter ->
+                    if :T in filter.flags do
+                      Map.put_new(specs, :enable, timeline_enable_spec)
+                    else
+                      specs
+                    end
+                  end
+
+                  Map.new(@filters, fn {name, filter} ->
+                    specs = parse_specs.(Help.filter(name))
+                    {name, add_implicit_options.(specs, filter)}
                   end)
                 )
 

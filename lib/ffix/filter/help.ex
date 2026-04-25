@@ -8,17 +8,9 @@ defmodule FFix.Filter.Help do
   def filter(name) do
     {output, 0} = exec(["-h", "filter=#{name}"])
     lines = String.split(output, "\n", trim: true)
-    index = Enum.find_index(lines, &String.contains?(&1, "AVOptions:"))
 
-    if index do
-      lines
-      |> Enum.drop(index + 1)
-      |> Enum.take_while(&String.starts_with?(&1, " "))
-      |> Enum.filter(&(String.trim(&1) != ""))
-    else
-      # this means there are no options for the filter
-      []
-    end
+    first_filter_option_section(lines) ++
+      option_section(lines, "framesync AVOptions:")
   end
 
   def filters do
@@ -40,6 +32,33 @@ defmodule FFix.Filter.Help do
         }
       }
     end)
+  end
+
+  defp first_filter_option_section(lines) do
+    Enum.find_index(lines, fn line ->
+      String.contains?(line, "AVOptions:") and line != "framesync AVOptions:" and
+        line != "SWScaler AVOptions:"
+    end)
+    |> option_section_at(lines)
+  end
+
+  defp option_section(lines, header) do
+    lines
+    |> Enum.find_index(&(&1 == header))
+    |> option_section_at(lines)
+  end
+
+  defp option_section_at(index, lines) do
+    case index do
+      nil ->
+        []
+
+      index ->
+        lines
+        |> Enum.drop(index + 1)
+        |> Enum.take_while(&String.starts_with?(&1, " "))
+        |> Enum.filter(&(String.trim(&1) != ""))
+    end
   end
 
   def exec(args) do
