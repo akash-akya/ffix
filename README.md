@@ -37,12 +37,12 @@ import FF.Filter
 ```elixir
 cmd =
   command(
-    inputs: [src: "input.mp4"],
-    graph: fn inputs ->
-      [cropped: inputs.src[:video] |> crop(w: 720, h: 720)]
+    "input.mp4",
+    fn src ->
+      src[:video] |> crop(w: 720, h: 720)
     end,
-    outputs: fn %{cropped: cropped}, %{inputs: inputs} ->
-      output("square.mp4", video: cropped, audio: inputs.src[:audio])
+    fn cropped, src ->
+      output("square.mp4", video: cropped, audio: src[:audio])
     end
   )
 
@@ -54,11 +54,11 @@ FF.to_argv(cmd)
 ```elixir
 cmd =
   command(
-    inputs: [image: input(:stdin, f: :image2pipe)],
-    graph: fn inputs ->
-      [scaled: inputs.image[:video] |> scale(w: 640, h: -1)]
+    input(:stdin, f: :image2pipe),
+    fn image ->
+      image[:video] |> scale(w: 640, h: -1)
     end,
-    outputs: fn %{scaled: scaled} ->
+    fn scaled ->
       output(:stdout, video: scaled, f: :image2pipe, vcodec: :png)
     end
   )
@@ -77,22 +77,31 @@ File.write!("small.png", result.stdout)
 ```elixir
 cmd =
   command(
-    inputs: [src: "input.mp4"],
-    graph: fn inputs ->
-      [
-        inputs.src[:video]
-        |> scale(w: 1080, h: 1920, force_original_aspect_ratio: :increase)
-        |> crop(w: 1080, h: 1920)
-        |> fps(fps: 30)
-      ]
+    "input.mp4",
+    fn src ->
+      src[:video]
+      |> scale(w: 1080, h: 1920, force_original_aspect_ratio: :increase)
+      |> crop(w: 1080, h: 1920)
+      |> fps(fps: 30)
     end,
-    outputs: fn graph, %{inputs: inputs} ->
-      output("short.mp4", video: graph[0], audio: inputs.src[:audio])
+    fn short, src ->
+      output("short.mp4", video: short, audio: src[:audio])
     end
   )
 ```
 
 ## Run Or Inspect
+
+Command-level options are the final argument:
+
+```elixir
+command(
+  "input.mp4",
+  fn src -> src[:video] end,
+  fn video -> output("copy.mp4", video: video, c: :copy) end,
+  global: [y: true]
+)
+```
 
 ```elixir
 FF.to_argv(cmd)

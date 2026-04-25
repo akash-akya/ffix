@@ -4,9 +4,8 @@ defmodule FF do
 
   `FF` keeps the workflow data-first:
 
-    * declare inputs with `input/1` or `input/2`
+    * pass input sources to `command/3`
     * build streams with generated `FF.Filter` helpers
-    * export graph streams with `graph/1`
     * map streams to outputs with `output/2`
     * serialize with `to_argv/1` or execute with `run/2`
 
@@ -16,47 +15,86 @@ defmodule FF do
 
   ## Command Callbacks
 
-  `command/1` is the high-level API. The graph callback receives named inputs.
-  The output callback receives graph exports and, when requested, command
-  context:
+  `command/3` is the high-level API. The first callback builds the graph; the
+  second callback maps graph outputs and input streams to output files.
 
       command(
-        inputs: [src: input("input.mp4")],
-        graph: fn inputs ->
+        "input.mp4",
+        fn src ->
+          src[:video] |> crop(w: 720, h: 720)
+        end,
+        fn cropped, src ->
+          output("square.mp4", video: cropped, audio: src[:audio])
+        end
+      )
+
+  The graph callback receives inputs in the shape you passed, with sources
+  normalized to `%FF.Command.Input{}` values. The output callback receives graph
+  exports in the same shape returned by the graph callback.
+
+  For multiple unnamed results, return a list:
+
+      command(
+        "input.mp4",
+        fn src ->
           [
-            main: inputs.src[:video] |> scale(w: 1280, h: -1)
+            src[:video] |> scale(w: 1280, h: -1),
+            src[:video] |> fps(fps: 1)
           ]
         end,
-        outputs: fn graph, %{inputs: inputs} ->
+        fn [main, preview], src ->
+          [
+            output("out.mp4",
+              video: main,
+              audio: src[:audio],
+              "c:v": :libx264,
+              "c:a": :aac
+            ),
+            output("thumb-%03d.jpg", video: preview, f: :image2)
+          ]
+        end
+      )
+
+  Use keyword lists or maps when names make a larger graph easier to read:
+
+      command(
+        [src: input("input.mp4")],
+        fn inputs ->
+          [
+            main: inputs[:src][:video] |> scale(w: 1280, h: -1)
+          ]
+        end,
+        fn [main: main], inputs ->
           output("out.mp4",
-            video: graph.main,
-            audio: inputs.src[:audio],
+            video: main,
+            audio: inputs[:src][:audio],
             "c:v": :libx264,
             "c:a": :aac
           )
         end
       )
 
-  A graph callback may return:
+  Input and graph shapes are preserved at the callback boundary:
 
-    * a `%FF.Graph{}`
-    * a keyword list of graph exports, such as `[preview: stream]`
-    * `nil` when the command does not need a filtergraph
+    * `term -> term`
+    * `[term] -> [term]`
+    * `keyword -> keyword`
+    * `map -> map`
 
-  An outputs callback may accept one or two arguments. A one-argument callback
-  receives graph exports directly. A two-argument callback also receives a
-  context map, currently `%{inputs: inputs}`.
+  A graph callback may also return a `%FF.Graph{}` when you need graph settings
+  or terminals. An outputs callback may accept one argument for graph exports or
+  two arguments for graph exports and inputs.
 
   ## Output Mapping
 
   Use `video:` and `audio:` for common mappings:
 
-      output("out.mp4", video: graph.main, audio: inputs.src[:audio])
+      output("out.mp4", video: main, audio: src[:audio])
 
   Use `sources:` when `-map` ordering matters:
 
       output("archive.mkv",
-        sources: [graph.main, inputs.src[audio: 1], inputs.src[audio: 0]]
+        sources: [main, src[audio: 1], src[audio: 0]]
       )
 
   Output options are intentionally ffmpeg-shaped. Keys are rendered as CLI
@@ -96,7 +134,8 @@ defmodule FF do
     quote do
       import FF,
         only: [
-          command: 1,
+          command: 3,
+          command: 4,
           expr: 1,
           graph: 1,
           input: 1,
@@ -112,18 +151,18 @@ defmodule FF do
   @doc """
   Declares an ffmpeg input without input options.
 
-  This returns an `%FF.Command.Input{}`. In `command/1`, inputs are normally
-  named in a keyword list:
+  This returns an `%FF.Command.Input{}`. In `command/3`, pass it wherever you
+  need input options:
 
       command(
-        inputs: [src: input("input.mp4")],
-        outputs: fn _graph, %{inputs: inputs} ->
-          output("copy.mp4", video: inputs.src[:video], "c:v": :copy)
+        input("input.mp4", ss: "00:00:05"),
+        fn src -> src[:video] end,
+        fn video, src ->
+          output("copy.mp4", video: video, audio: src[:audio], c: :copy)
         end
       )
 
-  For an optionless file input, `command/1` also accepts the shortcut
-  `inputs: [src: "input.mp4"]`.
+  For optionless file inputs, pass the source string directly.
   """
   @spec input(Command.Input.source()) :: Command.Input.t()
   def input(source), do: Command.input(source)
@@ -194,8 +233,8 @@ defmodule FF do
     * `:terminals` - sink-ending filter results, such as `nullsink`
     * `:settings` - graph-level settings such as `sws_flags`
 
-  In `command/1`, graph callbacks can return a keyword list of exports directly.
-  Use `graph/1` when you need terminals or settings.
+  In `command/3`, graph callbacks can return streams, lists, keyword lists, or
+  maps directly. Use `graph/1` when you need terminals or graph settings.
 
       FF.graph(
         outputs: [main: video |> scale(w: 1280, h: -1)],
@@ -211,8 +250,8 @@ defmodule FF do
   Use `video:` and `audio:` for common cases:
 
       output("out.mp4",
-        video: graph.main,
-        audio: inputs.src[:audio],
+        video: main,
+        audio: src[:audio],
         "c:v": :libx264,
         "c:a": :aac
       )
@@ -220,7 +259,7 @@ defmodule FF do
   Use `sources:` when exact `-map` order matters:
 
       output("archive.mkv",
-        sources: [graph.main, inputs.src[audio: 1], inputs.src[audio: 0]],
+        sources: [main, src[audio: 1], src[audio: 0]],
         c: :copy
       )
 
@@ -233,37 +272,120 @@ defmodule FF do
   @doc """
   Returns an empty low-level `%FF.Command{}`.
 
-  Prefer `command/1` for the callback API.
+  Prefer `command/3` for the callback API.
   """
   @spec command() :: Command.t()
   def command, do: Command.new()
 
+  @doc false
+  @spec command(keyword()) :: Command.t()
+  def command(options) when is_list(options), do: Build.command(options)
+
   @doc """
-  Builds a command from high-level command options.
+  Builds a command from inputs, a graph callback, and an output callback.
 
-  Supported top-level keys:
-
-    * `:global` - ffmpeg global options
-    * `:inputs` - keyword list of named inputs
-    * `:graph` - a `%FF.Graph{}` or one-argument callback
-    * `:outputs` - output value, list, or callback
-
-  Graph callbacks receive the input map. Output callbacks can receive either
-  graph exports, or graph exports plus `%{inputs: inputs}`.
+  Simple commands usually pass one input and return one filtered stream:
 
       command(
-        global: [y: true],
-        inputs: [src: input("input.mp4")],
-        graph: fn inputs ->
-          [main: inputs.src[:video] |> scale(w: 1280, h: -1)]
+        "input.mp4",
+        fn src ->
+          src[:video] |> crop(w: 720, h: 720)
         end,
-        outputs: fn graph, %{inputs: inputs} ->
-          output("out.mp4", video: graph.main, audio: inputs.src[:audio])
+        fn cropped, src ->
+          output("square.mp4", video: cropped, audio: src[:audio])
+        end
+      )
+
+  The first argument can be a source string, `input(...)`, a list of sources or
+  inputs, a keyword list, or a map. Sources are normalized to
+  `%FF.Command.Input{}` values, while the outer shape is preserved.
+
+  The graph callback returns streams in the shape you want the output callback
+  to receive.
+
+  Shapes are preserved:
+
+    * `stream -> export`
+    * `[stream] -> [export]`
+    * `[name: stream] -> [name: export]`
+    * `%{name: stream} -> %{name: export}`
+
+  Return `%FF.Graph{}` when you need graph settings or terminals.
+
+      command(
+        "input.mp4",
+        fn src ->
+          [
+            src[:video] |> scale(w: 1280, h: -1),
+            src[:video] |> fps(fps: 1)
+          ]
+        end,
+        fn [main, preview], src ->
+          [
+            output("out.mp4", video: main, audio: src[:audio]),
+            output("thumb-%03d.jpg", video: preview, f: :image2)
+          ]
+        end
+      )
+
+  For named inputs, pass a keyword list or map. The output callback receives the
+  same input shape:
+
+      command(
+        [src: "input.mp4", logo: input("logo.png", loop: 1)],
+        fn inputs ->
+          inputs[:src][:video]
+          |> overlay(inputs[:logo][:video], x: 20, y: 20)
+        end,
+        fn watermarked, inputs ->
+          output("out.mp4", video: watermarked, audio: inputs[:src][:audio])
         end
       )
   """
-  @spec command(keyword()) :: Command.t()
-  def command(options) when is_list(options), do: Build.command(options)
+  @spec command(
+          Command.Input.source()
+          | Command.Input.t()
+          | [Command.Input.source() | Command.Input.t()]
+          | keyword()
+          | map(),
+          function(),
+          function()
+        ) :: Command.t()
+  def command(inputs, graph_fun, outputs_fun), do: Build.command(inputs, graph_fun, outputs_fun)
+
+  @doc """
+  Builds a command with command-level options.
+
+  Options are passed as the final argument. Supported options:
+
+    * `:global` - global ffmpeg options rendered before inputs
+
+  Do not pass `:inputs`, `:graph`, or `:outputs` here; those are the positional
+  arguments of `command/4`.
+
+      command(
+        "input.mp4",
+        fn src ->
+          src[:video] |> crop(w: 720, h: 720)
+        end,
+        fn cropped, src ->
+          output("square.mp4", video: cropped, audio: src[:audio])
+        end,
+        global: [y: true, loglevel: :error]
+      )
+  """
+  @spec command(
+          Command.Input.source()
+          | Command.Input.t()
+          | [Command.Input.source() | Command.Input.t()]
+          | keyword()
+          | map(),
+          function(),
+          function(),
+          keyword()
+        ) :: Command.t()
+  def command(inputs, graph_fun, outputs_fun, options),
+    do: Build.command(inputs, graph_fun, outputs_fun, options)
 
   @doc """
   Validates and serializes a graph to ffmpeg filtergraph syntax.

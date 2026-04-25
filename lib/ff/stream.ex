@@ -6,7 +6,7 @@ defmodule FF.Stream do
   outputs. Build them through input access or filter helpers rather than by
   constructing this struct directly.
 
-      video = inputs.src[:video]
+      video = src[:video]
       preview = video |> FF.Filter.scale(w: 320, h: -1)
   """
 

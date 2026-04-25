@@ -6,7 +6,7 @@ defmodule FF.Command do
   ordered outputs. It is still just data until `FF.to_argv/1`, `FF.run/1`, or
   another boundary function serializes it.
 
-  Prefer `FF.command/1` for the function-based API. Use this module directly
+  Prefer `FF.command/3` for the function-based API. Use this module directly
   when you want to construct or transform `%FF.Command{}` values in smaller
   steps.
 
@@ -16,9 +16,9 @@ defmodule FF.Command do
       video = input[:video]
 
       command =
-        FF.command(
+        FF.Command.new(
           global: [y: true],
-          inputs: [src: input],
+          inputs: [input],
           outputs: [FF.Command.output("out.mp4", video, vcodec: :copy)]
         )
 
@@ -76,7 +76,7 @@ defmodule FF.Command do
   Builds a command from already-normalized command data.
 
   This lower-level constructor expects ordered input and output structs. For the
-  function callback API, use `FF.command/1`.
+  function callback API, use `FF.command/3`.
 
       src = FF.Command.input("input.mp4")
 
@@ -120,7 +120,7 @@ defmodule FF.Command do
       src[:video]
       src[:audio]
 
-  Prefer naming inputs in `FF.command/1` rather than storing labels on the
+  Prefer shaping inputs in `FF.command/3` rather than storing labels on the
   input itself.
   """
   @spec input(Input.source(), keyword()) :: Input.t()

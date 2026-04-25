@@ -233,23 +233,52 @@ defmodule FF.CommandTest do
                  end
   end
 
-  test "rejects non-keyword command inputs" do
-    assert_raise ArgumentError,
-                 "command inputs must be a keyword list of input/1 or input/2 values",
-                 fn ->
-                   FF.command(
-                     inputs: [Command.input("input.mp4")],
-                     outputs: [Command.output("out.mp4", FF.Graph.input(0, :video))]
-                   )
-                 end
-  end
-
-  test "supports string source shorthand in command inputs" do
+  test "command/3 preserves list input shape" do
     command =
       FF.command(
-        inputs: [src: "input.mp4"],
-        outputs: fn _graph, %{inputs: inputs} ->
-          FF.output("out.mp4", video: inputs.src[:video], vcodec: :copy)
+        ["input.mp4", "music.mp3"],
+        fn [src, _music] ->
+          src[:video] |> Filter.scale(w: 320, h: -1)
+        end,
+        fn scaled, [_src, music] ->
+          FF.output("out.mp4",
+            video: scaled,
+            audio: music[:audio],
+            vcodec: :libx264,
+            acodec: :aac
+          )
+        end
+      )
+
+    assert FF.to_argv(command) == [
+             "ffmpeg",
+             "-i",
+             "input.mp4",
+             "-i",
+             "music.mp3",
+             "-filter_complex",
+             "[0:v]scale=w=320:h=-1[out0];",
+             "-map",
+             "[out0]",
+             "-map",
+             "1:a",
+             "-vcodec",
+             "libx264",
+             "-acodec",
+             "aac",
+             "out.mp4"
+           ]
+  end
+
+  test "command/3 preserves keyword input shape" do
+    command =
+      FF.command(
+        [src: "input.mp4"],
+        fn inputs ->
+          inputs[:src][:video]
+        end,
+        fn video, inputs ->
+          FF.output("out.mp4", video: video, audio: inputs[:src][:audio], vcodec: :copy)
         end
       )
 
@@ -259,9 +288,129 @@ defmodule FF.CommandTest do
              "input.mp4",
              "-map",
              "0:v",
+             "-map",
+             "0:a",
              "-vcodec",
              "copy",
              "out.mp4"
+           ]
+  end
+
+  test "command/4 accepts command options at the end" do
+    command =
+      FF.command(
+        "input.mp4",
+        fn src ->
+          src[:video]
+        end,
+        fn video ->
+          FF.output("out.mp4", video: video, vcodec: :copy)
+        end,
+        global: [y: true, loglevel: :error]
+      )
+
+    assert FF.to_argv(command) == [
+             "ffmpeg",
+             "-y",
+             "-loglevel",
+             "error",
+             "-i",
+             "input.mp4",
+             "-map",
+             "0:v",
+             "-vcodec",
+             "copy",
+             "out.mp4"
+           ]
+  end
+
+  test "command/4 rejects old command shape keys in options" do
+    error =
+      assert_raise ArgumentError, fn ->
+        FF.command(
+          "input.mp4",
+          fn src -> src[:video] end,
+          fn video -> FF.output("out.mp4", video: video, vcodec: :copy) end,
+          inputs: [],
+          graph: nil,
+          outputs: []
+        )
+      end
+
+    assert Exception.message(error) ==
+             "command/4 options only support :global; pass inputs, graph, and outputs as positional arguments, got: [:inputs, :graph, :outputs]"
+  end
+
+  test "command/3 preserves graph list shape" do
+    command =
+      FF.command(
+        "input.mp4",
+        fn src ->
+          [
+            src[:video] |> Filter.scale(w: 320, h: -1),
+            src[:audio]
+          ]
+        end,
+        fn [video, audio] ->
+          FF.output("out.mkv",
+            video: video,
+            audio: audio,
+            vcodec: :libx264,
+            acodec: :aac
+          )
+        end
+      )
+
+    assert FF.to_argv(command) == [
+             "ffmpeg",
+             "-i",
+             "input.mp4",
+             "-filter_complex",
+             "[0:v]scale=w=320:h=-1[out0];",
+             "-map",
+             "[out0]",
+             "-map",
+             "0:a",
+             "-vcodec",
+             "libx264",
+             "-acodec",
+             "aac",
+             "out.mkv"
+           ]
+  end
+
+  test "command/3 preserves map input and graph shapes" do
+    command =
+      FF.command(
+        %{src: "input.mp4"},
+        fn %{src: src} ->
+          %{preview: src[:video] |> Filter.scale(w: 320, h: -1)}
+        end,
+        fn %{preview: preview}, %{src: src} ->
+          FF.output("preview.mp4",
+            video: preview,
+            audio: src[:audio],
+            vcodec: :libx264,
+            acodec: :aac
+          )
+        end
+      )
+
+    assert FF.to_argv(command) == [
+             "ffmpeg",
+             "-i",
+             "input.mp4",
+             "-filter_complex",
+             "[0:v]scale=w=320:h=-1[preview];",
+             "-map",
+             "[preview]",
+             "-map",
+             "0:a",
+             "-vcodec",
+             "libx264",
+             "-acodec",
+             "aac",
+             "preview.mp4"
            ]
   end
 

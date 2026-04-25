@@ -4,9 +4,13 @@ defmodule FF.Graph.Export do
 
   Output callbacks receive graph exports in the first argument:
 
-      outputs: fn graph ->
-        FF.output("out.mp4", video: graph.main, "c:v": :libx264)
-      end
+      command(
+        "input.mp4",
+        fn src -> src[:video] |> scale(w: 1280, h: -1) end,
+        fn video ->
+          FF.output("out.mp4", video: video, "c:v": :libx264)
+        end
+      )
 
   You normally pass exports to `FF.output/2`; constructing this struct directly
   is not part of the public API.

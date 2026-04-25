@@ -6,17 +6,15 @@ defmodule FF.Graph do
   exported streams, terminal sinks, and graph-level settings. It is serialized
   to ffmpeg syntax only at `FF.to_filtergraph/1`, `FF.to_argv/1`, or `FF.run/1`.
 
-  Most users build graphs inside `FF.command/1` callbacks using named inputs:
+  Most users build filter pipelines inside `FF.command/3` callbacks:
 
       command(
-        inputs: [src: input("input.mp4")],
-        graph: fn inputs ->
-          [
-            main: inputs.src[:video] |> scale(w: 1280, h: -1)
-          ]
+        "input.mp4",
+        fn src ->
+          src[:video] |> scale(w: 1280, h: -1)
         end,
-        outputs: fn graph, %{inputs: inputs} ->
-          output("out.mp4", video: graph.main, audio: inputs.src[:audio])
+        fn video, src ->
+          output("out.mp4", video: video, audio: src[:audio])
         end
       )
 
@@ -32,8 +30,8 @@ defmodule FF.Graph do
         )
 
   `graph[:name]` and `graph[index]` return exported streams from a `%FF.Graph{}`
-  value. In a `FF.command/1` output callback, the first argument is already a
-  plain map of graph exports, so use `graph.name` there.
+  value. In `FF.command/3`, callback input and graph output shapes are preserved,
+  so use normal Elixir access for the shape you return.
 
   ## Selectors
 
@@ -79,9 +77,9 @@ defmodule FF.Graph do
   @doc """
   Builds a stream reference for an ffmpeg command input.
 
-  Use this outside command callbacks, where named input access is not available.
-  Inside `FF.command/1`, prefer `inputs.src[:video]`, `inputs.src[:audio]`, and
-  related access forms.
+  Use this outside command callbacks, where callback input values are not
+  available. Inside `FF.command/3`, prefer the input value you received, such as
+  `src[:video]` or `inputs[:src][:video]`.
 
   ## Examples
 
@@ -95,8 +93,8 @@ defmodule FF.Graph do
           ]
         )
 
-      FF.command(
-        inputs: [src: FF.input("input.mp4")],
+      FF.Command.new(
+        inputs: [FF.input("input.mp4")],
         graph: graph,
         outputs: [FF.Command.output("out.mp4", [graph[:main], audio])]
       )

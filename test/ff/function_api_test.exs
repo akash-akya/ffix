@@ -15,27 +15,27 @@ defmodule FF.FunctionAPITest do
 
     def inline_command do
       command(
-        inputs: [
+        [
           src: input("input.mp4", ss: "00:00:03"),
           music: input("music.mp3")
         ],
-        graph: fn inputs ->
+        fn inputs ->
           [
-            master: inputs.src[:video] |> scale(w: 1280, h: -1),
-            preview: inputs.src[:video] |> scale(w: 320, h: -1) |> fps(fps: 1)
+            master: inputs[:src][:video] |> scale(w: 1280, h: -1),
+            preview: inputs[:src][:video] |> scale(w: 320, h: -1) |> fps(fps: 1)
           ]
         end,
-        outputs: fn graph, %{inputs: inputs} ->
+        fn [master: master, preview: preview], inputs ->
           [
             output("master.mp4",
-              video: graph.master,
-              audio: inputs.src[:audio],
+              video: master,
+              audio: inputs[:src][:audio],
               vcodec: :libx264,
               acodec: :aac
             ),
-            output("thumb-%03d.jpg", video: graph.preview, f: :image2, vsync: 0),
+            output("thumb-%03d.jpg", video: preview, f: :image2, vsync: 0),
             output("podcast.mka",
-              audio: [inputs.src[audio: 0], inputs.music[:audio]],
+              audio: [inputs[:src][audio: 0], inputs[:music][:audio]],
               acodec: :copy
             )
           ]
@@ -45,21 +45,21 @@ defmodule FF.FunctionAPITest do
 
     def graph_value_command do
       command(
-        inputs: [
+        [
           src: input("input.mp4")
         ],
-        graph: fn inputs ->
-          variants(inputs.src[:video])
+        fn inputs ->
+          variants(inputs[:src][:video])
         end,
-        outputs: fn graph, %{inputs: inputs} ->
+        fn graph, inputs ->
           [
             output("master.mp4",
-              video: graph.master,
-              audio: inputs.src[:audio],
+              video: graph[:master],
+              audio: inputs[:src][:audio],
               vcodec: :libx264,
               acodec: :aac
             ),
-            output("thumb-%03d.jpg", video: graph.preview, f: :image2, vsync: 0)
+            output("thumb-%03d.jpg", video: graph[:preview], f: :image2, vsync: 0)
           ]
         end
       )
@@ -67,18 +67,18 @@ defmodule FF.FunctionAPITest do
 
     def sources_output_command do
       command(
-        inputs: [
+        [
           src: input("input.mp4")
         ],
-        graph: fn inputs ->
+        fn inputs ->
           [
-            preview: inputs.src[:video] |> scale(w: 320, h: -1)
+            preview: inputs[:src][:video] |> scale(w: 320, h: -1)
           ]
         end,
-        outputs: fn graph, %{inputs: inputs} ->
+        fn [preview: preview], inputs ->
           [
             output("preview.mkv",
-              sources: [graph.preview, inputs.src[:audio]],
+              sources: [preview, inputs[:src][:audio]],
               vcodec: :libx264,
               acodec: :copy
             )
@@ -89,32 +89,32 @@ defmodule FF.FunctionAPITest do
 
     def graph_only_output_command do
       command(
-        inputs: [
+        [
           src: input("input.mp4")
         ],
-        graph: fn inputs ->
+        fn inputs ->
           [
-            preview: inputs.src[:video] |> scale(w: 320, h: -1)
+            preview: inputs[:src][:video] |> scale(w: 320, h: -1)
           ]
         end,
-        outputs: fn graph ->
-          output("thumb-%03d.jpg", video: graph.preview, f: :image2, vsync: 0)
+        fn [preview: preview] ->
+          output("thumb-%03d.jpg", video: preview, f: :image2, vsync: 0)
         end
       )
     end
 
     def graph_export_named_outputs_command do
       command(
-        inputs: [
+        [
           src: input("input.mp4")
         ],
-        graph: fn inputs ->
+        fn inputs ->
           [
-            outputs: inputs.src[:video]
+            outputs: inputs[:src][:video]
           ]
         end,
-        outputs: fn graph ->
-          output("out.mp4", video: graph.outputs, vcodec: :copy)
+        fn [outputs: outputs] ->
+          output("out.mp4", video: outputs, vcodec: :copy)
         end
       )
     end
