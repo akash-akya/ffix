@@ -1,30 +1,27 @@
 # FF
 
-`FF` builds ffmpeg filtergraphs and commands as Elixir data.
+`FF` lets you build ffmpeg filtergraphs and commands without hand-assembling
+command-line soup.
 
 Use it when you want to assemble filter pipelines programmatically without
-hand-building `-filter_complex` and `-map` strings. It acts as a small
-translation layer from Elixir callbacks and data structures to ffmpeg argv; the
-command stays inspectable until you serialize it or run it.
+hand-building `-filter_complex` and `-map` strings. It is a thin Elixir layer
+over ffmpeg: you build inputs, streams, filtergraphs, and outputs with Elixir
+data and functions, then `FF` turns them into ffmpeg argv.
 
-## Requirements
+It does not try to hide ffmpeg or replace ffmpeg knowledge with a separate
+media-processing abstraction. Filter names, options, stream mappings, codecs,
+muxers, and expressions are still ffmpeg concepts. The goal is to make those
+pieces easier to compose, inspect, and run from Elixir.
 
-`ffmpeg` must be available when compiling the library. `FF` generates filter
-helpers from local ffmpeg metadata at compile time, so generated functions match
-the ffmpeg version in the build environment.
+## Filters
 
-Set `FFMPEG_BIN=/path/to/ffmpeg` if the executable is not named `ffmpeg` or is
-not on `PATH`.
+`FF.Filter` exposes helpers for the filters reported by the local `ffmpeg`
+executable at compile time. Use them like normal Elixir functions:
+`scale/2`, `crop/2`, `overlay/3`, `drawtext/2`, `fps/2`, and so on.
 
-## Installation
-
-```elixir
-def deps do
-  [
-    {:ff, "~> 0.1.0"}
-  ]
-end
-```
+The generated docs include the filter description and known options, so the
+filter module is usually the best place to look up option names while building a
+pipeline.
 
 Examples below assume:
 
@@ -112,6 +109,25 @@ FF.run(cmd)
 
 `FF.to_argv/1` is the canonical boundary. `FF.to_shell_string/1` is for logs and
 debugging.
+
+## Requirements
+
+`ffmpeg` must be available when compiling the library. `FF` generates filter
+helpers from local ffmpeg metadata at compile time, so generated functions match
+the ffmpeg version in the build environment.
+
+Set `FFMPEG_BIN=/path/to/ffmpeg` if the executable is not named `ffmpeg` or is
+not on `PATH`.
+
+## Installation
+
+```elixir
+def deps do
+  [
+    {:ff, "~> 0.1.0"}
+  ]
+end
+```
 
 ## More
 
