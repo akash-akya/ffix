@@ -19,16 +19,12 @@ pieces easier to compose, inspect, and run from Elixir.
 executable at compile time. Use them like normal Elixir functions:
 `scale/2`, `crop/2`, `overlay/3`, `drawtext/2`, `fps/2`, and so on.
 
-The generated docs include the filter description and known options, so the
-filter module is usually the best place to look up option names while building a
-pipeline.
+The generated docs include filter descriptions and known options. `FFix.Filter`
+is usually the best place to look up option names while building a pipeline.
 
-Examples below assume:
-
-```elixir
-import FFix
-import FFix.Filter
-```
+Examples below assume `use FFix` inside your module. If you prefer explicit
+names, use calls such as `FFix.command/3`, `FFix.output/2`, and
+`FFix.Filter.crop/2`.
 
 ## Crop A Video
 
@@ -80,7 +76,11 @@ command(
     |> scale(w: 1080, h: 1920, force_original_aspect_ratio: :increase)
     |> crop(w: 1080, h: 1920)
     |> fps(fps: 30)
-    |> drawtext(text: "Launch Day", x: expr("(w-tw)/2"), y: expr("(h-th)/2"))
+    |> drawtext(
+      text: "Launch Day",
+      x: expr("(w-tw)/2"),
+      y: expr("(h-th)/2")
+    )
   end,
   fn short, src ->
     output("short.mp4", video: short, audio: src[:audio])
@@ -95,8 +95,8 @@ Command-level options are the final argument:
 ```elixir
 command(
   "input.mp4",
-  fn src -> src[:video] end,
-  fn video -> output("copy.mp4", video: video, c: :copy) end,
+  fn src -> src[:video] |> scale(w: 1280, h: -1) end,
+  fn video, src -> output("scaled.mp4", video: video, audio: src[:audio]) end,
   global: [y: true]
 )
 ```
@@ -107,8 +107,8 @@ FFix.to_shell_string(cmd)
 FFix.run(cmd)
 ```
 
-`FFix.to_argv/1` is the canonical boundary. `FFix.to_shell_string/1` is for logs and
-debugging.
+`FFix.to_argv/1` is the canonical boundary. `FFix.to_shell_string/1` is for
+logs and debugging.
 
 ## Requirements
 
