@@ -141,3 +141,5 @@ Start with the `FFix` module docs for the command model, option placement, graph
 return shapes, and output mapping. See `FFix.Graph` for graph construction and
 parsing, `FFix.Filter` for generated filter helpers, and `FFix.Runner` for
 streaming execution events.
+
+For a runnable walkthrough, see [`livebooks/intro.livemd`](livebooks/intro.livemd).

@@ -43,7 +43,7 @@ defmodule FFix.MixProject do
     [
       maintainers: ["Akash Hiremath"],
       licenses: ["MIT"],
-      files: ~w(lib mix.exs README.md LICENSE),
+      files: ~w(lib livebooks/intro.livemd mix.exs README.md LICENSE),
       links: %{
         GitHub: @scm_url,
         ffmpeg: "https://ffmpeg.org"
@@ -55,7 +55,11 @@ defmodule FFix.MixProject do
     [
       main: "readme",
       source_ref: "v#{@version}",
-      extras: ["README.md", "LICENSE"],
+      extras: [
+        "README.md",
+        {"livebooks/intro.livemd", [title: "Intro Livebook"]},
+        "LICENSE"
+      ],
       groups_for_modules: [
         "Main API": [
           FFix
