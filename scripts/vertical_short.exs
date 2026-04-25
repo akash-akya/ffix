@@ -1,7 +1,7 @@
 Mix.Task.run("app.start")
 
-import FF
-import FF.Filter
+import FFix
+import FFix.Filter
 
 input_path = "test/support/sample.mp4"
 output_path = "tmp/vertical_short.mp4"
@@ -33,8 +33,8 @@ cmd =
     global: [y: true, hide_banner: true, loglevel: :error]
   )
 
-IO.puts(FF.to_shell_string(cmd))
-FF.run!(cmd, stderr: :collect)
+IO.puts(FFix.to_shell_string(cmd))
+FFix.run!(cmd, stderr: :collect)
 
 {dimensions, 0} =
   System.cmd("ffprobe", [

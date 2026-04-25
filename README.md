@@ -1,12 +1,12 @@
-# FF
+# FFix
 
-`FF` lets you build ffmpeg filtergraphs and commands without hand-assembling
+`FFix` lets you build ffmpeg filtergraphs and commands without hand-assembling
 command-line soup.
 
 Use it when you want to assemble filter pipelines programmatically without
 hand-building `-filter_complex` and `-map` strings. It is a thin Elixir layer
 over ffmpeg: you build inputs, streams, filtergraphs, and outputs with Elixir
-data and functions, then `FF` turns them into ffmpeg argv.
+data and functions, then `FFix` turns them into ffmpeg argv.
 
 It does not try to hide ffmpeg or replace ffmpeg knowledge with a separate
 media-processing abstraction. Filter names, options, stream mappings, codecs,
@@ -15,7 +15,7 @@ pieces easier to compose, inspect, and run from Elixir.
 
 ## Filters
 
-`FF.Filter` exposes helpers for the filters reported by the local `ffmpeg`
+`FFix.Filter` exposes helpers for the filters reported by the local `ffmpeg`
 executable at compile time. Use them like normal Elixir functions:
 `scale/2`, `crop/2`, `overlay/3`, `drawtext/2`, `fps/2`, and so on.
 
@@ -26,8 +26,8 @@ pipeline.
 Examples below assume:
 
 ```elixir
-import FF
-import FF.Filter
+import FFix
+import FFix.Filter
 ```
 
 ## Crop A Video
@@ -44,7 +44,7 @@ cmd =
     end
   )
 
-FF.to_argv(cmd)
+FFix.to_argv(cmd)
 ```
 
 ## Pipe An Image
@@ -62,7 +62,7 @@ cmd =
   )
 
 result =
-  FF.run!(cmd,
+  FFix.run!(cmd,
     stdin: File.stream!("input.png", [], 2048),
     stdout: :collect
   )
@@ -102,17 +102,17 @@ command(
 ```
 
 ```elixir
-FF.to_argv(cmd)
-FF.to_shell_string(cmd)
-FF.run(cmd)
+FFix.to_argv(cmd)
+FFix.to_shell_string(cmd)
+FFix.run(cmd)
 ```
 
-`FF.to_argv/1` is the canonical boundary. `FF.to_shell_string/1` is for logs and
+`FFix.to_argv/1` is the canonical boundary. `FFix.to_shell_string/1` is for logs and
 debugging.
 
 ## Requirements
 
-`ffmpeg` must be available when compiling the library. `FF` generates filter
+`ffmpeg` must be available when compiling the library. `FFix` generates filter
 helpers from local ffmpeg metadata at compile time, so generated functions match
 the ffmpeg version in the build environment.
 
@@ -124,14 +124,14 @@ not on `PATH`.
 ```elixir
 def deps do
   [
-    {:ff, "~> 0.1.0"}
+    {:ffix, "~> 0.1.0"}
   ]
 end
 ```
 
 ## More
 
-Start with the `FF` module docs for the command model, option placement, graph
-return shapes, and output mapping. See `FF.Graph` for graph construction and
-parsing, `FF.Filter` for generated filter helpers, and `FF.Runner` for
+Start with the `FFix` module docs for the command model, option placement, graph
+return shapes, and output mapping. See `FFix.Graph` for graph construction and
+parsing, `FFix.Filter` for generated filter helpers, and `FFix.Runner` for
 streaming execution events.

@@ -1,11 +1,11 @@
 Mix.Task.run("app.start")
 
-import FF
+import FFix
 
 defmodule RunnerEvents do
-  alias FF.Runner.Log
-  alias FF.Runner.Progress
-  alias FF.Runner.Result
+  alias FFix.Runner.Log
+  alias FFix.Runner.Progress
+  alias FFix.Runner.Result
 
   @duration_seconds 6
   @stats_period 0.5
@@ -25,7 +25,7 @@ defmodule RunnerEvents do
       )
 
     IO.puts("command:")
-    IO.puts("  #{FF.to_shell_string(cmd)}")
+    IO.puts("  #{FFix.to_shell_string(cmd)}")
 
     run_with_callback(cmd)
     run_as_stream(cmd)
@@ -38,7 +38,7 @@ defmodule RunnerEvents do
     started_at = now()
 
     result =
-      FF.run!(cmd,
+      FFix.run!(cmd,
         progress: true,
         stderr: :collect,
         on_event: fn event ->
@@ -55,7 +55,7 @@ defmodule RunnerEvents do
 
     events =
       cmd
-      |> FF.stream(progress: true, stderr: :collect)
+      |> FFix.stream(progress: true, stderr: :collect)
       |> Enum.map(fn event ->
         print_event("stream", started_at, event)
         event
@@ -69,7 +69,7 @@ defmodule RunnerEvents do
     started_at = now()
 
     result =
-      FF.run!(cmd,
+      FFix.run!(cmd,
         progress: true,
         stderr: :discard,
         on_event: fn event ->
@@ -91,7 +91,7 @@ defmodule RunnerEvents do
         "-e",
         ~S|IO.binwrite(:stdio, "hello stdout"); IO.binwrite(:stderr, "hello stderr")|
       ]
-      |> FF.stream(stdout: :collect, stderr: :collect)
+      |> FFix.stream(stdout: :collect, stderr: :collect)
       |> Enum.map(fn event ->
         print_event("stdio", started_at, event)
         event

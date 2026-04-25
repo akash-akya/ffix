@@ -1,12 +1,12 @@
-defmodule FF.MixProject do
+defmodule FFix.MixProject do
   use Mix.Project
 
   @version "0.1.0"
-  @scm_url "https://github.com/akash-akya/ff"
+  @scm_url "https://github.com/akash-akya/ffix"
 
   def project do
     [
-      app: :ff,
+      app: :ffix,
       version: @version,
       elixir: "~> 1.16",
       start_permanent: Mix.env() == :prod,
