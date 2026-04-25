@@ -3,25 +3,15 @@ Mix.Task.run("app.start")
 import FF
 import FF.Filter
 
-root = File.cwd!()
-input_path = Path.join(root, "test/support/sample.mp4")
-output_path = Path.join(root, "tmp/vertical_short.mp4")
+input_path = "test/support/sample.mp4"
+output_path = "tmp/vertical_short.mp4"
 
-unless File.exists?(input_path) do
-  raise """
-  expected sample video at #{input_path}
-
-  Add a local sample fixture at test/support/sample.mp4 before running this script.
-  """
-end
-
-unless System.find_executable("ffprobe") do
-  raise "ffprobe is required to verify the generated video"
-end
+File.exists?(input_path) || raise "missing #{input_path}"
+System.find_executable("ffprobe") || raise "ffprobe must be available on PATH"
 
 File.mkdir_p!(Path.dirname(output_path))
 
-command =
+cmd =
   command(
     input(input_path, t: 3),
     fn src ->
@@ -43,9 +33,8 @@ command =
     global: [y: true, hide_banner: true, loglevel: :error]
   )
 
-IO.puts(FF.to_shell_string(command))
-
-FF.run!(command, stderr: :collect)
+IO.puts(FF.to_shell_string(cmd))
+FF.run!(cmd, stderr: :collect)
 
 {dimensions, 0} =
   System.cmd("ffprobe", [
@@ -61,11 +50,7 @@ FF.run!(command, stderr: :collect)
   ])
 
 dimensions = String.trim(dimensions)
-
-unless dimensions == "1080x1920" do
-  raise "expected 1080x1920 output, got #{inspect(dimensions)}"
-end
+dimensions == "1080x1920" || raise "expected 1080x1920, got #{inspect(dimensions)}"
 
 size = File.stat!(output_path).size
-
-IO.puts("wrote #{Path.relative_to_cwd(output_path)} (#{size} bytes, #{dimensions})")
+IO.puts("wrote #{output_path} (#{size} bytes, #{dimensions})")
