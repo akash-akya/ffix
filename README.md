@@ -76,19 +76,19 @@ File.write!("small.png", result.stdout)
 ## Vertical Short
 
 ```elixir
-cmd =
-  command(
-    "input.mp4",
-    fn src ->
-      src[:video]
-      |> scale(w: 1080, h: 1920, force_original_aspect_ratio: :increase)
-      |> crop(w: 1080, h: 1920)
-      |> fps(fps: 30)
-    end,
-    fn short, src ->
-      output("short.mp4", video: short, audio: src[:audio])
-    end
-  )
+command(
+  "input.mp4",
+  fn src ->
+    src[:video]
+    |> scale(w: 1080, h: 1920, force_original_aspect_ratio: :increase)
+    |> crop(w: 1080, h: 1920)
+    |> fps(fps: 30)
+    |> drawtext(text: "Launch Day", x: expr("(w-tw)/2"), y: expr("(h-th)/2"))
+  end,
+  fn short, src ->
+    output("short.mp4", video: short, audio: src[:audio])
+  end
+)
 ```
 
 ## Run Or Inspect
