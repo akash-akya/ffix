@@ -1,6 +1,25 @@
 # FFix intro: one clip, a few useful edits
 
+```elixir
+Mix.install(
+  [
+    {:ffix, "~> 0.1.0"},
+    {:kino, "~> 0.19"},
+    {:req, "~> 0.7"}
+  ],
+  consolidate_protocols: false
+)
+```
+
 ## What we’ll build
+
+This notebook uses:
+
+* `FFix` to buld FFmpeg commands
+* `Kino` for inline previews and controls
+* `Req` to download a small CC0 sample clip
+
+<!-- livebook:{"break_markdown":true} -->
 
 Let’s take one pleasant sample video and use it as a small editing workbench.
 
@@ -19,23 +38,6 @@ We will build up gradually:
 The point is not to hide ffmpeg. The point is to keep ffmpeg concepts visible while making commands and filtergraphs easier to compose from Elixir.
 
 ## Setup
-
-This notebook uses:
-
-* `FFix` from GitHub
-* `Kino` for inline previews and controls
-* `Req` to download a small CC0 sample clip
-
-```elixir
-Mix.install(
-  [
-    {:ffix, github: "akash-akya/ffix"},
-    {:kino, "~> 0.19"},
-    {:req, "~> 0.5"}
-  ],
-  consolidate_protocols: false
-)
-```
 
 ```elixir
 import FFix
