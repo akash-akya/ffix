@@ -1,0 +1,9 @@
+Filter split
+  Pass on the input to N video outputs.
+    Inputs:
+       #0: default (video)
+    Outputs:
+        dynamic (depending on the options)
+(a)split AVOptions:
+   outputs           <int>        ..FVA...... set number of outputs (from 1 to INT_MAX) (default 2)
+

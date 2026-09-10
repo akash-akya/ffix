@@ -1,0 +1,100 @@
+     on              1            .D.V.......
+     off             2            .D.V.......
+
+AVFormatContext AVOptions:
+  -avioflags         <flags>      ED......... (default 0)
+     direct                       ED......... reduce buffering
+  -probesize         <int64>      .D......... set probing size (from 32 to I64_MAX) (default 5000000)
+  -formatprobesize   <int>        .D......... number of bytes to probe file format (from 0 to 2.14748e+09) (default 1048576)
+  -packetsize        <int>        E.......... set packet size (from 0 to INT_MAX) (default 0)
+  -fflags            <flags>      ED......... (default autobsf)
+     flush_packets                E.......... reduce the latency by flushing out packets immediately
+     ignidx                       .D......... ignore index
+     genpts                       .D......... generate pts
+     nofillin                     .D......... do not fill in missing values that can be exactly calculated
+     noparse                      .D......... disable AVParsers, this needs nofillin too
+     igndts                       .D......... ignore dts
+     discardcorrupt               .D......... discard corrupted frames
+     sortdts                      .D......... try to interleave outputted packets by dts
+     fastseek                     .D......... fast but inaccurate seeks
+     nobuffer                     .D......... reduce the latency introduced by optional buffering
+     bitexact                     E.......... do not write random/volatile data
+     shortest                     E.........P stop muxing with the shortest stream
+     autobsf                      E.......... add needed bsfs automatically
+  -seek2any          <boolean>    .D......... allow seeking to non-keyframes on demuxer level when supported (default false)
+  -analyzeduration   <int64>      .D......... specify how many microseconds are analyzed to probe the input (from 0 to I64_MAX) (default 0)
+  -cryptokey         <binary>     .D......... decryption key
+  -indexmem          <int>        .D......... max memory used for timestamp index (per stream) (from 0 to INT_MAX) (default 1048576)
+  -rtbufsize         <int>        .D......... max memory used for buffering real-time frames (from 0 to INT_MAX) (default 3041280)
+  -fdebug            <flags>      ED......... print specific debug info (default 0)
+     ts                           ED.........
+  -max_delay         <int>        ED......... maximum muxing or demuxing delay in microseconds (from -1 to INT_MAX) (default -1)
+  -start_time_realtime <int64>      E.......... wall-clock time when stream begins (PTS==0) (from I64_MIN to I64_MAX) (default I64_MIN)
+  -fpsprobesize      <int>        .D......... number of frames used to probe fps (from -1 to 2.14748e+09) (default -1)
+  -audio_preload     <int>        E.......... microseconds by which audio packets should be interleaved earlier (from 0 to 2.14748e+09) (default 0)
+  -chunk_duration    <int>        E.......... microseconds for each chunk (from 0 to 2.14748e+09) (default 0)
+  -chunk_size        <int>        E.......... size in bytes for each chunk (from 0 to 2.14748e+09) (default 0)
+  -f_err_detect      <flags>      .D......... set error detection flags (deprecated; use err_detect, save via avconv) (default crccheck)
+     crccheck                     .D......... verify embedded CRCs
+     bitstream                    .D......... detect bitstream specification deviations
+     buffer                       .D......... detect improper bitstream length
+     explode                      .D......... abort decoding on minor error detection
+     ignore_err                   .D......... ignore errors
+     careful                      .D......... consider things that violate the spec, are fast to check and have not been seen in the wild as errors
+     compliant                    .D......... consider all spec non compliancies as errors
+     aggressive                   .D......... consider things that a sane encoder shouldn't do as an error
+  -err_detect        <flags>      .D......... set error detection flags (default crccheck)
+     crccheck                     .D......... verify embedded CRCs
+     bitstream                    .D......... detect bitstream specification deviations
+     buffer                       .D......... detect improper bitstream length
+     explode                      .D......... abort decoding on minor error detection
+     ignore_err                   .D......... ignore errors
+     careful                      .D......... consider things that violate the spec, are fast to check and have not been seen in the wild as errors
+     compliant                    .D......... consider all spec non compliancies as errors
+     aggressive                   .D......... consider things that a sane encoder shouldn't do as an error
+  -use_wallclock_as_timestamps <boolean>    .D......... use wallclock as timestamps (default false)
+  -skip_initial_bytes <int64>      .D......... set number of bytes to skip before reading header and frames (from 0 to I64_MAX) (default 0)
+  -correct_ts_overflow <boolean>    .D......... correct single timestamp overflows (default true)
+  -flush_packets     <int>        E.......... enable flushing of the I/O context after each packet (from -1 to 1) (default -1)
+  -metadata_header_padding <int>        E.......... set number of bytes to be written as padding in a metadata header (from -1 to INT_MAX) (default -1)
+  -output_ts_offset  <duration>   E.......... set output timestamp offset (default 0)
+  -max_interleave_delta <int64>      E.......... maximum buffering duration for interleaving (from 0 to I64_MAX) (default 10000000)
+  -f_strict          <int>        ED......... how strictly to follow the standards (deprecated; use strict, save via avconv) (from INT_MIN to INT_MAX) (default normal)
+     very            2            ED......... strictly conform to a older more strict version of the spec or reference software
+     strict          1            ED......... strictly conform to all the things in the spec no matter what the consequences
+     normal          0            ED.........
+     unofficial      -1           ED......... allow unofficial extensions
+     experimental    -2           ED......... allow non-standardized experimental variants
+  -strict            <int>        ED......... how strictly to follow the standards (from INT_MIN to INT_MAX) (default normal)
+     very            2            ED......... strictly conform to a older more strict version of the spec or reference software
+     strict          1            ED......... strictly conform to all the things in the spec no matter what the consequences
+     normal          0            ED.........
+     unofficial      -1           ED......... allow unofficial extensions
+     experimental    -2           ED......... allow non-standardized experimental variants
+  -max_ts_probe      <int>        .D......... maximum number of packets to read while waiting for the first timestamp (from 0 to INT_MAX) (default 50)
+  -avoid_negative_ts <int>        E.......... shift timestamps so they start at 0 (from -1 to 2) (default auto)
+     auto            -1           E.......... enabled when required by target format
+     disabled        0            E.......... do not change timestamps
+     make_non_negative 1            E.......... shift timestamps so they are non negative
+     make_zero       2            E.......... shift timestamps so they start at 0
+  -dump_separator    <string>     ED......... set information dump field separator (default ", ")
+  -codec_whitelist   <string>     .D......... List of decoders that are allowed to be used
+  -format_whitelist  <string>     .D......... List of demuxers that are allowed to be used
+  -protocol_whitelist <string>     .D......... List of protocols that are allowed to be used
+  -protocol_blacklist <string>     .D......... List of protocols that are not allowed to be used
+  -max_streams       <int>        .D......... maximum number of streams (from 0 to INT_MAX) (default 1000)
+  -skip_estimate_duration_from_pts <boolean>    .D......... skip duration calculation in estimate_timings_from_pts (default false)
+  -max_probe_packets <int>        .D......... Maximum number of packets to probe a codec (from 0 to INT_MAX) (default 2500)
+  -duration_probesize <int64>      .D......... Maximum number of bytes to probe the durations of the streams in estimate_timings_from_pts (from 0 to I64_MAX) (default 0)
+
+AVIOContext AVOptions:
+  -protocol_whitelist <string>     .D......... List of protocols that are allowed to be used
+
+URLContext AVOptions:
+  -protocol_whitelist <string>     .D......... List of protocols that are allowed to be used
+  -protocol_blacklist <string>     .D......... List of protocols that are not allowed to be used
+  -rw_timeout        <int64>      ED......... Timeout for IO operations (in microseconds) (from 0 to I64_MAX) (default 0)
+
+Async AVOptions:
+
+bluray AVOptions:

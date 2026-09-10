@@ -1,0 +1,2 @@
+Bit stream filter aac_adtstoasc
+    Supported codecs: aac

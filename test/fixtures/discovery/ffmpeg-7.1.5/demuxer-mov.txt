@@ -1,0 +1,24 @@
+Demuxer mov,mp4,m4a,3gp,3g2,mj2 [QuickTime / MOV]:
+    Common extensions: mov,mp4,m4a,3gp,3g2,mj2,psp,m4b,ism,ismv,isma,f4v,avif,heic,heif.
+mov,mp4,m4a,3gp,3g2,mj2 AVOptions:
+  -use_absolute_path <boolean>    .D.V....... allow using absolute path when opening alias, this is a possible security issue (default false)
+  -seek_streams_individually <boolean>    .D.V....... Seek each stream individually to the closest point (default true)
+  -ignore_editlist   <boolean>    .D.V....... Ignore the edit list atom. (default false)
+  -advanced_editlist <boolean>    .D.V....... Modify the AVIndex according to the editlists. Use this option to decode in the order specified by the edits. (default true)
+  -ignore_chapters   <boolean>    .D.V.......  (default false)
+  -use_mfra_for      <int>        .D.V....... use mfra for fragment timestamps (from -1 to 2) (default auto)
+     auto            -1           .D.V....... auto
+     dts             1            .D.V....... dts
+     pts             2            .D.V....... pts
+  -use_tfdt          <boolean>    .D.V....... use tfdt for fragment timestamps (default true)
+  -export_all        <boolean>    .D.V....... Export unrecognized metadata entries (default false)
+  -export_xmp        <boolean>    .D.V....... Export full XMP metadata (default false)
+  -activation_bytes  <binary>     .D......... Secret bytes for Audible AAX files
+  -audible_key       <binary>     .D......... AES-128 Key for Audible AAXC files
+  -audible_iv        <binary>     .D......... AES-128 IV for Audible AAXC files
+  -audible_fixed_key <binary>     .D......... Fixed key used for handling Audible AAX files
+  -decryption_key    <binary>     .D......... The media decryption key (hex)
+  -enable_drefs      <boolean>    .D.V....... Enable external track support. (default false)
+  -max_stts_delta    <int>        .D......... treat offsets above this value as invalid (from 0 to UINT32_MAX) (default 4294487295)
+  -interleaved_read  <boolean>    .D......... Interleave packets from multiple tracks at demuxer level (default true)
+

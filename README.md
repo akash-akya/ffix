@@ -116,6 +116,28 @@ FFix.run(cmd)
 `FFix.to_argv/1` is the canonical boundary. `FFix.to_shell_string/1` is for
 logs and debugging.
 
+## Discover FFmpeg Capabilities
+
+`FFix.Discovery` inspects the installed build without adding a command DSL:
+
+```elixir
+{:ok, encoders} = FFix.Discovery.list(:encoder)
+{:ok, details} = FFix.Discovery.help(:encoder, "libx264")
+{:ok, pixels} = FFix.Discovery.list(:pixel_format)
+{:ok, shared} = FFix.Discovery.shared()
+{:ok, build} = FFix.Discovery.version()
+```
+
+It also covers decoders, muxers, demuxers, devices, filters, protocols,
+bitstream filters, sample formats, channels/layouts, hardware acceleration,
+dispositions, and colors. Availability depends on the FFmpeg build.
+
+Discovery is explicit and bounded; detailed help is fetched on demand. Pass
+`ffmpeg: "/path/to/ffmpeg"` to select a build. `FFix.Discovery.Parser` parses
+recorded output without subprocesses. Names, aliases, and option sections stay
+separate; reported defaults and ranges are metadata, not a complete validator.
+The existing compile-time filter helpers remain unchanged.
+
 ## Requirements
 
 `ffmpeg` must be available when compiling the library. `FFix` generates filter

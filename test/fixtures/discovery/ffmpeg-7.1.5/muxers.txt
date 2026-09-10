@@ -1,0 +1,9 @@
+Formats:
+ D.. = Demuxing supported
+ .E. = Muxing supported
+ ..d = Is a device
+ ---
+  E  matroska        Matroska
+  E  mov             QuickTime / MOV
+  E  mp4             MP4 (MPEG-4 Part 14)
+  E  webm            WebM

@@ -77,6 +77,11 @@ defmodule FFix.MixProject do
           FFix.Command.Input,
           FFix.Command.Output
         ],
+        Discovery: [
+          FFix.Discovery,
+          FFix.Discovery.Parser,
+          FFix.Discovery.Error
+        ],
         Execution: [
           FFix.Runner,
           FFix.Runner.Result,
@@ -87,6 +92,7 @@ defmodule FFix.MixProject do
       ],
       nest_modules_by_prefix: [
         FFix.Command,
+        FFix.Discovery,
         FFix.Graph,
         FFix.Runner
       ]

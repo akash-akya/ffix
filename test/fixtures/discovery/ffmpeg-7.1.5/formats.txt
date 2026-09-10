@@ -1,0 +1,8 @@
+Formats:
+ D.. = Demuxing supported
+ .E. = Muxing supported
+ ..d = Is a device
+ ---
+  E  mov             QuickTime / MOV
+ D   mov,mp4,m4a,3gp,3g2,mj2 QuickTime / MOV
+  E  mp4             MP4 (MPEG-4 Part 14)
