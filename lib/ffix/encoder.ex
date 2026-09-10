@@ -20,18 +20,20 @@ defmodule FFix.Encoder do
 
   `named/3` accepts dynamic registration names without a metadata schema. `new/2`
   constructs a standalone configuration for the lower-level command model.
-  All component option names are unscoped and have no leading dash.
+  All component option names are unscoped and have no leading dash. Values may
+  also be callbacks receiving the output's named stream information; see
+  `FFix.Command.Output`. Their metadata checks run when the command is serialized.
   """
 
   alias FFix.Command
   alias FFix.Command.Mapping
   alias FFix.Options
 
-  @type t :: %__MODULE__{name: String.t() | nil, options: [Command.av_option()]}
+  @type t :: %__MODULE__{name: String.t() | nil, options: [Command.output_av_option()]}
   defstruct [:name, options: []]
 
   @doc "Builds an unbound configuration without metadata lookup; nil leaves selection to FFmpeg."
-  @spec new(String.t() | nil, [Command.av_option()]) :: t()
+  @spec new(String.t() | nil, [Command.output_av_option()]) :: t()
   def new(name, options \\ []) do
     Command.validate_component!(%__MODULE__{name: name, options: options})
   end
@@ -166,27 +168,49 @@ defmodule FFix.Encoder do
     "8x8dct" => [%{type: :boolean, constants: []}]
   }
   @type libx264_option ::
-          {:"8x8dct", boolean() | :auto | String.t()}
-          | {:a53cc, boolean() | :auto | String.t()}
+          {:"8x8dct", boolean() | :auto | String.t() | Command.option_callback()}
+          | {:a53cc, boolean() | :auto | String.t() | Command.option_callback()}
           | {:"aq-mode",
-             integer() | String.t() | :none | :variance | :autovariance | :"autovariance-biased"}
-          | {:"aq-strength", number() | String.t()}
-          | {:aud, boolean() | :auto | String.t()}
-          | {:"avcintra-class", integer() | String.t()}
-          | {:b, integer() | String.t()}
-          | {:"b-bias", integer() | String.t()}
-          | {:"b-pyramid", integer() | String.t() | :none | :strict | :normal}
-          | {:b_strategy, integer() | String.t()}
-          | {:"bluray-compat", boolean() | :auto | String.t()}
-          | {:bufsize, integer() | String.t()}
-          | {:chromaoffset, integer() | String.t()}
-          | {:coder, integer() | String.t() | :default | :cavlc | :cabac | :vlc | :ac}
-          | {:compression_level, integer() | String.t()}
-          | {:cplxblur, number() | String.t()}
-          | {:crf, number() | String.t()}
-          | {:crf_max, number() | String.t()}
-          | {:deblock, String.t() | atom()}
-          | {:"direct-pred", integer() | String.t() | :none | :spatial | :temporal | :auto}
+             integer()
+             | String.t()
+             | :none
+             | :variance
+             | :autovariance
+             | :"autovariance-biased"
+             | Command.option_callback()}
+          | {:"aq-strength", number() | String.t() | Command.option_callback()}
+          | {:aud, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:"avcintra-class", integer() | String.t() | Command.option_callback()}
+          | {:b, integer() | String.t() | Command.option_callback()}
+          | {:"b-bias", integer() | String.t() | Command.option_callback()}
+          | {:"b-pyramid",
+             integer() | String.t() | :none | :strict | :normal | Command.option_callback()}
+          | {:b_strategy, integer() | String.t() | Command.option_callback()}
+          | {:"bluray-compat", boolean() | :auto | String.t() | Command.option_callback()}
+          | {:bufsize, integer() | String.t() | Command.option_callback()}
+          | {:chromaoffset, integer() | String.t() | Command.option_callback()}
+          | {:coder,
+             integer()
+             | String.t()
+             | :default
+             | :cavlc
+             | :cabac
+             | :vlc
+             | :ac
+             | Command.option_callback()}
+          | {:compression_level, integer() | String.t() | Command.option_callback()}
+          | {:cplxblur, number() | String.t() | Command.option_callback()}
+          | {:crf, number() | String.t() | Command.option_callback()}
+          | {:crf_max, number() | String.t() | Command.option_callback()}
+          | {:deblock, String.t() | atom() | Command.option_callback()}
+          | {:"direct-pred",
+             integer()
+             | String.t()
+             | :none
+             | :spatial
+             | :temporal
+             | :auto
+             | Command.option_callback()}
           | {:err_detect,
              integer()
              | String.t()
@@ -208,9 +232,10 @@ defmodule FFix.Encoder do
              | :ignore_err
              | :careful
              | :compliant
-             | :aggressive}
-          | {:"fast-pskip", boolean() | :auto | String.t()}
-          | {:fastfirstpass, boolean() | :auto | String.t()}
+             | :aggressive
+             | Command.option_callback()}
+          | {:"fast-pskip", boolean() | :auto | String.t() | Command.option_callback()}
+          | {:fastfirstpass, boolean() | :auto | String.t() | Command.option_callback()}
           | {:flags,
              integer()
              | String.t()
@@ -246,7 +271,8 @@ defmodule FFix.Encoder do
              | :ilme
              | :cgop
              | :output_corrupt
-             | :drop_changed}
+             | :drop_changed
+             | Command.option_callback()}
           | {:flags2,
              integer()
              | String.t()
@@ -272,46 +298,77 @@ defmodule FFix.Encoder do
              | :export_mvs
              | :skip_manual
              | :ass_ro_flush_noop
-             | :icc_profiles}
-          | {:"forced-idr", boolean() | :auto | String.t()}
-          | {:g, integer() | String.t()}
-          | {:global_quality, integer() | String.t()}
-          | {:"intra-refresh", boolean() | :auto | String.t()}
-          | {:level, String.t() | atom() | integer() | :unknown}
-          | {:maxrate, integer() | String.t()}
-          | {:mb_info, boolean() | :auto | String.t()}
-          | {:mbtree, boolean() | :auto | String.t()}
-          | {:me_method, integer() | String.t() | :dia | :hex | :umh | :esa | :tesa}
-          | {:minrate, integer() | String.t()}
-          | {:"mixed-refs", boolean() | :auto | String.t()}
-          | {:"motion-est", integer() | String.t() | :dia | :hex | :umh | :esa | :tesa}
-          | {:"nal-hrd", integer() | String.t() | :none | :vbr | :cbr}
-          | {:noise_reduction, integer() | String.t()}
-          | {:partitions, String.t() | atom()}
-          | {:passlogfile, String.t() | atom()}
-          | {:preset, String.t() | atom()}
-          | {:profile, String.t() | atom() | integer() | :unknown | :main10}
-          | {:psy, boolean() | :auto | String.t()}
-          | {:"psy-rd", String.t() | atom()}
-          | {:qp, integer() | String.t()}
-          | {:"rc-lookahead", integer() | String.t()}
-          | {:sc_threshold, integer() | String.t()}
-          | {:"slice-max-size", integer() | String.t()}
-          | {:ssim, boolean() | :auto | String.t()}
-          | {:stats, String.t() | atom()}
+             | :icc_profiles
+             | Command.option_callback()}
+          | {:"forced-idr", boolean() | :auto | String.t() | Command.option_callback()}
+          | {:g, integer() | String.t() | Command.option_callback()}
+          | {:global_quality, integer() | String.t() | Command.option_callback()}
+          | {:"intra-refresh", boolean() | :auto | String.t() | Command.option_callback()}
+          | {:level, String.t() | atom() | integer() | :unknown | Command.option_callback()}
+          | {:maxrate, integer() | String.t() | Command.option_callback()}
+          | {:mb_info, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:mbtree, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:me_method,
+             integer()
+             | String.t()
+             | :dia
+             | :hex
+             | :umh
+             | :esa
+             | :tesa
+             | Command.option_callback()}
+          | {:minrate, integer() | String.t() | Command.option_callback()}
+          | {:"mixed-refs", boolean() | :auto | String.t() | Command.option_callback()}
+          | {:"motion-est",
+             integer()
+             | String.t()
+             | :dia
+             | :hex
+             | :umh
+             | :esa
+             | :tesa
+             | Command.option_callback()}
+          | {:"nal-hrd", integer() | String.t() | :none | :vbr | :cbr | Command.option_callback()}
+          | {:noise_reduction, integer() | String.t() | Command.option_callback()}
+          | {:partitions, String.t() | atom() | Command.option_callback()}
+          | {:passlogfile, String.t() | atom() | Command.option_callback()}
+          | {:preset, String.t() | atom() | Command.option_callback()}
+          | {:profile,
+             String.t() | atom() | integer() | :unknown | :main10 | Command.option_callback()}
+          | {:psy, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:"psy-rd", String.t() | atom() | Command.option_callback()}
+          | {:qp, integer() | String.t() | Command.option_callback()}
+          | {:"rc-lookahead", integer() | String.t() | Command.option_callback()}
+          | {:sc_threshold, integer() | String.t() | Command.option_callback()}
+          | {:"slice-max-size", integer() | String.t() | Command.option_callback()}
+          | {:ssim, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:stats, String.t() | atom() | Command.option_callback()}
           | {:strict,
-             integer() | String.t() | :very | :strict | :normal | :unofficial | :experimental}
+             integer()
+             | String.t()
+             | :very
+             | :strict
+             | :normal
+             | :unofficial
+             | :experimental
+             | Command.option_callback()}
           | {:thread_type,
-             integer() | String.t() | [String.t() | :slice | :frame] | :slice | :frame}
-          | {:threads, integer() | String.t() | :auto}
-          | {:tune, String.t() | atom()}
-          | {:udu_sei, boolean() | :auto | String.t()}
-          | {:weightb, boolean() | :auto | String.t()}
-          | {:weightp, integer() | String.t() | :none | :simple | :smart}
-          | {:wpredp, String.t() | atom()}
-          | {:"x264-params", String.t() | atom()}
-          | {:x264opts, String.t() | atom()}
-          | {:raw, [Command.av_option()]}
+             integer()
+             | String.t()
+             | [String.t() | :slice | :frame]
+             | :slice
+             | :frame
+             | Command.option_callback()}
+          | {:threads, integer() | String.t() | :auto | Command.option_callback()}
+          | {:tune, String.t() | atom() | Command.option_callback()}
+          | {:udu_sei, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:weightb, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:weightp,
+             integer() | String.t() | :none | :simple | :smart | Command.option_callback()}
+          | {:wpredp, String.t() | atom() | Command.option_callback()}
+          | {:"x264-params", String.t() | atom() | Command.option_callback()}
+          | {:x264opts, String.t() | atom() | Command.option_callback()}
+          | {:raw, [Command.output_av_option()]}
   @doc """
   libx264: libx264 H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10
 
@@ -480,12 +537,12 @@ defmodule FFix.Encoder do
     "x265-params" => [%{type: :dictionary, constants: []}]
   }
   @type libx265_option ::
-          {:a53cc, boolean() | :auto | String.t()}
-          | {:b, integer() | String.t()}
-          | {:bufsize, integer() | String.t()}
-          | {:compression_level, integer() | String.t()}
-          | {:crf, number() | String.t()}
-          | {:dolbyvision, boolean() | :auto | String.t() | :auto}
+          {:a53cc, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:b, integer() | String.t() | Command.option_callback()}
+          | {:bufsize, integer() | String.t() | Command.option_callback()}
+          | {:compression_level, integer() | String.t() | Command.option_callback()}
+          | {:crf, number() | String.t() | Command.option_callback()}
+          | {:dolbyvision, boolean() | :auto | String.t() | :auto | Command.option_callback()}
           | {:err_detect,
              integer()
              | String.t()
@@ -507,7 +564,8 @@ defmodule FFix.Encoder do
              | :ignore_err
              | :careful
              | :compliant
-             | :aggressive}
+             | :aggressive
+             | Command.option_callback()}
           | {:flags,
              integer()
              | String.t()
@@ -543,7 +601,8 @@ defmodule FFix.Encoder do
              | :ilme
              | :cgop
              | :output_corrupt
-             | :drop_changed}
+             | :drop_changed
+             | Command.option_callback()}
           | {:flags2,
              integer()
              | String.t()
@@ -569,25 +628,39 @@ defmodule FFix.Encoder do
              | :export_mvs
              | :skip_manual
              | :ass_ro_flush_noop
-             | :icc_profiles}
-          | {:"forced-idr", boolean() | :auto | String.t()}
-          | {:g, integer() | String.t()}
-          | {:global_quality, integer() | String.t()}
-          | {:level, integer() | String.t() | :unknown}
-          | {:maxrate, integer() | String.t()}
-          | {:minrate, integer() | String.t()}
-          | {:preset, String.t() | atom()}
-          | {:profile, String.t() | atom() | integer() | :unknown | :main10}
-          | {:qp, integer() | String.t()}
+             | :icc_profiles
+             | Command.option_callback()}
+          | {:"forced-idr", boolean() | :auto | String.t() | Command.option_callback()}
+          | {:g, integer() | String.t() | Command.option_callback()}
+          | {:global_quality, integer() | String.t() | Command.option_callback()}
+          | {:level, integer() | String.t() | :unknown | Command.option_callback()}
+          | {:maxrate, integer() | String.t() | Command.option_callback()}
+          | {:minrate, integer() | String.t() | Command.option_callback()}
+          | {:preset, String.t() | atom() | Command.option_callback()}
+          | {:profile,
+             String.t() | atom() | integer() | :unknown | :main10 | Command.option_callback()}
+          | {:qp, integer() | String.t() | Command.option_callback()}
           | {:strict,
-             integer() | String.t() | :very | :strict | :normal | :unofficial | :experimental}
+             integer()
+             | String.t()
+             | :very
+             | :strict
+             | :normal
+             | :unofficial
+             | :experimental
+             | Command.option_callback()}
           | {:thread_type,
-             integer() | String.t() | [String.t() | :slice | :frame] | :slice | :frame}
-          | {:threads, integer() | String.t() | :auto}
-          | {:tune, String.t() | atom()}
-          | {:udu_sei, boolean() | :auto | String.t()}
-          | {:"x265-params", String.t() | atom()}
-          | {:raw, [Command.av_option()]}
+             integer()
+             | String.t()
+             | [String.t() | :slice | :frame]
+             | :slice
+             | :frame
+             | Command.option_callback()}
+          | {:threads, integer() | String.t() | :auto | Command.option_callback()}
+          | {:tune, String.t() | atom() | Command.option_callback()}
+          | {:udu_sei, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:"x265-params", String.t() | atom() | Command.option_callback()}
+          | {:raw, [Command.output_av_option()]}
   @doc """
   libx265: libx265 H.265 / HEVC
 
@@ -828,22 +901,32 @@ defmodule FFix.Encoder do
     "cq" => [%{type: :float, constants: []}]
   }
   @type h264_nvenc_option ::
-          {:"2pass", boolean() | :auto | String.t()}
-          | {:a53cc, boolean() | :auto | String.t()}
-          | {:"aq-strength", integer() | String.t()}
-          | {:aud, boolean() | :auto | String.t()}
-          | {:b, integer() | String.t()}
-          | {:b_adapt, boolean() | :auto | String.t()}
-          | {:b_ref_mode, integer() | String.t() | :disabled | :each | :middle}
-          | {:"bluray-compat", boolean() | :auto | String.t()}
-          | {:bufsize, integer() | String.t()}
-          | {:cbr, boolean() | :auto | String.t()}
-          | {:coder, integer() | String.t() | :default | :auto | :cabac | :cavlc | :ac | :vlc}
-          | {:compression_level, integer() | String.t()}
-          | {:"constrained-encoding", boolean() | :auto | String.t()}
-          | {:cq, number() | String.t()}
-          | {:delay, integer() | String.t()}
-          | {:dpb_size, integer() | String.t()}
+          {:"2pass", boolean() | :auto | String.t() | Command.option_callback()}
+          | {:a53cc, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:"aq-strength", integer() | String.t() | Command.option_callback()}
+          | {:aud, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:b, integer() | String.t() | Command.option_callback()}
+          | {:b_adapt, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:b_ref_mode,
+             integer() | String.t() | :disabled | :each | :middle | Command.option_callback()}
+          | {:"bluray-compat", boolean() | :auto | String.t() | Command.option_callback()}
+          | {:bufsize, integer() | String.t() | Command.option_callback()}
+          | {:cbr, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:coder,
+             integer()
+             | String.t()
+             | :default
+             | :auto
+             | :cabac
+             | :cavlc
+             | :ac
+             | :vlc
+             | Command.option_callback()}
+          | {:compression_level, integer() | String.t() | Command.option_callback()}
+          | {:"constrained-encoding", boolean() | :auto | String.t() | Command.option_callback()}
+          | {:cq, number() | String.t() | Command.option_callback()}
+          | {:delay, integer() | String.t() | Command.option_callback()}
+          | {:dpb_size, integer() | String.t() | Command.option_callback()}
           | {:err_detect,
              integer()
              | String.t()
@@ -865,8 +948,9 @@ defmodule FFix.Encoder do
              | :ignore_err
              | :careful
              | :compliant
-             | :aggressive}
-          | {:extra_sei, boolean() | :auto | String.t()}
+             | :aggressive
+             | Command.option_callback()}
+          | {:extra_sei, boolean() | :auto | String.t() | Command.option_callback()}
           | {:flags,
              integer()
              | String.t()
@@ -902,7 +986,8 @@ defmodule FFix.Encoder do
              | :ilme
              | :cgop
              | :output_corrupt
-             | :drop_changed}
+             | :drop_changed
+             | Command.option_callback()}
           | {:flags2,
              integer()
              | String.t()
@@ -928,16 +1013,17 @@ defmodule FFix.Encoder do
              | :export_mvs
              | :skip_manual
              | :ass_ro_flush_noop
-             | :icc_profiles}
-          | {:"forced-idr", boolean() | :auto | String.t()}
-          | {:g, integer() | String.t()}
-          | {:global_quality, integer() | String.t()}
-          | {:gpu, integer() | String.t() | :any | :list}
-          | {:init_qpB, integer() | String.t()}
-          | {:init_qpI, integer() | String.t()}
-          | {:init_qpP, integer() | String.t()}
-          | {:"intra-refresh", boolean() | :auto | String.t()}
-          | {:ldkfs, integer() | String.t()}
+             | :icc_profiles
+             | Command.option_callback()}
+          | {:"forced-idr", boolean() | :auto | String.t() | Command.option_callback()}
+          | {:g, integer() | String.t() | Command.option_callback()}
+          | {:global_quality, integer() | String.t() | Command.option_callback()}
+          | {:gpu, integer() | String.t() | :any | :list | Command.option_callback()}
+          | {:init_qpB, integer() | String.t() | Command.option_callback()}
+          | {:init_qpI, integer() | String.t() | Command.option_callback()}
+          | {:init_qpP, integer() | String.t() | Command.option_callback()}
+          | {:"intra-refresh", boolean() | :auto | String.t() | Command.option_callback()}
+          | {:ldkfs, integer() | String.t() | Command.option_callback()}
           | {:level,
              integer()
              | String.t()
@@ -968,14 +1054,24 @@ defmodule FFix.Encoder do
              | :"6.0"
              | :"6.1"
              | :"6.2"
-             | :unknown}
-          | {:lookahead_level, integer() | String.t() | :auto | :"0" | :"1" | :"2" | :"3"}
-          | {:max_slice_size, integer() | String.t()}
-          | {:maxrate, integer() | String.t()}
-          | {:minrate, integer() | String.t()}
-          | {:multipass, integer() | String.t() | :disabled | :qres | :fullres}
-          | {:"no-scenecut", boolean() | :auto | String.t()}
-          | {:nonref_p, boolean() | :auto | String.t()}
+             | :unknown
+             | Command.option_callback()}
+          | {:lookahead_level,
+             integer()
+             | String.t()
+             | :auto
+             | :"0"
+             | :"1"
+             | :"2"
+             | :"3"
+             | Command.option_callback()}
+          | {:max_slice_size, integer() | String.t() | Command.option_callback()}
+          | {:maxrate, integer() | String.t() | Command.option_callback()}
+          | {:minrate, integer() | String.t() | Command.option_callback()}
+          | {:multipass,
+             integer() | String.t() | :disabled | :qres | :fullres | Command.option_callback()}
+          | {:"no-scenecut", boolean() | :auto | String.t() | Command.option_callback()}
+          | {:nonref_p, boolean() | :auto | String.t() | Command.option_callback()}
           | {:preset,
              integer()
              | String.t()
@@ -997,12 +1093,21 @@ defmodule FFix.Encoder do
              | :p4
              | :p5
              | :p6
-             | :p7}
+             | :p7
+             | Command.option_callback()}
           | {:profile,
-             integer() | String.t() | :baseline | :main | :high | :high444p | :unknown | :main10}
-          | {:qp, integer() | String.t()}
-          | {:qp_cb_offset, integer() | String.t()}
-          | {:qp_cr_offset, integer() | String.t()}
+             integer()
+             | String.t()
+             | :baseline
+             | :main
+             | :high
+             | :high444p
+             | :unknown
+             | :main10
+             | Command.option_callback()}
+          | {:qp, integer() | String.t() | Command.option_callback()}
+          | {:qp_cb_offset, integer() | String.t() | Command.option_callback()}
+          | {:qp_cr_offset, integer() | String.t() | Command.option_callback()}
           | {:rc,
              integer()
              | String.t()
@@ -1015,26 +1120,42 @@ defmodule FFix.Encoder do
              | :vbr_2pass
              | :cbr_ld_hq
              | :cbr_hq
-             | :vbr_hq}
-          | {:"rc-lookahead", integer() | String.t()}
-          | {:rgb_mode, integer() | String.t() | :yuv420 | :yuv444 | :disabled}
-          | {:"single-slice-intra-refresh", boolean() | :auto | String.t()}
-          | {:"spatial-aq", boolean() | :auto | String.t()}
-          | {:spatial_aq, boolean() | :auto | String.t()}
+             | :vbr_hq
+             | Command.option_callback()}
+          | {:"rc-lookahead", integer() | String.t() | Command.option_callback()}
+          | {:rgb_mode,
+             integer() | String.t() | :yuv420 | :yuv444 | :disabled | Command.option_callback()}
+          | {:"single-slice-intra-refresh",
+             boolean() | :auto | String.t() | Command.option_callback()}
+          | {:"spatial-aq", boolean() | :auto | String.t() | Command.option_callback()}
+          | {:spatial_aq, boolean() | :auto | String.t() | Command.option_callback()}
           | {:strict,
-             integer() | String.t() | :very | :strict | :normal | :unofficial | :experimental}
-          | {:strict_gop, boolean() | :auto | String.t()}
-          | {:surfaces, integer() | String.t()}
-          | {:"temporal-aq", boolean() | :auto | String.t()}
-          | {:temporal_aq, boolean() | :auto | String.t()}
+             integer()
+             | String.t()
+             | :very
+             | :strict
+             | :normal
+             | :unofficial
+             | :experimental
+             | Command.option_callback()}
+          | {:strict_gop, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:surfaces, integer() | String.t() | Command.option_callback()}
+          | {:"temporal-aq", boolean() | :auto | String.t() | Command.option_callback()}
+          | {:temporal_aq, boolean() | :auto | String.t() | Command.option_callback()}
           | {:thread_type,
-             integer() | String.t() | [String.t() | :slice | :frame] | :slice | :frame}
-          | {:threads, integer() | String.t() | :auto}
-          | {:tune, integer() | String.t() | :hq | :ll | :ull | :lossless}
-          | {:udu_sei, boolean() | :auto | String.t()}
-          | {:weighted_pred, integer() | String.t()}
-          | {:zerolatency, boolean() | :auto | String.t()}
-          | {:raw, [Command.av_option()]}
+             integer()
+             | String.t()
+             | [String.t() | :slice | :frame]
+             | :slice
+             | :frame
+             | Command.option_callback()}
+          | {:threads, integer() | String.t() | :auto | Command.option_callback()}
+          | {:tune,
+             integer() | String.t() | :hq | :ll | :ull | :lossless | Command.option_callback()}
+          | {:udu_sei, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:weighted_pred, integer() | String.t() | Command.option_callback()}
+          | {:zerolatency, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:raw, [Command.output_av_option()]}
   @doc """
   h264_nvenc: NVIDIA NVENC H.264 encoder
 
@@ -1197,17 +1318,18 @@ defmodule FFix.Encoder do
     "threads" => [%{type: :int, constants: ["auto"]}]
   }
   @type aac_option ::
-          {:aac_coder, integer() | String.t() | :anmr | :twoloop | :fast}
-          | {:aac_is, boolean() | :auto | String.t()}
-          | {:aac_ltp, boolean() | :auto | String.t()}
-          | {:aac_ms, boolean() | :auto | String.t()}
-          | {:aac_pce, boolean() | :auto | String.t()}
-          | {:aac_pns, boolean() | :auto | String.t()}
-          | {:aac_pred, boolean() | :auto | String.t()}
-          | {:aac_tns, boolean() | :auto | String.t()}
-          | {:b, integer() | String.t()}
-          | {:bufsize, integer() | String.t()}
-          | {:compression_level, integer() | String.t()}
+          {:aac_coder,
+           integer() | String.t() | :anmr | :twoloop | :fast | Command.option_callback()}
+          | {:aac_is, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:aac_ltp, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:aac_ms, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:aac_pce, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:aac_pns, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:aac_pred, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:aac_tns, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:b, integer() | String.t() | Command.option_callback()}
+          | {:bufsize, integer() | String.t() | Command.option_callback()}
+          | {:compression_level, integer() | String.t() | Command.option_callback()}
           | {:err_detect,
              integer()
              | String.t()
@@ -1229,7 +1351,8 @@ defmodule FFix.Encoder do
              | :ignore_err
              | :careful
              | :compliant
-             | :aggressive}
+             | :aggressive
+             | Command.option_callback()}
           | {:flags,
              integer()
              | String.t()
@@ -1265,7 +1388,8 @@ defmodule FFix.Encoder do
              | :ilme
              | :cgop
              | :output_corrupt
-             | :drop_changed}
+             | :drop_changed
+             | Command.option_callback()}
           | {:flags2,
              integer()
              | String.t()
@@ -1291,18 +1415,31 @@ defmodule FFix.Encoder do
              | :export_mvs
              | :skip_manual
              | :ass_ro_flush_noop
-             | :icc_profiles}
-          | {:global_quality, integer() | String.t()}
-          | {:level, integer() | String.t() | :unknown}
-          | {:maxrate, integer() | String.t()}
-          | {:minrate, integer() | String.t()}
-          | {:profile, integer() | String.t() | :unknown | :main10}
+             | :icc_profiles
+             | Command.option_callback()}
+          | {:global_quality, integer() | String.t() | Command.option_callback()}
+          | {:level, integer() | String.t() | :unknown | Command.option_callback()}
+          | {:maxrate, integer() | String.t() | Command.option_callback()}
+          | {:minrate, integer() | String.t() | Command.option_callback()}
+          | {:profile, integer() | String.t() | :unknown | :main10 | Command.option_callback()}
           | {:strict,
-             integer() | String.t() | :very | :strict | :normal | :unofficial | :experimental}
+             integer()
+             | String.t()
+             | :very
+             | :strict
+             | :normal
+             | :unofficial
+             | :experimental
+             | Command.option_callback()}
           | {:thread_type,
-             integer() | String.t() | [String.t() | :slice | :frame] | :slice | :frame}
-          | {:threads, integer() | String.t() | :auto}
-          | {:raw, [Command.av_option()]}
+             integer()
+             | String.t()
+             | [String.t() | :slice | :frame]
+             | :slice
+             | :frame
+             | Command.option_callback()}
+          | {:threads, integer() | String.t() | :auto | Command.option_callback()}
+          | {:raw, [Command.output_av_option()]}
   @doc """
   aac: AAC (Advanced Audio Coding)
 
@@ -1425,11 +1562,12 @@ defmodule FFix.Encoder do
     "vbr" => [%{type: :int, constants: ["off", "on", "constrained"]}]
   }
   @type libopus_option ::
-          {:application, integer() | String.t() | :voip | :audio | :lowdelay}
-          | {:apply_phase_inv, boolean() | :auto | String.t()}
-          | {:b, integer() | String.t()}
-          | {:bufsize, integer() | String.t()}
-          | {:compression_level, integer() | String.t()}
+          {:application,
+           integer() | String.t() | :voip | :audio | :lowdelay | Command.option_callback()}
+          | {:apply_phase_inv, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:b, integer() | String.t() | Command.option_callback()}
+          | {:bufsize, integer() | String.t() | Command.option_callback()}
+          | {:compression_level, integer() | String.t() | Command.option_callback()}
           | {:err_detect,
              integer()
              | String.t()
@@ -1451,8 +1589,9 @@ defmodule FFix.Encoder do
              | :ignore_err
              | :careful
              | :compliant
-             | :aggressive}
-          | {:fec, boolean() | :auto | String.t()}
+             | :aggressive
+             | Command.option_callback()}
+          | {:fec, boolean() | :auto | String.t() | Command.option_callback()}
           | {:flags,
              integer()
              | String.t()
@@ -1488,7 +1627,8 @@ defmodule FFix.Encoder do
              | :ilme
              | :cgop
              | :output_corrupt
-             | :drop_changed}
+             | :drop_changed
+             | Command.option_callback()}
           | {:flags2,
              integer()
              | String.t()
@@ -1514,22 +1654,35 @@ defmodule FFix.Encoder do
              | :export_mvs
              | :skip_manual
              | :ass_ro_flush_noop
-             | :icc_profiles}
-          | {:frame_duration, number() | String.t()}
-          | {:global_quality, integer() | String.t()}
-          | {:level, integer() | String.t() | :unknown}
-          | {:mapping_family, integer() | String.t()}
-          | {:maxrate, integer() | String.t()}
-          | {:minrate, integer() | String.t()}
-          | {:packet_loss, integer() | String.t()}
-          | {:profile, integer() | String.t() | :unknown | :main10}
+             | :icc_profiles
+             | Command.option_callback()}
+          | {:frame_duration, number() | String.t() | Command.option_callback()}
+          | {:global_quality, integer() | String.t() | Command.option_callback()}
+          | {:level, integer() | String.t() | :unknown | Command.option_callback()}
+          | {:mapping_family, integer() | String.t() | Command.option_callback()}
+          | {:maxrate, integer() | String.t() | Command.option_callback()}
+          | {:minrate, integer() | String.t() | Command.option_callback()}
+          | {:packet_loss, integer() | String.t() | Command.option_callback()}
+          | {:profile, integer() | String.t() | :unknown | :main10 | Command.option_callback()}
           | {:strict,
-             integer() | String.t() | :very | :strict | :normal | :unofficial | :experimental}
+             integer()
+             | String.t()
+             | :very
+             | :strict
+             | :normal
+             | :unofficial
+             | :experimental
+             | Command.option_callback()}
           | {:thread_type,
-             integer() | String.t() | [String.t() | :slice | :frame] | :slice | :frame}
-          | {:threads, integer() | String.t() | :auto}
-          | {:vbr, integer() | String.t() | :off | :on | :constrained}
-          | {:raw, [Command.av_option()]}
+             integer()
+             | String.t()
+             | [String.t() | :slice | :frame]
+             | :slice
+             | :frame
+             | Command.option_callback()}
+          | {:threads, integer() | String.t() | :auto | Command.option_callback()}
+          | {:vbr, integer() | String.t() | :off | :on | :constrained | Command.option_callback()}
+          | {:raw, [Command.output_av_option()]}
   @doc """
   libopus: libopus Opus
 
@@ -1699,16 +1852,16 @@ defmodule FFix.Encoder do
     "skip_exp" => [%{type: :int, constants: []}]
   }
   @type mpeg4_option ::
-          {:alternate_scan, boolean() | :auto | String.t()}
-          | {:b, integer() | String.t()}
-          | {:b_sensitivity, integer() | String.t()}
-          | {:b_strategy, integer() | String.t()}
-          | {:border_mask, number() | String.t()}
-          | {:brd_scale, integer() | String.t()}
-          | {:bufsize, integer() | String.t()}
-          | {:chroma_elim_threshold, integer() | String.t()}
-          | {:compression_level, integer() | String.t()}
-          | {:data_partitioning, boolean() | :auto | String.t()}
+          {:alternate_scan, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:b, integer() | String.t() | Command.option_callback()}
+          | {:b_sensitivity, integer() | String.t() | Command.option_callback()}
+          | {:b_strategy, integer() | String.t() | Command.option_callback()}
+          | {:border_mask, number() | String.t() | Command.option_callback()}
+          | {:brd_scale, integer() | String.t() | Command.option_callback()}
+          | {:bufsize, integer() | String.t() | Command.option_callback()}
+          | {:chroma_elim_threshold, integer() | String.t() | Command.option_callback()}
+          | {:compression_level, integer() | String.t() | Command.option_callback()}
+          | {:data_partitioning, boolean() | :auto | String.t() | Command.option_callback()}
           | {:err_detect,
              integer()
              | String.t()
@@ -1730,8 +1883,9 @@ defmodule FFix.Encoder do
              | :ignore_err
              | :careful
              | :compliant
-             | :aggressive}
-          | {:error_rate, integer() | String.t()}
+             | :aggressive
+             | Command.option_callback()}
+          | {:error_rate, integer() | String.t() | Command.option_callback()}
           | {:flags,
              integer()
              | String.t()
@@ -1767,7 +1921,8 @@ defmodule FFix.Encoder do
              | :ilme
              | :cgop
              | :output_corrupt
-             | :drop_changed}
+             | :drop_changed
+             | Command.option_callback()}
           | {:flags2,
              integer()
              | String.t()
@@ -1793,20 +1948,22 @@ defmodule FFix.Encoder do
              | :export_mvs
              | :skip_manual
              | :ass_ro_flush_noop
-             | :icc_profiles}
-          | {:g, integer() | String.t()}
-          | {:global_quality, integer() | String.t()}
-          | {:intra_penalty, integer() | String.t()}
-          | {:level, integer() | String.t() | :unknown}
-          | {:lmax, integer() | String.t()}
-          | {:lmin, integer() | String.t()}
-          | {:luma_elim_threshold, integer() | String.t()}
-          | {:maxrate, integer() | String.t()}
-          | {:mepc, integer() | String.t()}
-          | {:mepre, integer() | String.t()}
-          | {:minrate, integer() | String.t()}
-          | {:motion_est, integer() | String.t() | :zero | :epzs | :xone}
-          | {:mpeg_quant, integer() | String.t()}
+             | :icc_profiles
+             | Command.option_callback()}
+          | {:g, integer() | String.t() | Command.option_callback()}
+          | {:global_quality, integer() | String.t() | Command.option_callback()}
+          | {:intra_penalty, integer() | String.t() | Command.option_callback()}
+          | {:level, integer() | String.t() | :unknown | Command.option_callback()}
+          | {:lmax, integer() | String.t() | Command.option_callback()}
+          | {:lmin, integer() | String.t() | Command.option_callback()}
+          | {:luma_elim_threshold, integer() | String.t() | Command.option_callback()}
+          | {:maxrate, integer() | String.t() | Command.option_callback()}
+          | {:mepc, integer() | String.t() | Command.option_callback()}
+          | {:mepre, integer() | String.t() | Command.option_callback()}
+          | {:minrate, integer() | String.t() | Command.option_callback()}
+          | {:motion_est,
+             integer() | String.t() | :zero | :epzs | :xone | Command.option_callback()}
+          | {:mpeg_quant, integer() | String.t() | Command.option_callback()}
           | {:mpv_flags,
              integer()
              | String.t()
@@ -1816,18 +1973,19 @@ defmodule FFix.Encoder do
              | :qp_rd
              | :cbp_rd
              | :naq
-             | :mv0}
-          | {:noise_reduction, integer() | String.t()}
-          | {:profile, integer() | String.t() | :unknown | :main10}
-          | {:ps, integer() | String.t()}
-          | {:qsquish, number() | String.t()}
-          | {:quantizer_noise_shaping, integer() | String.t()}
-          | {:rc_buf_aggressivity, number() | String.t()}
-          | {:rc_eq, String.t() | atom()}
-          | {:rc_init_cplx, number() | String.t()}
-          | {:rc_qmod_amp, number() | String.t()}
-          | {:rc_qmod_freq, integer() | String.t()}
-          | {:sc_threshold, integer() | String.t()}
+             | :mv0
+             | Command.option_callback()}
+          | {:noise_reduction, integer() | String.t() | Command.option_callback()}
+          | {:profile, integer() | String.t() | :unknown | :main10 | Command.option_callback()}
+          | {:ps, integer() | String.t() | Command.option_callback()}
+          | {:qsquish, number() | String.t() | Command.option_callback()}
+          | {:quantizer_noise_shaping, integer() | String.t() | Command.option_callback()}
+          | {:rc_buf_aggressivity, number() | String.t() | Command.option_callback()}
+          | {:rc_eq, String.t() | atom() | Command.option_callback()}
+          | {:rc_init_cplx, number() | String.t() | Command.option_callback()}
+          | {:rc_qmod_amp, number() | String.t() | Command.option_callback()}
+          | {:rc_qmod_freq, integer() | String.t() | Command.option_callback()}
+          | {:sc_threshold, integer() | String.t() | Command.option_callback()}
           | {:skip_cmp,
              integer()
              | String.t()
@@ -1845,16 +2003,29 @@ defmodule FFix.Encoder do
              | :dct264
              | :dctmax
              | :chroma
-             | :msad}
-          | {:skip_exp, integer() | String.t()}
-          | {:skip_factor, integer() | String.t()}
-          | {:skip_threshold, integer() | String.t()}
+             | :msad
+             | Command.option_callback()}
+          | {:skip_exp, integer() | String.t() | Command.option_callback()}
+          | {:skip_factor, integer() | String.t() | Command.option_callback()}
+          | {:skip_threshold, integer() | String.t() | Command.option_callback()}
           | {:strict,
-             integer() | String.t() | :very | :strict | :normal | :unofficial | :experimental}
+             integer()
+             | String.t()
+             | :very
+             | :strict
+             | :normal
+             | :unofficial
+             | :experimental
+             | Command.option_callback()}
           | {:thread_type,
-             integer() | String.t() | [String.t() | :slice | :frame] | :slice | :frame}
-          | {:threads, integer() | String.t() | :auto}
-          | {:raw, [Command.av_option()]}
+             integer()
+             | String.t()
+             | [String.t() | :slice | :frame]
+             | :slice
+             | :frame
+             | Command.option_callback()}
+          | {:threads, integer() | String.t() | :auto | Command.option_callback()}
+          | {:raw, [Command.output_av_option()]}
   @doc """
   mpeg4: MPEG-4 part 2
 
@@ -1993,9 +2164,9 @@ defmodule FFix.Encoder do
     "threads" => [%{type: :int, constants: ["auto"]}]
   }
   @type pcm_s16le_option ::
-          {:b, integer() | String.t()}
-          | {:bufsize, integer() | String.t()}
-          | {:compression_level, integer() | String.t()}
+          {:b, integer() | String.t() | Command.option_callback()}
+          | {:bufsize, integer() | String.t() | Command.option_callback()}
+          | {:compression_level, integer() | String.t() | Command.option_callback()}
           | {:err_detect,
              integer()
              | String.t()
@@ -2017,7 +2188,8 @@ defmodule FFix.Encoder do
              | :ignore_err
              | :careful
              | :compliant
-             | :aggressive}
+             | :aggressive
+             | Command.option_callback()}
           | {:flags,
              integer()
              | String.t()
@@ -2053,7 +2225,8 @@ defmodule FFix.Encoder do
              | :ilme
              | :cgop
              | :output_corrupt
-             | :drop_changed}
+             | :drop_changed
+             | Command.option_callback()}
           | {:flags2,
              integer()
              | String.t()
@@ -2079,18 +2252,31 @@ defmodule FFix.Encoder do
              | :export_mvs
              | :skip_manual
              | :ass_ro_flush_noop
-             | :icc_profiles}
-          | {:global_quality, integer() | String.t()}
-          | {:level, integer() | String.t() | :unknown}
-          | {:maxrate, integer() | String.t()}
-          | {:minrate, integer() | String.t()}
-          | {:profile, integer() | String.t() | :unknown | :main10}
+             | :icc_profiles
+             | Command.option_callback()}
+          | {:global_quality, integer() | String.t() | Command.option_callback()}
+          | {:level, integer() | String.t() | :unknown | Command.option_callback()}
+          | {:maxrate, integer() | String.t() | Command.option_callback()}
+          | {:minrate, integer() | String.t() | Command.option_callback()}
+          | {:profile, integer() | String.t() | :unknown | :main10 | Command.option_callback()}
           | {:strict,
-             integer() | String.t() | :very | :strict | :normal | :unofficial | :experimental}
+             integer()
+             | String.t()
+             | :very
+             | :strict
+             | :normal
+             | :unofficial
+             | :experimental
+             | Command.option_callback()}
           | {:thread_type,
-             integer() | String.t() | [String.t() | :slice | :frame] | :slice | :frame}
-          | {:threads, integer() | String.t() | :auto}
-          | {:raw, [Command.av_option()]}
+             integer()
+             | String.t()
+             | [String.t() | :slice | :frame]
+             | :slice
+             | :frame
+             | Command.option_callback()}
+          | {:threads, integer() | String.t() | :auto | Command.option_callback()}
+          | {:raw, [Command.output_av_option()]}
   @doc """
   pcm_s16le: PCM signed 16-bit little-endian
 
@@ -2201,11 +2387,18 @@ defmodule FFix.Encoder do
     "threads" => [%{type: :int, constants: ["auto"]}]
   }
   @type ffv1_option ::
-          {:b, integer() | String.t()}
-          | {:bufsize, integer() | String.t()}
-          | {:coder, integer() | String.t() | :rice | :range_def | :range_tab | :ac}
-          | {:compression_level, integer() | String.t()}
-          | {:context, integer() | String.t()}
+          {:b, integer() | String.t() | Command.option_callback()}
+          | {:bufsize, integer() | String.t() | Command.option_callback()}
+          | {:coder,
+             integer()
+             | String.t()
+             | :rice
+             | :range_def
+             | :range_tab
+             | :ac
+             | Command.option_callback()}
+          | {:compression_level, integer() | String.t() | Command.option_callback()}
+          | {:context, integer() | String.t() | Command.option_callback()}
           | {:err_detect,
              integer()
              | String.t()
@@ -2227,7 +2420,8 @@ defmodule FFix.Encoder do
              | :ignore_err
              | :careful
              | :compliant
-             | :aggressive}
+             | :aggressive
+             | Command.option_callback()}
           | {:flags,
              integer()
              | String.t()
@@ -2263,7 +2457,8 @@ defmodule FFix.Encoder do
              | :ilme
              | :cgop
              | :output_corrupt
-             | :drop_changed}
+             | :drop_changed
+             | Command.option_callback()}
           | {:flags2,
              integer()
              | String.t()
@@ -2289,20 +2484,33 @@ defmodule FFix.Encoder do
              | :export_mvs
              | :skip_manual
              | :ass_ro_flush_noop
-             | :icc_profiles}
-          | {:g, integer() | String.t()}
-          | {:global_quality, integer() | String.t()}
-          | {:level, integer() | String.t() | :unknown}
-          | {:maxrate, integer() | String.t()}
-          | {:minrate, integer() | String.t()}
-          | {:profile, integer() | String.t() | :unknown | :main10}
-          | {:slicecrc, boolean() | :auto | String.t()}
+             | :icc_profiles
+             | Command.option_callback()}
+          | {:g, integer() | String.t() | Command.option_callback()}
+          | {:global_quality, integer() | String.t() | Command.option_callback()}
+          | {:level, integer() | String.t() | :unknown | Command.option_callback()}
+          | {:maxrate, integer() | String.t() | Command.option_callback()}
+          | {:minrate, integer() | String.t() | Command.option_callback()}
+          | {:profile, integer() | String.t() | :unknown | :main10 | Command.option_callback()}
+          | {:slicecrc, boolean() | :auto | String.t() | Command.option_callback()}
           | {:strict,
-             integer() | String.t() | :very | :strict | :normal | :unofficial | :experimental}
+             integer()
+             | String.t()
+             | :very
+             | :strict
+             | :normal
+             | :unofficial
+             | :experimental
+             | Command.option_callback()}
           | {:thread_type,
-             integer() | String.t() | [String.t() | :slice | :frame] | :slice | :frame}
-          | {:threads, integer() | String.t() | :auto}
-          | {:raw, [Command.av_option()]}
+             integer()
+             | String.t()
+             | [String.t() | :slice | :frame]
+             | :slice
+             | :frame
+             | Command.option_callback()}
+          | {:threads, integer() | String.t() | :auto | Command.option_callback()}
+          | {:raw, [Command.output_av_option()]}
   @doc """
   ffv1: FFmpeg video codec #1
 
@@ -2417,11 +2625,11 @@ defmodule FFix.Encoder do
     "threads" => [%{type: :int, constants: ["auto"]}]
   }
   @type png_option ::
-          {:b, integer() | String.t()}
-          | {:bufsize, integer() | String.t()}
-          | {:compression_level, integer() | String.t()}
-          | {:dpi, integer() | String.t()}
-          | {:dpm, integer() | String.t()}
+          {:b, integer() | String.t() | Command.option_callback()}
+          | {:bufsize, integer() | String.t() | Command.option_callback()}
+          | {:compression_level, integer() | String.t() | Command.option_callback()}
+          | {:dpi, integer() | String.t() | Command.option_callback()}
+          | {:dpm, integer() | String.t() | Command.option_callback()}
           | {:err_detect,
              integer()
              | String.t()
@@ -2443,7 +2651,8 @@ defmodule FFix.Encoder do
              | :ignore_err
              | :careful
              | :compliant
-             | :aggressive}
+             | :aggressive
+             | Command.option_callback()}
           | {:flags,
              integer()
              | String.t()
@@ -2479,7 +2688,8 @@ defmodule FFix.Encoder do
              | :ilme
              | :cgop
              | :output_corrupt
-             | :drop_changed}
+             | :drop_changed
+             | Command.option_callback()}
           | {:flags2,
              integer()
              | String.t()
@@ -2505,20 +2715,42 @@ defmodule FFix.Encoder do
              | :export_mvs
              | :skip_manual
              | :ass_ro_flush_noop
-             | :icc_profiles}
-          | {:g, integer() | String.t()}
-          | {:global_quality, integer() | String.t()}
-          | {:level, integer() | String.t() | :unknown}
-          | {:maxrate, integer() | String.t()}
-          | {:minrate, integer() | String.t()}
-          | {:pred, integer() | String.t() | :none | :sub | :up | :avg | :paeth | :mixed}
-          | {:profile, integer() | String.t() | :unknown | :main10}
+             | :icc_profiles
+             | Command.option_callback()}
+          | {:g, integer() | String.t() | Command.option_callback()}
+          | {:global_quality, integer() | String.t() | Command.option_callback()}
+          | {:level, integer() | String.t() | :unknown | Command.option_callback()}
+          | {:maxrate, integer() | String.t() | Command.option_callback()}
+          | {:minrate, integer() | String.t() | Command.option_callback()}
+          | {:pred,
+             integer()
+             | String.t()
+             | :none
+             | :sub
+             | :up
+             | :avg
+             | :paeth
+             | :mixed
+             | Command.option_callback()}
+          | {:profile, integer() | String.t() | :unknown | :main10 | Command.option_callback()}
           | {:strict,
-             integer() | String.t() | :very | :strict | :normal | :unofficial | :experimental}
+             integer()
+             | String.t()
+             | :very
+             | :strict
+             | :normal
+             | :unofficial
+             | :experimental
+             | Command.option_callback()}
           | {:thread_type,
-             integer() | String.t() | [String.t() | :slice | :frame] | :slice | :frame}
-          | {:threads, integer() | String.t() | :auto}
-          | {:raw, [Command.av_option()]}
+             integer()
+             | String.t()
+             | [String.t() | :slice | :frame]
+             | :slice
+             | :frame
+             | Command.option_callback()}
+          | {:threads, integer() | String.t() | :auto | Command.option_callback()}
+          | {:raw, [Command.output_av_option()]}
   @doc """
   png: PNG (Portable Network Graphics) image
 

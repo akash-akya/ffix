@@ -128,8 +128,8 @@ defmodule FFix.Filter.Builder do
     nodes = materialize_nodes(plans, id_map)
 
     graph_exports =
-      Enum.map(exports, fn {name, %Stream{plan: plan, output: output}} ->
-        %Export{name: name, ref: %Ref{node_id: id_map[plan.id], output: output}}
+      Enum.map(exports, fn {name, %Stream{plan: plan, output: output, media: media}} ->
+        %Export{name: name, ref: %Ref{node_id: id_map[plan.id], output: output}, media: media}
       end)
 
     graph_terminals = Enum.map(terminals, fn %Terminal{plan: plan} -> id_map[plan.id] end)

@@ -331,6 +331,62 @@ defmodule FFix.FFmpegIntegrationTest do
     assert probe_dimensions!(png_path) == {16, 16}
   end
 
+  test "HLS callbacks preserve rendition references after audio/video mappings are reordered", %{
+    tmp_dir: tmp_dir,
+    sample_video: sample_video
+  } do
+    command =
+      FFix.command(
+        sample_video,
+        fn source ->
+          [high, low] = Filter.split(FFix.video(source), outputs: 2)
+          high = Encoder.mpeg4(high, b: "300k", g: 1, threads: 1)
+
+          low =
+            low
+            |> Filter.scale(w: 80, h: 48)
+            |> Encoder.mpeg4(b: "150k", g: 1, threads: 1)
+
+          sound = Encoder.aac(FFix.audio(source), b: "64k", threads: 1)
+
+          Muxer.hls(Path.join(tmp_dir, "%v.m3u8"),
+            sources: [high: high, low: low, sound: sound],
+            # FFmpeg omits segments <= 0.5s from peak-bandwidth calculations.
+            hls_time: 1,
+            master_pl_name: "master.m3u8",
+            var_stream_map: fn streams ->
+              "#{streams.high.specifier},agroup:a,name:high " <>
+                "#{streams.low.specifier},agroup:a,name:low " <>
+                "#{streams.sound.specifier},agroup:a,name:audio,default:yes"
+            end
+          )
+        end,
+        global: ffmpeg_globals()
+      )
+
+    [output] = command.outputs
+    [high, low, sound] = output.mappings
+    output = %{output | mappings: [sound, low, high]}
+    command = %{command | outputs: [output]}
+    result = run_ffmpeg!(command)
+
+    master = File.read!(Path.join(tmp_dir, "master.m3u8"))
+    assert master =~ ~s(TYPE=AUDIO,GROUP-ID="group_a")
+    assert master =~ ~s(URI="audio.m3u8")
+
+    assert master =~ ~r/RESOLUTION=160x90[^\n]*\nhigh\.m3u8/,
+           result.shell <> "\n" <> result.stderr
+
+    assert master =~ ~r/RESOLUTION=80x48[^\n]*\nlow\.m3u8/
+    assert length(Regex.scan(~r/#EXT-X-MEDIA:TYPE=AUDIO/, master)) == 1
+
+    for name <- ["high", "low", "audio"] do
+      playlist = File.read!(Path.join(tmp_dir, "#{name}.m3u8"))
+      assert playlist =~ "#EXTINF:"
+      assert playlist =~ "#EXT-X-ENDLIST"
+    end
+  end
+
   test "runner parses ffmpeg logs and progress events" do
     parent = self()
     command = runner_observation_command()

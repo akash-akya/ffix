@@ -18,7 +18,11 @@ defmodule FFix.Graph.Export do
 
   @type name :: atom() | String.t()
 
-  @opaque t :: %__MODULE__{name: name() | nil, ref: term()}
+  @opaque t :: %__MODULE__{
+            name: name() | nil,
+            ref: term(),
+            media: :video | :audio | :unknown
+          }
 
-  defstruct [:name, :ref]
+  defstruct [:name, :ref, media: :unknown]
 end
