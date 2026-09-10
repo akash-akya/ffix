@@ -1,0 +1,35 @@
+http AVOptions:
+  -seekable          <boolean>    .D......... control seekability of connection (default auto)
+  -chunked_post      <boolean>    E.......... use chunked transfer-encoding for posts (default true)
+  -http_proxy        <string>     ED......... set HTTP proxy to tunnel through
+  -headers           <string>     ED......... set custom HTTP headers, can override built in default headers
+  -content_type      <string>     ED......... set a specific content type for the POST messages
+  -user_agent        <string>     .D......... override User-Agent header (default "Lavf/61.7.103")
+  -referer           <string>     .D......... override referer header
+  -multiple_requests <boolean>    ED......... use persistent connections (default false)
+  -post_data         <binary>     ED......... set custom HTTP post data
+  -cookies           <string>     .D......... set cookies to be sent in applicable future requests, use newline delimited Set-Cookie HTTP field value syntax
+  -icy               <boolean>    .D......... request ICY metadata (default true)
+  -auth_type         <int>        ED......... HTTP authentication type (from 0 to 1) (default none)
+     none            0            ED......... No auth method set, autodetect
+     basic           1            ED......... HTTP basic authentication
+  -send_expect_100   <boolean>    E.......... Force sending an Expect: 100-continue header for POST (default auto)
+  -location          <string>     ED......... The actual location of the data received
+  -offset            <int64>      .D......... initial byte offset (from 0 to I64_MAX) (default 0)
+  -end_offset        <int64>      .D......... try to limit the request to bytes preceding this offset (from 0 to I64_MAX) (default 0)
+  -method            <string>     ED......... Override the HTTP method or set the expected HTTP method from a client
+  -reconnect         <boolean>    .D......... auto reconnect after disconnect before EOF (default false)
+  -reconnect_at_eof  <boolean>    .D......... auto reconnect at EOF (default false)
+  -reconnect_on_network_error <boolean>    .D......... auto reconnect in case of tcp/tls error during connect (default false)
+  -reconnect_on_http_error <string>     .D......... list of http status codes to reconnect on
+  -reconnect_streamed <boolean>    .D......... auto reconnect streamed / non seekable streams (default false)
+  -reconnect_delay_max <int>        .D......... max reconnect delay in seconds after which to give up (from 0 to 4294) (default 120)
+  -reconnect_max_retries <int>        .D......... the max number of times to retry a connection (from -1 to INT_MAX) (default -1)
+  -reconnect_delay_total_max <int>        .D......... max total reconnect delay in seconds after which to give up (from 0 to 4294) (default 256)
+  -respect_retry_after <boolean>    .D......... respect the Retry-After header when retrying connections (default true)
+  -listen            <int>        ED......... listen on HTTP (from 0 to 2) (default 0)
+  -resource          <string>     E.......... The resource requested by a client
+  -reply_code        <int>        E.......... The http status code to return to a client (from INT_MIN to 599) (default 200)
+  -short_seek_size   <int>        .D......... Threshold to favor readahead over seek. (from 0 to INT_MAX) (default 0)
+  -max_redirects     <int>        .D......... Maximum number of redirects (from 0 to INT_MAX) (default 8)
+

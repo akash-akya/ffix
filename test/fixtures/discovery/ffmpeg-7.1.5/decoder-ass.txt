@@ -1,0 +1,2 @@
+Decoder ass [ASS (Advanced SubStation Alpha) subtitle]:
+    General capabilities: none

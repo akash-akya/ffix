@@ -1,0 +1,11 @@
+Decoder hevc [HEVC (High Efficiency Video Coding)]:
+    General capabilities: dr1 delay threads 
+    Threading capabilities: frame and slice
+    Supported hardware devices: cuda vaapi vdpau vulkan 
+HEVC decoder AVOptions:
+  -apply_defdispwin  <boolean>    .D.V....... Apply default display window from VUI (default false)
+  -strict-displaywin <boolean>    .D.V....... stricly apply default display window size (default false)
+  -view_ids          [<int>     ].D.V....... Array of view IDs that should be decoded and output; a single -1 to decode all views
+  -view_ids_available [<unsigned>].D.V..XR... Array of available view IDs is exported here
+  -view_pos_available [<unsigned>].D.V..XR... Array of view positions for view_ids_available is exported here, as AVStereo3DView
+

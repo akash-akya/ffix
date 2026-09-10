@@ -1,0 +1,14 @@
+Codecs:
+ D..... = Decoding supported
+ .E.... = Encoding supported
+ ..V... = Video codec
+ ..A... = Audio codec
+ ..S... = Subtitle codec
+ ..D... = Data codec
+ ..T... = Attachment codec
+ ...I.. = Intra frame-only codec
+ ....L. = Lossy compression
+ .....S = Lossless compression
+ -------
+ DEV.LS h264                 H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10 (decoders: h264 h264_v4l2m2m h264_qsv libopenh264 h264_cuvid) (encoders: libx264 libx264rgb libopenh264 h264_amf h264_nvenc h264_qsv h264_v4l2m2m h264_vaapi h264_vulkan)
+ DEA.L. aac                  AAC (Advanced Audio Coding) (decoders: aac aac_fixed)
