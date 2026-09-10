@@ -39,9 +39,15 @@ defmodule FFix.Command do
       #=>   "out.mp4"
       #=> ]
 
-  Output option keys are rendered as ffmpeg CLI option names. For options with
-  stream specifiers, use an atom or string key that already contains the
-  specifier, for example `:"c:v"` or `"metadata:s:a:0"`.
+  Use `FFix.Decoder`, `FFix.Encoder`, `FFix.Muxer`, and `FFix.Command.Mapping`
+  for structured configuration. Decoder settings belong to input declarations;
+  encoding belongs to ordered output mappings; muxer settings belong to outputs.
+  This path assigns stream indexes without discovery or media probing.
+
+  Raw option keys remain ffmpeg CLI option names. For raw options with stream
+  specifiers, use an atom or string key that already contains the specifier,
+  for example `:"c:v"` or `"metadata:s:a:0"`. Do not use raw options to override
+  structured configuration or alter the mapping order it relies on.
   """
   @moduledoc groups: [
                "Construction",
@@ -53,14 +59,25 @@ defmodule FFix.Command do
              ]
 
   alias __MODULE__.Input
+  alias __MODULE__.Mapping
   alias __MODULE__.Output
+  alias FFix.Decoder
+  alias FFix.Demuxer
+  alias FFix.Encoder
+  alias FFix.Muxer
   alias FFix.Graph
   alias FFix.Graph.Export
   alias FFix.Graph.InputRef
   alias FFix.Stream
 
   @type option :: {atom() | String.t(), term()}
+  @type av_option :: {atom() | String.t(), String.t() | atom() | number()}
   @type source :: Export.t() | Stream.t() | atom() | non_neg_integer()
+  @type mapping :: Mapping.t() | source()
+
+  @codec_selection_options ~w(c codec vcodec acodec scodec dcodec)
+  @graph_options ~w(filter_complex filter_complex_script lavfi)
+  @mapping_options ~w(i map map_channel attach vn an sn dn) ++ @graph_options
 
   @type t :: %__MODULE__{
           global_options: [option()],
@@ -146,6 +163,10 @@ defmodule FFix.Command do
 
       src = FFix.Command.input("input.mp4", ss: "00:00:03")
 
+  `demuxer:` accepts an `FFix.Demuxer` configuration and `decoders:` accepts a map
+  of indexed selectors to `FFix.Decoder` values. Remaining options are raw input
+  CLI controls.
+
   Called as `input(command, source)`, it appends an input without options and
   returns the updated command:
 
@@ -161,7 +182,13 @@ defmodule FFix.Command do
       raise ArgumentError, "input labels are not supported; name inputs in command inputs instead"
     end
 
-    %Input{id: make_ref(), source: source, options: options}
+    %Input{
+      id: make_ref(),
+      source: source,
+      options: Keyword.drop(options, [:demuxer, :decoders]),
+      demuxer: Keyword.get(options, :demuxer),
+      decoders: Keyword.get(options, :decoders, %{})
+    }
   end
 
   def input(source, options) do
@@ -205,9 +232,12 @@ defmodule FFix.Command do
       src = FFix.Command.input("input.mp4")
       FFix.Command.output("copy.mp4", [src[:video], src[:audio]], c: :copy)
 
-  Output options are rendered after `-map` entries and before the target.
+  Bare sources become unconfigured `FFix.Command.Mapping` values. Pass mappings
+  directly to configure each output occurrence independently. Pass `muxer:` to
+  attach a separate `FFix.Muxer` configuration. Remaining output options are raw
+  CLI controls rendered after `-map` entries and before the target.
   """
-  @spec output(Output.target(), source() | [source()]) :: Output.t()
+  @spec output(Output.target(), mapping() | [mapping()]) :: Output.t()
   def output(target, sources), do: output(target, sources, [])
 
   @doc group: "Outputs"
@@ -222,12 +252,25 @@ defmodule FFix.Command do
   Called as `output(command, target, sources)`, it appends an output without
   options and returns the updated command.
   """
-  @spec output(Output.target(), source() | [source()], keyword()) :: Output.t()
-  @spec output(t(), Output.target(), source() | [source()]) :: t()
+  @spec output(Output.target(), mapping() | [mapping()], keyword()) :: Output.t()
+  @spec output(t(), Output.target(), mapping() | [mapping()]) :: t()
   def output(%__MODULE__{} = command, target, sources), do: output(command, target, sources, [])
 
   def output(target, sources, options) when is_list(options) do
-    %Output{target: target, sources: List.wrap(sources), options: options}
+    mappings =
+      Enum.map(List.wrap(sources), fn source ->
+        case source do
+          %Mapping{} = mapping -> mapping
+          source -> %Mapping{source: source}
+        end
+      end)
+
+    %Output{
+      target: target,
+      mappings: mappings,
+      muxer: Keyword.get(options, :muxer),
+      options: Keyword.drop(options, [:muxer])
+    }
   end
 
   def output(target, sources, options) do
@@ -243,7 +286,7 @@ defmodule FFix.Command do
       |> FFix.Command.input("input.mp4")
       |> FFix.Command.output("copy.mp4", 0, c: :copy)
   """
-  @spec output(t(), Output.target(), source() | [source()], keyword()) :: t()
+  @spec output(t(), Output.target(), mapping() | [mapping()], keyword()) :: t()
   def output(%__MODULE__{} = command, target, sources, options) when is_list(options) do
     %{command | outputs: command.outputs ++ [output(target, sources, options)]}
   end
@@ -262,9 +305,15 @@ defmodule FFix.Command do
   """
   @spec validate!(t()) :: t()
   def validate!(%__MODULE__{} = command) do
-    Enum.each(command.inputs, fn
-      %Input{} -> :ok
-      other -> raise ArgumentError, "invalid command input: #{inspect(other)}"
+    Enum.each(command.inputs, fn input ->
+      case input do
+        %Input{} ->
+          validate_demuxer!(input)
+          validate_decoders!(input)
+
+        other ->
+          raise ArgumentError, "invalid command input: #{inspect(other)}"
+      end
     end)
 
     input_index_map = input_index_map!(command.inputs)
@@ -287,16 +336,25 @@ defmodule FFix.Command do
           raise ArgumentError, "invalid command graph: #{inspect(other)}"
       end
 
-    Enum.each(command.outputs, fn
-      %Output{sources: []} ->
-        raise ArgumentError, "output requires at least one source"
-
-      %Output{sources: sources} ->
-        Enum.each(sources, &validate_source!(&1, graph, input_count, input_index_map))
-
-      other ->
-        raise ArgumentError, "invalid command output: #{inspect(other)}"
+    Enum.each(command.outputs, fn output ->
+      case output do
+        %Output{} -> validate_output!(output, graph, input_count, input_index_map)
+        other -> raise ArgumentError, "invalid command output: #{inspect(other)}"
+      end
     end)
+
+    configured_mappings? =
+      Enum.any?(command.outputs, fn output ->
+        Enum.any?(output.mappings, &(&1.encoding != nil))
+      end)
+
+    if configured_mappings? do
+      validate_raw_options!(command.global_options, ["i" | @graph_options], "configured mappings")
+
+      Enum.each(command.inputs, fn input ->
+        validate_raw_options!(input.options, ["i" | @graph_options], "configured mappings")
+      end)
+    end
 
     validate_graph_export_mappings!(command.outputs, graph)
     command
@@ -388,6 +446,222 @@ defmodule FFix.Command do
     raise ArgumentError, "command outputs must be a list"
   end
 
+  defp validate_demuxer!(%Input{demuxer: demuxer, options: options}) do
+    case demuxer do
+      nil ->
+        :ok
+
+      %Demuxer{} ->
+        validate_component!(demuxer)
+        reserved = ["f" | component_option_names([demuxer])]
+        validate_raw_options!(options, reserved, "a structured demuxer")
+
+      other ->
+        raise ArgumentError, "invalid demuxer configuration: #{inspect(other)}"
+    end
+  end
+
+  defp validate_decoders!(%Input{decoders: decoders, options: options}) do
+    unless is_map(decoders) and not is_struct(decoders) do
+      raise ArgumentError, "input decoders must be a map of indexed selectors to Decoder values"
+    end
+
+    Enum.each(decoders, fn {selector, decoder} ->
+      validate_decoder!(selector, decoder)
+    end)
+
+    if map_size(decoders) > 0 do
+      configured_options = component_option_names(Map.values(decoders))
+      reserved = @codec_selection_options ++ configured_options
+      validate_raw_options!(options, reserved, "structured decoding")
+    end
+  end
+
+  defp validate_output!(output, graph, input_count, input_index_map) do
+    unless is_list(output.mappings) do
+      raise ArgumentError, "output mappings must be a list of Mapping values"
+    end
+
+    if output.mappings == [] do
+      raise ArgumentError, "output requires at least one source"
+    end
+
+    Enum.each(output.mappings, fn mapping ->
+      case mapping do
+        %Mapping{source: source, encoding: encoding} ->
+          validate_source!(source, graph, input_count, input_index_map)
+          validate_encoding!(encoding, source, graph)
+
+        other ->
+          raise ArgumentError, "invalid output mapping: #{inspect(other)}"
+      end
+    end)
+
+    encodings = Enum.map(output.mappings, & &1.encoding)
+
+    if Enum.any?(encodings, &(&1 != nil)) do
+      Enum.each(output.mappings, fn mapping ->
+        unless single_source?(mapping.source, graph) do
+          raise ArgumentError,
+                "configured encoding requires every output mapping to select one stream; use indexed inputs or filtered exports"
+        end
+      end)
+
+      configured_options = component_option_names(encodings)
+      reserved = @codec_selection_options ++ @mapping_options ++ configured_options
+      validate_raw_options!(output.options, reserved, "structured encoding")
+    end
+
+    case output.muxer do
+      nil ->
+        :ok
+
+      %Muxer{} = muxer ->
+        validate_component!(muxer)
+        reserved = ["f" | component_option_names([muxer])]
+        validate_raw_options!(output.options, reserved, "a structured muxer")
+
+      other ->
+        raise ArgumentError, "invalid muxer configuration: #{inspect(other)}"
+    end
+  end
+
+  defp validate_encoding!(encoding, source, graph) do
+    case encoding do
+      nil ->
+        :ok
+
+      :copy ->
+        if source_node(source, graph).kind == :filter do
+          raise ArgumentError, "cannot copy a filtered source; use an encoder"
+        end
+
+      %Encoder{} = encoder ->
+        validate_component!(encoder)
+
+      other ->
+        raise ArgumentError, "invalid encoding configuration: #{inspect(other)}"
+    end
+  end
+
+  defp single_source?(source, graph) do
+    case source_node(source, graph) do
+      %{kind: :filter} -> true
+      %{kind: :input, input_ref: input_ref} -> single_selector?(input_ref.selector)
+    end
+  end
+
+  defp source_node(source, graph) do
+    case source do
+      %Stream{plan: plan} ->
+        plan
+
+      %Export{ref: ref} ->
+        Map.fetch!(graph.nodes, ref.node_id)
+
+      name_or_index ->
+        export = Graph.export!(graph, name_or_index)
+        Map.fetch!(graph.nodes, export.ref.node_id)
+    end
+  end
+
+  defp single_selector?(selector) do
+    case selector do
+      {media, index} when media in [:video, :audio] and is_integer(index) and index >= 0 -> true
+      _other -> false
+    end
+  end
+
+  @doc false
+  def validate_decoder!(selector, decoder) do
+    unless single_selector?(selector) do
+      raise ArgumentError,
+            "decoder selector must be {:video, index} or {:audio, index}, got: #{inspect(selector)}"
+    end
+
+    case decoder do
+      %Decoder{} -> validate_component!(decoder)
+      other -> raise ArgumentError, "invalid decoder configuration: #{inspect(other)}"
+    end
+  end
+
+  @doc false
+  def validate_component!(component) do
+    unless is_nil(component.name) or (is_binary(component.name) and component.name != "") do
+      raise ArgumentError, "component name must be a non-empty string or nil"
+    end
+
+    if match?(%Encoder{name: "copy"}, component) do
+      raise ArgumentError, "copy is a mapping mode; use encoding: :copy"
+    end
+
+    unless is_list(component.options) do
+      raise ArgumentError, "component options must be an ordered list of name/value pairs"
+    end
+
+    Enum.each(component.options, fn option ->
+      case option do
+        {key, value} when is_atom(key) or is_binary(key) ->
+          validate_av_option!(encode_option_key(key), value)
+
+        other ->
+          raise ArgumentError, "invalid component option: #{inspect(other)}"
+      end
+    end)
+
+    component
+  end
+
+  defp validate_av_option!(name, value) do
+    invalid_name? =
+      name == "" or String.starts_with?(name, "-") or
+        String.contains?(name, [":", " ", "\t", "\n", "\r", "\0"])
+
+    if invalid_name? do
+      raise ArgumentError,
+            "component option names must be unscoped names without leading dashes, got: #{inspect(name)}"
+    end
+
+    if name in (@codec_selection_options ++ @mapping_options ++ ["f"]) do
+      raise ArgumentError, "#{inspect(name)} is a CLI control, not a component AVOption"
+    end
+
+    scalar? = is_binary(value) or is_number(value) or (is_atom(value) and not is_nil(value))
+
+    unless scalar? do
+      raise ArgumentError,
+            "component option values must be strings, atoms, numbers, or booleans; use strings for compound values, got: #{inspect(value)}"
+    end
+  end
+
+  defp component_option_names(components) do
+    Enum.flat_map(components, fn component ->
+      case component do
+        nil -> []
+        :copy -> []
+        %{options: options} -> Enum.map(options, fn {key, _value} -> encode_option_key(key) end)
+      end
+    end)
+  end
+
+  defp validate_raw_options!(options, reserved, owner) do
+    Enum.each(options, fn {key, _value} ->
+      name = encode_option_key(key)
+      [base_name | _specifier] = String.split(name, ":", parts: 2)
+
+      canonical_name =
+        case base_name do
+          "ab" -> "b"
+          "vb" -> "b"
+          name -> name
+        end
+
+      if base_name in reserved or canonical_name in reserved do
+        raise ArgumentError, "raw option #{inspect(name)} cannot be combined with #{owner}"
+      end
+    end)
+  end
+
   defp validate_source!(%Export{} = export, nil, _input_count, _input_index_map) do
     raise ArgumentError, "graph export #{inspect(export.name || export.ref)} requires a graph"
   end
@@ -425,9 +699,9 @@ defmodule FFix.Command do
 
   defp validate_graph_export_mappings!(outputs, %Graph{} = graph) do
     export_counts =
-      Enum.reduce(outputs, %{}, fn %Output{sources: sources}, counts ->
-        Enum.reduce(sources, counts, fn source, counts ->
-          case mapped_filter_export(source, graph) do
+      Enum.reduce(outputs, %{}, fn %Output{mappings: mappings}, counts ->
+        Enum.reduce(mappings, counts, fn mapping, counts ->
+          case mapped_filter_export(mapping.source, graph) do
             nil -> counts
             %Export{ref: ref} -> Map.update(counts, ref_key(ref), 1, &(&1 + 1))
           end
@@ -476,8 +750,21 @@ defmodule FFix.Command do
 
   defp ref_key(%FFix.Graph.Ref{node_id: node_id, output: output}), do: {node_id, output}
 
-  defp input_to_argv(%Input{source: source, options: options}) do
-    encode_options(options) ++ ["-i", encode_input_source(source)]
+  defp input_to_argv(%Input{
+         source: source,
+         options: options,
+         demuxer: demuxer,
+         decoders: decoders
+       }) do
+    decoder_options =
+      decoders
+      |> Enum.sort_by(fn {selector, _decoder} -> selector end)
+      |> Enum.flat_map(fn {selector, decoder} ->
+        component_to_argv(decoder, encode_stream_selector(selector))
+      end)
+
+    encode_options(options) ++
+      component_to_argv(demuxer, nil) ++ decoder_options ++ ["-i", encode_input_source(source)]
   end
 
   defp graph_to_argv(nil), do: []
@@ -485,17 +772,32 @@ defmodule FFix.Command do
   defp graph_to_argv(%{graph: graph}), do: ["-filter_complex", graph]
 
   defp output_to_argv(
-         %Output{target: target, sources: sources, options: options},
+         %Output{target: target, mappings: mappings, muxer: muxer, options: options},
          graph,
          render,
          input_count,
          input_index_map
        ) do
-    # Outputs read in terms of graph exports and input streams, but argv still needs
-    # ffmpeg's explicit `-map` syntax at the boundary.
-    Enum.flat_map(sources, fn source ->
-      ["-map", map_source(source, graph, render, input_count, input_index_map)]
-    end) ++
+    maps =
+      Enum.flat_map(mappings, fn mapping ->
+        source = map_source(mapping.source, graph, render, input_count, input_index_map)
+        ["-map", source]
+      end)
+
+    encoding_options =
+      mappings
+      |> Enum.with_index()
+      |> Enum.flat_map(fn {mapping, index} ->
+        case mapping.encoding do
+          nil -> []
+          :copy -> ["-c:#{index}", "copy"]
+          %Encoder{} = encoder -> component_to_argv(encoder, Integer.to_string(index))
+        end
+      end)
+
+    maps ++
+      encoding_options ++
+      component_to_argv(muxer, nil) ++
       encode_options(options) ++
       [encode_output_target(target)]
   end
@@ -602,6 +904,41 @@ defmodule FFix.Command do
           "invalid output source: #{inspect(stream)}; only direct input streams can be mapped, export graph outputs instead"
   end
 
+  defp component_to_argv(component, selector) do
+    case component do
+      nil ->
+        []
+
+      %{name: name, options: options} ->
+        selection_option =
+          case component do
+            %Muxer{} -> "f"
+            %Demuxer{} -> "f"
+            %Decoder{} -> "c"
+            %Encoder{} -> "c"
+          end
+
+        suffix =
+          case selector do
+            nil -> ""
+            selector -> ":#{selector}"
+          end
+
+        selection =
+          case name do
+            nil -> []
+            name -> ["-#{selection_option}#{suffix}", name]
+          end
+
+        av_options =
+          Enum.flat_map(options, fn {key, value} ->
+            ["-#{encode_option_key(key)}#{suffix}", encode_option_value(value)]
+          end)
+
+        selection ++ av_options
+    end
+  end
+
   defp encode_options(options) do
     Enum.flat_map(options, &encode_option/1)
   end
@@ -640,18 +977,22 @@ defmodule FFix.Command do
   defp encode_output_target({:url, url}) when is_binary(url), do: url
   defp encode_output_target(target) when is_binary(target), do: target
 
-  defp encode_input_ref(%InputRef{input: input, selector: :input}), do: "#{input}"
-  defp encode_input_ref(%InputRef{input: input, selector: :video}), do: "#{input}:v"
-  defp encode_input_ref(%InputRef{input: input, selector: :audio}), do: "#{input}:a"
+  defp encode_input_ref(%InputRef{input: input, selector: selector}) do
+    case selector do
+      :input -> to_string(input)
+      selector -> "#{input}:#{encode_stream_selector(selector)}"
+    end
+  end
 
-  defp encode_input_ref(%InputRef{input: input, selector: {:video, stream}}),
-    do: "#{input}:v:#{stream}"
-
-  defp encode_input_ref(%InputRef{input: input, selector: {:audio, stream}}),
-    do: "#{input}:a:#{stream}"
-
-  defp encode_input_ref(%InputRef{input: input, selector: {:raw, selector}}),
-    do: "#{input}:#{selector}"
+  defp encode_stream_selector(selector) do
+    case selector do
+      :video -> "v"
+      :audio -> "a"
+      {:video, index} -> "v:#{index}"
+      {:audio, index} -> "a:#{index}"
+      {:raw, selector} -> selector
+    end
+  end
 
   defp encode_float_option_value(value) do
     value

@@ -43,7 +43,7 @@ defmodule FFix.MixProject do
     [
       maintainers: ["Akash Hiremath"],
       licenses: ["MIT"],
-      files: ~w(lib livebooks/intro.livemd mix.exs README.md LICENSE),
+      files: ~w(lib priv livebooks/intro.livemd mix.exs README.md LICENSE),
       links: %{
         GitHub: @scm_url,
         ffmpeg: "https://ffmpeg.org"
@@ -75,7 +75,12 @@ defmodule FFix.MixProject do
         Commands: [
           FFix.Command,
           FFix.Command.Input,
-          FFix.Command.Output
+          FFix.Command.Mapping,
+          FFix.Command.Output,
+          FFix.Decoder,
+          FFix.Demuxer,
+          FFix.Encoder,
+          FFix.Muxer
         ],
         Discovery: [
           FFix.Discovery,

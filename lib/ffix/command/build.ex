@@ -3,6 +3,7 @@ defmodule FFix.Command.Build do
 
   alias FFix.Command
   alias FFix.Command.Input
+  alias FFix.Command.Mapping
   alias FFix.Command.Output
   alias FFix.Filter.Builder
   alias FFix.Graph
@@ -25,11 +26,25 @@ defmodule FFix.Command.Build do
     )
   end
 
-  @spec command(
-          Input.source() | Input.t() | [Input.source() | Input.t()] | keyword() | map(),
-          function(),
-          function()
-        ) :: Command.t()
+  @spec command(term(), (term() -> Output.t() | [Output.t()])) :: Command.t()
+  def command(inputs, outputs_fun), do: command(inputs, outputs_fun, [])
+
+  @spec command(term(), function(), function() | keyword()) :: Command.t()
+  def command(inputs, outputs_fun, options)
+      when is_function(outputs_fun, 1) and is_list(options) do
+    validate_callback_command_options!(options)
+    {command_inputs, input_value} = normalize_input_shape!(inputs)
+    outputs = normalize_output_result!(outputs_fun.(input_value))
+    {graph, outputs} = export_output_sources(outputs)
+
+    Command.new(
+      global: Keyword.get(options, :global, []),
+      inputs: command_inputs,
+      graph: graph,
+      outputs: outputs
+    )
+  end
+
   def command(inputs, graph_fun, outputs_fun)
       when is_function(graph_fun, 1) and is_function(outputs_fun) do
     build_command([], inputs, graph_fun, outputs_fun)
@@ -93,6 +108,50 @@ defmodule FFix.Command.Build do
       outputs: command_outputs
     )
   end
+
+  defp export_output_sources(outputs) do
+    streams =
+      outputs
+      |> Enum.flat_map(& &1.mappings)
+      |> Enum.flat_map(fn mapping ->
+        case mapping do
+          %Mapping{source: %Stream{plan: %{kind: :filter}} = source} -> [source]
+          %Mapping{} -> []
+          other -> raise ArgumentError, "invalid output mapping: #{inspect(other)}"
+        end
+      end)
+      |> Enum.uniq_by(&stream_key/1)
+
+    case streams do
+      [] ->
+        {nil, outputs}
+
+      streams ->
+        graph = Builder.graph(outputs: streams)
+        exports = Enum.zip(streams, Graph.exports(graph))
+        exports = Map.new(exports, fn {stream, export} -> {stream_key(stream), export} end)
+
+        outputs =
+          Enum.map(outputs, fn output ->
+            mappings = Enum.map(output.mappings, &export_mapping(&1, exports))
+            %{output | mappings: mappings}
+          end)
+
+        {graph, outputs}
+    end
+  end
+
+  defp export_mapping(mapping, exports) do
+    case mapping.source do
+      %Stream{plan: %{kind: :filter}} = source ->
+        %{mapping | source: Map.fetch!(exports, stream_key(source))}
+
+      _source ->
+        mapping
+    end
+  end
+
+  defp stream_key(%Stream{plan: plan, output: output}), do: {plan.id, output}
 
   defp normalize_input_shape!(%Input{} = input) do
     input = normalize_input_value!(:input, input)
