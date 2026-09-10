@@ -52,7 +52,16 @@ defmodule FFix.Options do
             {name, value}
 
           schema ->
-            {name, normalize_value!(value, option_spec!(schema, name, context), name, context)}
+            variants = option_spec!(schema, name, context)
+
+            normalized =
+              if is_function(value, 1) do
+                fn streams -> normalize_value!(value.(streams), variants, name, context) end
+              else
+                normalize_value!(value, variants, name, context)
+              end
+
+            {name, normalized}
         end
       end)
 
@@ -65,6 +74,25 @@ defmodule FFix.Options do
     end
 
     result
+  end
+
+  @doc false
+  def resolve!(options, streams) do
+    Enum.map(options, fn {name, value} ->
+      resolved =
+        if is_function(value, 1) do
+          value.(streams)
+        else
+          value
+        end
+
+      if is_function(resolved) do
+        raise ArgumentError,
+              "option callback #{inspect(name)} must return a value, not another function"
+      end
+
+      {name, resolved}
+    end)
   end
 
   defp option_spec!(schema, name, context) do

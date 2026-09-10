@@ -144,13 +144,13 @@ defmodule FFix.Graph.Parse do
     exports =
       Enum.flat_map(export_candidates, fn
         %{label: nil, ref: ref} ->
-          [%Export{name: nil, ref: ref}]
+          [%Export{name: nil, ref: ref, media: export_media(ref, state.nodes)}]
 
         %{label: label, ref: ref} ->
           if MapSet.member?(state.used_labels, label) do
             []
           else
-            [%Export{name: export_name(label), ref: ref}]
+            [%Export{name: export_name(label), ref: ref, media: export_media(ref, state.nodes)}]
           end
       end)
 
@@ -161,6 +161,40 @@ defmodule FFix.Graph.Parse do
       terminals: terminals,
       settings: settings
     }
+  end
+
+  defp export_media(%Ref{node_id: node_id, output: output}, nodes) do
+    node = Map.fetch!(nodes, node_id)
+
+    case node do
+      %Node{kind: :input, input_ref: input_ref} ->
+        selector_media(input_ref.selector)
+
+      %Node{name: :concat, args: args} ->
+        specs = Metadata.filter_spec(:concat)
+        video_outputs = integer_arg(args, "v") || Metadata.option_default(specs[:v]) || 0
+
+        if output < video_outputs do
+          :video
+        else
+          :audio
+        end
+
+      %Node{name: :split} ->
+        :video
+
+      %Node{name: :asplit} ->
+        :audio
+
+      %Node{name: name} ->
+        outputs = Metadata.filter!(name).outputs |> Enum.reject(&(&1 == :|))
+
+        case Enum.at(outputs, output) do
+          :V -> :video
+          :A -> :audio
+          _dynamic_or_unknown -> :unknown
+        end
+    end
   end
 
   defp resolve_input(label, state) do

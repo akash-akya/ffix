@@ -90,7 +90,7 @@ defmodule FFix.Helpers.Generator do
   defp helper(entry, name, schema, options, version) do
     schema_name = "#{name}_schema"
     type_name = "#{name}_option"
-    declarations = option_types(schema) ++ special_types(entry.kind)
+    declarations = option_types(schema, entry.kind) ++ special_types(entry.kind)
     option_type = Enum.join(declarations, " | ")
     doc = documentation(entry, name, options, version)
 
@@ -147,12 +147,18 @@ defmodule FFix.Helpers.Generator do
     header <> body <> "\n"
   end
 
-  defp option_types(schema) do
+  defp option_types(schema, kind) do
     schema
     |> Enum.sort_by(fn {name, _variants} -> name end)
     |> Enum.map(fn {name, variants} ->
       types = variants |> Enum.flat_map(&value_types/1) |> Enum.uniq()
-      "{:#{inspect(name)}, #{Enum.join(types, " | ")}}"
+      value_type = Enum.join(types, " | ")
+
+      if kind in [:encoder, :muxer] do
+        "{:#{inspect(name)}, #{value_type} | Command.option_callback()}"
+      else
+        "{:#{inspect(name)}, #{value_type}}"
+      end
     end)
   end
 
@@ -197,15 +203,20 @@ defmodule FFix.Helpers.Generator do
   end
 
   defp special_types(kind) do
-    common = ["{:raw, [Command.av_option()]}"]
+    common =
+      if kind in [:encoder, :muxer] do
+        ["{:raw, [Command.output_av_option()]}"]
+      else
+        ["{:raw, [Command.av_option()]}"]
+      end
 
     case kind do
       :muxer ->
         common ++
           [
-            "{:video, Command.mapping() | [Command.mapping()]}",
-            "{:audio, Command.mapping() | [Command.mapping()]}",
-            "{:sources, [Command.mapping()]}",
+            "{:video, Command.binding() | [Command.binding()]}",
+            "{:audio, Command.binding() | [Command.binding()]}",
+            "{:sources, [Command.binding()]}",
             "{:output_options, [Command.option()]}"
           ]
 

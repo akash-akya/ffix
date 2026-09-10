@@ -65,15 +65,22 @@ defmodule FFix.Command do
   alias FFix.Demuxer
   alias FFix.Encoder
   alias FFix.Muxer
+  alias FFix.Options
   alias FFix.Graph
   alias FFix.Graph.Export
   alias FFix.Graph.InputRef
   alias FFix.Stream
 
   @type option :: {atom() | String.t(), term()}
-  @type av_option :: {atom() | String.t(), String.t() | atom() | number()}
+  @type av_value :: String.t() | atom() | number()
+  @type av_option :: {atom() | String.t(), av_value()}
+  @type stream_info :: %{index: non_neg_integer(), specifier: String.t()}
+  @type streams :: %{atom() => stream_info()}
+  @type option_callback :: (streams() -> term())
+  @type output_av_option :: {atom() | String.t(), av_value() | option_callback()}
   @type source :: Export.t() | Stream.t() | atom() | non_neg_integer()
   @type mapping :: Mapping.t() | source()
+  @type binding :: mapping() | {atom(), mapping()}
 
   @codec_selection_options ~w(c codec vcodec acodec scodec dcodec)
   @graph_options ~w(filter_complex filter_complex_script lavfi)
@@ -236,8 +243,12 @@ defmodule FFix.Command do
   directly to configure each output occurrence independently. Pass `muxer:` to
   attach a separate `FFix.Muxer` configuration. Remaining output options are raw
   CLI controls rendered after `-map` entries and before the target.
+
+  Ordered `{name, source_or_mapping}` pairs assign output-local names. Output
+  option callbacks receive a map from those names to `t:stream_info/0` values.
+  See `FFix.Command.Output` for callback timing and cardinality requirements.
   """
-  @spec output(Output.target(), mapping() | [mapping()]) :: Output.t()
+  @spec output(Output.target(), binding() | [binding()]) :: Output.t()
   def output(target, sources), do: output(target, sources, [])
 
   @doc group: "Outputs"
@@ -252,16 +263,25 @@ defmodule FFix.Command do
   Called as `output(command, target, sources)`, it appends an output without
   options and returns the updated command.
   """
-  @spec output(Output.target(), mapping() | [mapping()], keyword()) :: Output.t()
-  @spec output(t(), Output.target(), mapping() | [mapping()]) :: t()
+  @spec output(Output.target(), binding() | [binding()], keyword()) :: Output.t()
+  @spec output(t(), Output.target(), binding() | [binding()]) :: t()
   def output(%__MODULE__{} = command, target, sources), do: output(command, target, sources, [])
 
   def output(target, sources, options) when is_list(options) do
     mappings =
       Enum.map(List.wrap(sources), fn source ->
         case source do
-          %Mapping{} = mapping -> mapping
-          source -> %Mapping{source: source}
+          {name, %Mapping{} = mapping} when is_atom(name) and name not in [nil, true, false] ->
+            %{mapping | name: name}
+
+          {name, source} when is_atom(name) and name not in [nil, true, false] ->
+            %Mapping{source: source, name: name}
+
+          %Mapping{} = mapping ->
+            mapping
+
+          source ->
+            %Mapping{source: source}
         end
       end)
 
@@ -286,7 +306,7 @@ defmodule FFix.Command do
       |> FFix.Command.input("input.mp4")
       |> FFix.Command.output("copy.mp4", 0, c: :copy)
   """
-  @spec output(t(), Output.target(), mapping() | [mapping()], keyword()) :: t()
+  @spec output(t(), Output.target(), binding() | [binding()], keyword()) :: t()
   def output(%__MODULE__{} = command, target, sources, options) when is_list(options) do
     %{command | outputs: command.outputs ++ [output(target, sources, options)]}
   end
@@ -301,13 +321,18 @@ defmodule FFix.Command do
   Validates command structure.
 
   This checks declared inputs, graph references, output sources, and filtered
-  graph export mappings. It does not run ffmpeg or inspect media files.
+  graph export mappings. It does not run ffmpeg, inspect media files, or evaluate
+  deferred output option callbacks. Their returned values are checked during
+  serialization.
   """
   @spec validate!(t()) :: t()
   def validate!(%__MODULE__{} = command) do
+    validate_option_callbacks!(command.global_options, false)
+
     Enum.each(command.inputs, fn input ->
       case input do
         %Input{} ->
+          validate_option_callbacks!(input.options, false)
           validate_demuxer!(input)
           validate_decoders!(input)
 
@@ -345,7 +370,7 @@ defmodule FFix.Command do
 
     configured_mappings? =
       Enum.any?(command.outputs, fn output ->
-        Enum.any?(output.mappings, &(&1.encoding != nil))
+        Enum.any?(output.mappings, &(&1.encoding != nil)) or output_callbacks?(output)
       end)
 
     if configured_mappings? do
@@ -486,6 +511,9 @@ defmodule FFix.Command do
       raise ArgumentError, "output requires at least one source"
     end
 
+    validate_mapping_names!(output.mappings)
+    validate_option_callbacks!(output.options, true)
+
     Enum.each(output.mappings, fn mapping ->
       case mapping do
         %Mapping{source: source, encoding: encoding} ->
@@ -523,6 +551,112 @@ defmodule FFix.Command do
 
       other ->
         raise ArgumentError, "invalid muxer configuration: #{inspect(other)}"
+    end
+
+    if output_callbacks?(output) do
+      validate_raw_options!(output.options, @mapping_options, "output option callbacks")
+      output_streams!(output, graph)
+    end
+  end
+
+  defp validate_mapping_names!(mappings) do
+    Enum.reduce(mappings, MapSet.new(), fn mapping, names ->
+      case mapping do
+        %Mapping{name: nil} ->
+          names
+
+        %Mapping{name: name} when is_atom(name) and name not in [true, false] ->
+          if MapSet.member?(names, name) do
+            raise ArgumentError, "duplicate output mapping name: #{inspect(name)}"
+          end
+
+          MapSet.put(names, name)
+
+        %Mapping{name: name} ->
+          raise ArgumentError, "output mapping name must be an atom or nil, got: #{inspect(name)}"
+
+        other ->
+          raise ArgumentError, "invalid output mapping: #{inspect(other)}"
+      end
+    end)
+  end
+
+  defp validate_option_callbacks!(options, allowed?) do
+    {_special, options} = Options.split!(options, [])
+
+    Enum.each(options, fn {name, value} ->
+      if is_function(value) do
+        unless allowed? do
+          raise ArgumentError, "option callbacks are only supported on outputs: #{inspect(name)}"
+        end
+
+        unless is_function(value, 1) do
+          raise ArgumentError, "option callback #{inspect(name)} must accept one streams argument"
+        end
+      end
+    end)
+  end
+
+  defp output_callbacks?(output) do
+    components = [output.muxer | Enum.map(output.mappings, & &1.encoding)]
+
+    component_options =
+      Enum.flat_map(components, fn component ->
+        case component do
+          %{options: options} -> options
+          _unconfigured -> []
+        end
+      end)
+
+    Enum.any?(output.options ++ component_options, fn {_name, value} -> is_function(value) end)
+  end
+
+  defp output_streams!(output, graph) do
+    {streams, _counts} =
+      output.mappings
+      |> Enum.with_index()
+      |> Enum.reduce({%{}, %{video: 0, audio: 0}}, fn {mapping, index}, {streams, counts} ->
+        unless single_source?(mapping.source, graph) do
+          raise ArgumentError,
+                "output option callbacks require every mapping to select one stream; use indexed inputs or filtered exports"
+        end
+
+        media = source_media(mapping.source, graph)
+
+        prefix =
+          case media do
+            :video ->
+              "v"
+
+            :audio ->
+              "a"
+
+            _unknown ->
+              raise ArgumentError,
+                    "output option callbacks require known audio/video media for every mapping; use FFix.shape/2 for dynamic filter outputs"
+          end
+
+        media_index = Map.fetch!(counts, media)
+        info = %{index: index, specifier: "#{prefix}:#{media_index}"}
+        counts = Map.put(counts, media, media_index + 1)
+
+        streams =
+          case mapping.name do
+            nil -> streams
+            name -> Map.put(streams, name, info)
+          end
+
+        {streams, counts}
+      end)
+
+    streams
+  end
+
+  defp source_media(source, graph) do
+    case source do
+      %Stream{media: media} -> media
+      %Export{media: media} -> media
+      name_or_index -> Graph.export!(graph, name_or_index).media
     end
   end
 
@@ -609,6 +743,8 @@ defmodule FFix.Command do
       end
     end)
 
+    callbacks? = is_struct(component, Encoder) or is_struct(component, Muxer)
+    validate_option_callbacks!(component.options, callbacks?)
     component
   end
 
@@ -628,7 +764,7 @@ defmodule FFix.Command do
 
     scalar? = is_binary(value) or is_number(value) or (is_atom(value) and not is_nil(value))
 
-    unless scalar? do
+    unless scalar? or is_function(value, 1) do
       raise ArgumentError,
             "component option values must be strings, atoms, numbers, or booleans; use strings for compound values, got: #{inspect(value)}"
     end
@@ -772,12 +908,15 @@ defmodule FFix.Command do
   defp graph_to_argv(%{graph: graph}), do: ["-filter_complex", graph]
 
   defp output_to_argv(
-         %Output{target: target, mappings: mappings, muxer: muxer, options: options},
+         %Output{} = output,
          graph,
          render,
          input_count,
          input_index_map
        ) do
+    output = resolve_output_options!(output, graph)
+    %Output{target: target, mappings: mappings, muxer: muxer, options: options} = output
+
     maps =
       Enum.flat_map(mappings, fn mapping ->
         source = map_source(mapping.source, graph, render, input_count, input_index_map)
@@ -800,6 +939,37 @@ defmodule FFix.Command do
       component_to_argv(muxer, nil) ++
       encode_options(options) ++
       [encode_output_target(target)]
+  end
+
+  defp resolve_output_options!(output, graph) do
+    if output_callbacks?(output) do
+      streams = output_streams!(output, graph)
+
+      mappings =
+        Enum.map(output.mappings, fn mapping ->
+          %{mapping | encoding: resolve_component_options!(mapping.encoding, streams)}
+        end)
+
+      %{
+        output
+        | mappings: mappings,
+          muxer: resolve_component_options!(output.muxer, streams),
+          options: Options.resolve!(output.options, streams)
+      }
+    else
+      output
+    end
+  end
+
+  defp resolve_component_options!(component, streams) do
+    case component do
+      %{options: options} ->
+        resolved = %{component | options: Options.resolve!(options, streams)}
+        validate_component!(resolved)
+
+      unconfigured ->
+        unconfigured
+    end
   end
 
   defp map_source(%Stream{} = stream, _graph, _render, input_count, input_index_map) do
@@ -966,6 +1136,10 @@ defmodule FFix.Command do
     do: Enum.map_join(value, "+", &encode_option_value/1)
 
   defp encode_option_value(value) when is_binary(value), do: value
+
+  defp encode_option_value(value) do
+    raise ArgumentError, "invalid CLI option value: #{inspect(value)}"
+  end
 
   defp encode_input_source(:stdin), do: "pipe:0"
   defp encode_input_source({:pipe, fd}) when is_integer(fd) and fd >= 0, do: "pipe:#{fd}"

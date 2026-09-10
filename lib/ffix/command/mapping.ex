@@ -11,6 +11,10 @@ defmodule FFix.Command.Mapping do
         encoding: %FFix.Encoder{name: "libx264", options: [{"crf", 18}]}
       }
 
+  `name` optionally identifies this mapping within its output. Named `sources:`
+  bindings set it without changing the original mapping value. Names must be
+  unique within an output and are not FFmpeg filter labels.
+
   Mapping order determines absolute stream indexes within each output. When
   any mapping has encoding configuration, every mapping in that output must
   select one stream: an indexed audio/video input or a filtered export. Broad
@@ -24,10 +28,11 @@ defmodule FFix.Command.Mapping do
 
   @type t :: %__MODULE__{
           source: FFix.Command.source(),
+          name: atom() | nil,
           encoding: FFix.Encoder.t() | :copy | nil
         }
 
-  defstruct [:source, :encoding]
+  defstruct [:source, :encoding, :name]
 
   @doc "Builds a mapping from an existing source reference; graph and copy checks run on the command."
   @spec new(FFix.Command.source(), FFix.Encoder.t() | :copy | nil) :: t()

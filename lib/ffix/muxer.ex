@@ -23,17 +23,22 @@ defmodule FFix.Muxer do
 
   `named/3` handles dynamic formats without a metadata schema. `new/2` builds a
   standalone muxer configuration; a nil name leaves format selection to FFmpeg.
+
+  Name mappings with `sources: [main: mapping, sound: audio_mapping]`. Option
+  values may be callbacks such as `fn streams -> streams.main.specifier end`.
+  They receive final output-local indexes during serialization, with no special
+  treatment of any FFmpeg option name. See `FFix.Command.Output` for the contract.
   """
 
   alias FFix.Command
   alias FFix.Command.Output
   alias FFix.Options
 
-  @type t :: %__MODULE__{name: String.t() | nil, options: [Command.av_option()]}
+  @type t :: %__MODULE__{name: String.t() | nil, options: [Command.output_av_option()]}
   defstruct [:name, options: []]
 
   @doc "Builds an unbound muxer configuration without a metadata schema."
-  @spec new(String.t() | nil, [Command.av_option()]) :: t()
+  @spec new(String.t() | nil, [Command.output_av_option()]) :: t()
   def new(name, options \\ []) do
     Command.validate_component!(%__MODULE__{name: name, options: options})
   end
@@ -138,14 +143,21 @@ defmodule FFix.Muxer do
     "write_tmcd" => [%{type: :boolean, constants: []}]
   }
   @type mp4_option ::
-          {:avioflags, integer() | String.t() | [String.t() | :direct] | :direct}
+          {:avioflags,
+           integer() | String.t() | [String.t() | :direct] | :direct | Command.option_callback()}
           | {:avoid_negative_ts,
-             integer() | String.t() | :auto | :disabled | :make_non_negative | :make_zero}
-          | {:brand, String.t() | atom()}
-          | {:empty_hdlr_name, boolean() | :auto | String.t()}
-          | {:encryption_key, String.t() | atom()}
-          | {:encryption_kid, String.t() | atom()}
-          | {:encryption_scheme, String.t() | atom()}
+             integer()
+             | String.t()
+             | :auto
+             | :disabled
+             | :make_non_negative
+             | :make_zero
+             | Command.option_callback()}
+          | {:brand, String.t() | atom() | Command.option_callback()}
+          | {:empty_hdlr_name, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:encryption_key, String.t() | atom() | Command.option_callback()}
+          | {:encryption_kid, String.t() | atom() | Command.option_callback()}
+          | {:encryption_scheme, String.t() | atom() | Command.option_callback()}
           | {:fflags,
              integer()
              | String.t()
@@ -177,19 +189,20 @@ defmodule FFix.Muxer do
              | :nobuffer
              | :bitexact
              | :shortest
-             | :autobsf}
-          | {:flush_packets, integer() | String.t()}
-          | {:frag_duration, integer() | String.t()}
-          | {:frag_interleave, integer() | String.t()}
-          | {:frag_size, integer() | String.t()}
-          | {:fragment_index, integer() | String.t()}
-          | {:iods_audio_profile, integer() | String.t()}
-          | {:iods_video_profile, integer() | String.t()}
-          | {:ism_lookahead, integer() | String.t()}
-          | {:max_delay, integer() | String.t()}
-          | {:min_frag_duration, integer() | String.t()}
-          | {:moov_size, integer() | String.t()}
-          | {:mov_gamma, number() | String.t()}
+             | :autobsf
+             | Command.option_callback()}
+          | {:flush_packets, integer() | String.t() | Command.option_callback()}
+          | {:frag_duration, integer() | String.t() | Command.option_callback()}
+          | {:frag_interleave, integer() | String.t() | Command.option_callback()}
+          | {:frag_size, integer() | String.t() | Command.option_callback()}
+          | {:fragment_index, integer() | String.t() | Command.option_callback()}
+          | {:iods_audio_profile, integer() | String.t() | Command.option_callback()}
+          | {:iods_video_profile, integer() | String.t() | Command.option_callback()}
+          | {:ism_lookahead, integer() | String.t() | Command.option_callback()}
+          | {:max_delay, integer() | String.t() | Command.option_callback()}
+          | {:min_frag_duration, integer() | String.t() | Command.option_callback()}
+          | {:moov_size, integer() | String.t() | Command.option_callback()}
+          | {:mov_gamma, number() | String.t() | Command.option_callback()}
           | {:movflags,
              integer()
              | String.t()
@@ -243,8 +256,9 @@ defmodule FFix.Muxer do
              | :use_metadata_tags
              | :write_colr
              | :write_gama
-             | :hybrid_fragmented}
-          | {:movie_timescale, integer() | String.t()}
+             | :hybrid_fragmented
+             | Command.option_callback()}
+          | {:movie_timescale, integer() | String.t() | Command.option_callback()}
           | {:rtpflags,
              integer()
              | String.t()
@@ -253,18 +267,20 @@ defmodule FFix.Muxer do
              | :rfc2190
              | :skip_rtcp
              | :h264_mode0
-             | :send_bye}
-          | {:skip_iods, boolean() | :auto | String.t()}
-          | {:use_editlist, boolean() | :auto | String.t()}
-          | {:use_stream_ids_as_track_ids, boolean() | :auto | String.t()}
-          | {:video_track_timescale, integer() | String.t()}
-          | {:write_btrt, boolean() | :auto | String.t()}
-          | {:write_prft, integer() | String.t() | :pts | :wallclock}
-          | {:write_tmcd, boolean() | :auto | String.t()}
-          | {:raw, [Command.av_option()]}
-          | {:video, Command.mapping() | [Command.mapping()]}
-          | {:audio, Command.mapping() | [Command.mapping()]}
-          | {:sources, [Command.mapping()]}
+             | :send_bye
+             | Command.option_callback()}
+          | {:skip_iods, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:use_editlist, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:use_stream_ids_as_track_ids,
+             boolean() | :auto | String.t() | Command.option_callback()}
+          | {:video_track_timescale, integer() | String.t() | Command.option_callback()}
+          | {:write_btrt, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:write_prft, integer() | String.t() | :pts | :wallclock | Command.option_callback()}
+          | {:write_tmcd, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:raw, [Command.output_av_option()]}
+          | {:video, Command.binding() | [Command.binding()]}
+          | {:audio, Command.binding() | [Command.binding()]}
+          | {:sources, [Command.binding()]}
           | {:output_options, [Command.option()]}
   @doc """
   mp4: MP4 (MPEG-4 Part 14)
@@ -404,14 +420,21 @@ defmodule FFix.Muxer do
     "write_tmcd" => [%{type: :boolean, constants: []}]
   }
   @type mov_option ::
-          {:avioflags, integer() | String.t() | [String.t() | :direct] | :direct}
+          {:avioflags,
+           integer() | String.t() | [String.t() | :direct] | :direct | Command.option_callback()}
           | {:avoid_negative_ts,
-             integer() | String.t() | :auto | :disabled | :make_non_negative | :make_zero}
-          | {:brand, String.t() | atom()}
-          | {:empty_hdlr_name, boolean() | :auto | String.t()}
-          | {:encryption_key, String.t() | atom()}
-          | {:encryption_kid, String.t() | atom()}
-          | {:encryption_scheme, String.t() | atom()}
+             integer()
+             | String.t()
+             | :auto
+             | :disabled
+             | :make_non_negative
+             | :make_zero
+             | Command.option_callback()}
+          | {:brand, String.t() | atom() | Command.option_callback()}
+          | {:empty_hdlr_name, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:encryption_key, String.t() | atom() | Command.option_callback()}
+          | {:encryption_kid, String.t() | atom() | Command.option_callback()}
+          | {:encryption_scheme, String.t() | atom() | Command.option_callback()}
           | {:fflags,
              integer()
              | String.t()
@@ -443,19 +466,20 @@ defmodule FFix.Muxer do
              | :nobuffer
              | :bitexact
              | :shortest
-             | :autobsf}
-          | {:flush_packets, integer() | String.t()}
-          | {:frag_duration, integer() | String.t()}
-          | {:frag_interleave, integer() | String.t()}
-          | {:frag_size, integer() | String.t()}
-          | {:fragment_index, integer() | String.t()}
-          | {:iods_audio_profile, integer() | String.t()}
-          | {:iods_video_profile, integer() | String.t()}
-          | {:ism_lookahead, integer() | String.t()}
-          | {:max_delay, integer() | String.t()}
-          | {:min_frag_duration, integer() | String.t()}
-          | {:moov_size, integer() | String.t()}
-          | {:mov_gamma, number() | String.t()}
+             | :autobsf
+             | Command.option_callback()}
+          | {:flush_packets, integer() | String.t() | Command.option_callback()}
+          | {:frag_duration, integer() | String.t() | Command.option_callback()}
+          | {:frag_interleave, integer() | String.t() | Command.option_callback()}
+          | {:frag_size, integer() | String.t() | Command.option_callback()}
+          | {:fragment_index, integer() | String.t() | Command.option_callback()}
+          | {:iods_audio_profile, integer() | String.t() | Command.option_callback()}
+          | {:iods_video_profile, integer() | String.t() | Command.option_callback()}
+          | {:ism_lookahead, integer() | String.t() | Command.option_callback()}
+          | {:max_delay, integer() | String.t() | Command.option_callback()}
+          | {:min_frag_duration, integer() | String.t() | Command.option_callback()}
+          | {:moov_size, integer() | String.t() | Command.option_callback()}
+          | {:mov_gamma, number() | String.t() | Command.option_callback()}
           | {:movflags,
              integer()
              | String.t()
@@ -509,8 +533,9 @@ defmodule FFix.Muxer do
              | :use_metadata_tags
              | :write_colr
              | :write_gama
-             | :hybrid_fragmented}
-          | {:movie_timescale, integer() | String.t()}
+             | :hybrid_fragmented
+             | Command.option_callback()}
+          | {:movie_timescale, integer() | String.t() | Command.option_callback()}
           | {:rtpflags,
              integer()
              | String.t()
@@ -519,18 +544,20 @@ defmodule FFix.Muxer do
              | :rfc2190
              | :skip_rtcp
              | :h264_mode0
-             | :send_bye}
-          | {:skip_iods, boolean() | :auto | String.t()}
-          | {:use_editlist, boolean() | :auto | String.t()}
-          | {:use_stream_ids_as_track_ids, boolean() | :auto | String.t()}
-          | {:video_track_timescale, integer() | String.t()}
-          | {:write_btrt, boolean() | :auto | String.t()}
-          | {:write_prft, integer() | String.t() | :pts | :wallclock}
-          | {:write_tmcd, boolean() | :auto | String.t()}
-          | {:raw, [Command.av_option()]}
-          | {:video, Command.mapping() | [Command.mapping()]}
-          | {:audio, Command.mapping() | [Command.mapping()]}
-          | {:sources, [Command.mapping()]}
+             | :send_bye
+             | Command.option_callback()}
+          | {:skip_iods, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:use_editlist, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:use_stream_ids_as_track_ids,
+             boolean() | :auto | String.t() | Command.option_callback()}
+          | {:video_track_timescale, integer() | String.t() | Command.option_callback()}
+          | {:write_btrt, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:write_prft, integer() | String.t() | :pts | :wallclock | Command.option_callback()}
+          | {:write_tmcd, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:raw, [Command.output_av_option()]}
+          | {:video, Command.binding() | [Command.binding()]}
+          | {:audio, Command.binding() | [Command.binding()]}
+          | {:sources, [Command.binding()]}
           | {:output_options, [Command.option()]}
   @doc """
   mov: QuickTime / MOV
@@ -623,16 +650,29 @@ defmodule FFix.Muxer do
     "write_crc32" => [%{type: :boolean, constants: []}]
   }
   @type matroska_option ::
-          {:allow_raw_vfw, boolean() | :auto | String.t()}
-          | {:avioflags, integer() | String.t() | [String.t() | :direct] | :direct}
+          {:allow_raw_vfw, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:avioflags,
+             integer() | String.t() | [String.t() | :direct] | :direct | Command.option_callback()}
           | {:avoid_negative_ts,
-             integer() | String.t() | :auto | :disabled | :make_non_negative | :make_zero}
-          | {:cluster_size_limit, integer() | String.t()}
-          | {:cluster_time_limit, integer() | String.t()}
-          | {:cues_to_front, boolean() | :auto | String.t()}
-          | {:dash, boolean() | :auto | String.t()}
-          | {:dash_track_number, integer() | String.t()}
-          | {:default_mode, integer() | String.t() | :infer | :infer_no_subs | :passthrough}
+             integer()
+             | String.t()
+             | :auto
+             | :disabled
+             | :make_non_negative
+             | :make_zero
+             | Command.option_callback()}
+          | {:cluster_size_limit, integer() | String.t() | Command.option_callback()}
+          | {:cluster_time_limit, integer() | String.t() | Command.option_callback()}
+          | {:cues_to_front, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:dash, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:dash_track_number, integer() | String.t() | Command.option_callback()}
+          | {:default_mode,
+             integer()
+             | String.t()
+             | :infer
+             | :infer_no_subs
+             | :passthrough
+             | Command.option_callback()}
           | {:fflags,
              integer()
              | String.t()
@@ -664,17 +704,18 @@ defmodule FFix.Muxer do
              | :nobuffer
              | :bitexact
              | :shortest
-             | :autobsf}
-          | {:flipped_raw_rgb, boolean() | :auto | String.t()}
-          | {:flush_packets, integer() | String.t()}
-          | {:live, boolean() | :auto | String.t()}
-          | {:max_delay, integer() | String.t()}
-          | {:reserve_index_space, integer() | String.t()}
-          | {:write_crc32, boolean() | :auto | String.t()}
-          | {:raw, [Command.av_option()]}
-          | {:video, Command.mapping() | [Command.mapping()]}
-          | {:audio, Command.mapping() | [Command.mapping()]}
-          | {:sources, [Command.mapping()]}
+             | :autobsf
+             | Command.option_callback()}
+          | {:flipped_raw_rgb, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:flush_packets, integer() | String.t() | Command.option_callback()}
+          | {:live, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:max_delay, integer() | String.t() | Command.option_callback()}
+          | {:reserve_index_space, integer() | String.t() | Command.option_callback()}
+          | {:write_crc32, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:raw, [Command.output_av_option()]}
+          | {:video, Command.binding() | [Command.binding()]}
+          | {:audio, Command.binding() | [Command.binding()]}
+          | {:sources, [Command.binding()]}
           | {:output_options, [Command.option()]}
   @doc """
   matroska: Matroska
@@ -755,16 +796,29 @@ defmodule FFix.Muxer do
     "write_crc32" => [%{type: :boolean, constants: []}]
   }
   @type webm_option ::
-          {:allow_raw_vfw, boolean() | :auto | String.t()}
-          | {:avioflags, integer() | String.t() | [String.t() | :direct] | :direct}
+          {:allow_raw_vfw, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:avioflags,
+             integer() | String.t() | [String.t() | :direct] | :direct | Command.option_callback()}
           | {:avoid_negative_ts,
-             integer() | String.t() | :auto | :disabled | :make_non_negative | :make_zero}
-          | {:cluster_size_limit, integer() | String.t()}
-          | {:cluster_time_limit, integer() | String.t()}
-          | {:cues_to_front, boolean() | :auto | String.t()}
-          | {:dash, boolean() | :auto | String.t()}
-          | {:dash_track_number, integer() | String.t()}
-          | {:default_mode, integer() | String.t() | :infer | :infer_no_subs | :passthrough}
+             integer()
+             | String.t()
+             | :auto
+             | :disabled
+             | :make_non_negative
+             | :make_zero
+             | Command.option_callback()}
+          | {:cluster_size_limit, integer() | String.t() | Command.option_callback()}
+          | {:cluster_time_limit, integer() | String.t() | Command.option_callback()}
+          | {:cues_to_front, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:dash, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:dash_track_number, integer() | String.t() | Command.option_callback()}
+          | {:default_mode,
+             integer()
+             | String.t()
+             | :infer
+             | :infer_no_subs
+             | :passthrough
+             | Command.option_callback()}
           | {:fflags,
              integer()
              | String.t()
@@ -796,17 +850,18 @@ defmodule FFix.Muxer do
              | :nobuffer
              | :bitexact
              | :shortest
-             | :autobsf}
-          | {:flipped_raw_rgb, boolean() | :auto | String.t()}
-          | {:flush_packets, integer() | String.t()}
-          | {:live, boolean() | :auto | String.t()}
-          | {:max_delay, integer() | String.t()}
-          | {:reserve_index_space, integer() | String.t()}
-          | {:write_crc32, boolean() | :auto | String.t()}
-          | {:raw, [Command.av_option()]}
-          | {:video, Command.mapping() | [Command.mapping()]}
-          | {:audio, Command.mapping() | [Command.mapping()]}
-          | {:sources, [Command.mapping()]}
+             | :autobsf
+             | Command.option_callback()}
+          | {:flipped_raw_rgb, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:flush_packets, integer() | String.t() | Command.option_callback()}
+          | {:live, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:max_delay, integer() | String.t() | Command.option_callback()}
+          | {:reserve_index_space, integer() | String.t() | Command.option_callback()}
+          | {:write_crc32, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:raw, [Command.output_av_option()]}
+          | {:video, Command.binding() | [Command.binding()]}
+          | {:audio, Command.binding() | [Command.binding()]}
+          | {:sources, [Command.binding()]}
           | {:output_options, [Command.option()]}
   @doc """
   webm: WebM
@@ -934,10 +989,17 @@ defmodule FFix.Muxer do
     "http_persistent" => [%{type: :boolean, constants: []}]
   }
   @type hls_option ::
-          {:avioflags, integer() | String.t() | [String.t() | :direct] | :direct}
+          {:avioflags,
+           integer() | String.t() | [String.t() | :direct] | :direct | Command.option_callback()}
           | {:avoid_negative_ts,
-             integer() | String.t() | :auto | :disabled | :make_non_negative | :make_zero}
-          | {:cc_stream_map, String.t() | atom()}
+             integer()
+             | String.t()
+             | :auto
+             | :disabled
+             | :make_non_negative
+             | :make_zero
+             | Command.option_callback()}
+          | {:cc_stream_map, String.t() | atom() | Command.option_callback()}
           | {:fflags,
              integer()
              | String.t()
@@ -969,16 +1031,17 @@ defmodule FFix.Muxer do
              | :nobuffer
              | :bitexact
              | :shortest
-             | :autobsf}
-          | {:flush_packets, integer() | String.t()}
-          | {:headers, String.t() | atom()}
-          | {:hls_allow_cache, integer() | String.t()}
-          | {:hls_base_url, String.t() | atom()}
-          | {:hls_delete_threshold, integer() | String.t()}
-          | {:hls_enc, boolean() | :auto | String.t()}
-          | {:hls_enc_iv, String.t() | atom()}
-          | {:hls_enc_key, String.t() | atom()}
-          | {:hls_enc_key_url, String.t() | atom()}
+             | :autobsf
+             | Command.option_callback()}
+          | {:flush_packets, integer() | String.t() | Command.option_callback()}
+          | {:headers, String.t() | atom() | Command.option_callback()}
+          | {:hls_allow_cache, integer() | String.t() | Command.option_callback()}
+          | {:hls_base_url, String.t() | atom() | Command.option_callback()}
+          | {:hls_delete_threshold, integer() | String.t() | Command.option_callback()}
+          | {:hls_enc, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:hls_enc_iv, String.t() | atom() | Command.option_callback()}
+          | {:hls_enc_key, String.t() | atom() | Command.option_callback()}
+          | {:hls_enc_key_url, String.t() | atom() | Command.option_callback()}
           | {:hls_flags,
              integer()
              | String.t()
@@ -1014,38 +1077,47 @@ defmodule FFix.Muxer do
              | :second_level_segment_size
              | :periodic_rekey
              | :independent_segments
-             | :iframes_only}
-          | {:hls_fmp4_init_filename, String.t() | atom()}
-          | {:hls_fmp4_init_resend, boolean() | :auto | String.t()}
-          | {:hls_init_time, number() | String.t()}
-          | {:hls_key_info_file, String.t() | atom()}
-          | {:hls_list_size, integer() | String.t()}
-          | {:hls_playlist_type, integer() | String.t() | :event | :vod}
-          | {:hls_segment_filename, String.t() | atom()}
-          | {:hls_segment_options, String.t() | atom()}
-          | {:hls_segment_size, integer() | String.t()}
-          | {:hls_segment_type, integer() | String.t() | :mpegts | :fmp4}
+             | :iframes_only
+             | Command.option_callback()}
+          | {:hls_fmp4_init_filename, String.t() | atom() | Command.option_callback()}
+          | {:hls_fmp4_init_resend, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:hls_init_time, number() | String.t() | Command.option_callback()}
+          | {:hls_key_info_file, String.t() | atom() | Command.option_callback()}
+          | {:hls_list_size, integer() | String.t() | Command.option_callback()}
+          | {:hls_playlist_type,
+             integer() | String.t() | :event | :vod | Command.option_callback()}
+          | {:hls_segment_filename, String.t() | atom() | Command.option_callback()}
+          | {:hls_segment_options, String.t() | atom() | Command.option_callback()}
+          | {:hls_segment_size, integer() | String.t() | Command.option_callback()}
+          | {:hls_segment_type,
+             integer() | String.t() | :mpegts | :fmp4 | Command.option_callback()}
           | {:hls_start_number_source,
-             integer() | String.t() | :generic | :epoch | :epoch_us | :datetime}
-          | {:hls_subtitle_path, String.t() | atom()}
-          | {:hls_time, number() | String.t()}
-          | {:hls_vtt_options, String.t() | atom()}
-          | {:http_persistent, boolean() | :auto | String.t()}
-          | {:http_user_agent, String.t() | atom()}
-          | {:ignore_io_errors, boolean() | :auto | String.t()}
-          | {:master_pl_name, String.t() | atom()}
-          | {:master_pl_publish_rate, integer() | String.t()}
-          | {:max_delay, integer() | String.t()}
-          | {:method, String.t() | atom()}
-          | {:start_number, integer() | String.t()}
-          | {:strftime, boolean() | :auto | String.t()}
-          | {:strftime_mkdir, boolean() | :auto | String.t()}
-          | {:timeout, number() | String.t()}
-          | {:var_stream_map, String.t() | atom()}
-          | {:raw, [Command.av_option()]}
-          | {:video, Command.mapping() | [Command.mapping()]}
-          | {:audio, Command.mapping() | [Command.mapping()]}
-          | {:sources, [Command.mapping()]}
+             integer()
+             | String.t()
+             | :generic
+             | :epoch
+             | :epoch_us
+             | :datetime
+             | Command.option_callback()}
+          | {:hls_subtitle_path, String.t() | atom() | Command.option_callback()}
+          | {:hls_time, number() | String.t() | Command.option_callback()}
+          | {:hls_vtt_options, String.t() | atom() | Command.option_callback()}
+          | {:http_persistent, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:http_user_agent, String.t() | atom() | Command.option_callback()}
+          | {:ignore_io_errors, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:master_pl_name, String.t() | atom() | Command.option_callback()}
+          | {:master_pl_publish_rate, integer() | String.t() | Command.option_callback()}
+          | {:max_delay, integer() | String.t() | Command.option_callback()}
+          | {:method, String.t() | atom() | Command.option_callback()}
+          | {:start_number, integer() | String.t() | Command.option_callback()}
+          | {:strftime, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:strftime_mkdir, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:timeout, number() | String.t() | Command.option_callback()}
+          | {:var_stream_map, String.t() | atom() | Command.option_callback()}
+          | {:raw, [Command.output_av_option()]}
+          | {:video, Command.binding() | [Command.binding()]}
+          | {:audio, Command.binding() | [Command.binding()]}
+          | {:sources, [Command.binding()]}
           | {:output_options, [Command.option()]}
   @doc """
   hls: Apple HTTP Live Streaming
@@ -1182,9 +1254,16 @@ defmodule FFix.Muxer do
     "tables_version" => [%{type: :int, constants: []}]
   }
   @type mpegts_option ::
-          {:avioflags, integer() | String.t() | [String.t() | :direct] | :direct}
+          {:avioflags,
+           integer() | String.t() | [String.t() | :direct] | :direct | Command.option_callback()}
           | {:avoid_negative_ts,
-             integer() | String.t() | :auto | :disabled | :make_non_negative | :make_zero}
+             integer()
+             | String.t()
+             | :auto
+             | :disabled
+             | :make_non_negative
+             | :make_zero
+             | Command.option_callback()}
           | {:fflags,
              integer()
              | String.t()
@@ -1216,10 +1295,11 @@ defmodule FFix.Muxer do
              | :nobuffer
              | :bitexact
              | :shortest
-             | :autobsf}
-          | {:flush_packets, integer() | String.t()}
-          | {:max_delay, integer() | String.t()}
-          | {:mpegts_copyts, boolean() | :auto | String.t()}
+             | :autobsf
+             | Command.option_callback()}
+          | {:flush_packets, integer() | String.t() | Command.option_callback()}
+          | {:max_delay, integer() | String.t() | Command.option_callback()}
+          | {:mpegts_copyts, boolean() | :auto | String.t() | Command.option_callback()}
           | {:mpegts_flags,
              integer()
              | String.t()
@@ -1239,11 +1319,12 @@ defmodule FFix.Muxer do
              | :system_b
              | :initial_discontinuity
              | :nit
-             | :omit_rai}
-          | {:mpegts_m2ts_mode, boolean() | :auto | String.t()}
-          | {:mpegts_original_network_id, integer() | String.t()}
-          | {:mpegts_pmt_start_pid, integer() | String.t()}
-          | {:mpegts_service_id, integer() | String.t()}
+             | :omit_rai
+             | Command.option_callback()}
+          | {:mpegts_m2ts_mode, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:mpegts_original_network_id, integer() | String.t() | Command.option_callback()}
+          | {:mpegts_pmt_start_pid, integer() | String.t() | Command.option_callback()}
+          | {:mpegts_service_id, integer() | String.t() | Command.option_callback()}
           | {:mpegts_service_type,
              integer()
              | String.t()
@@ -1254,21 +1335,22 @@ defmodule FFix.Muxer do
              | :mpeg2_digital_hdtv
              | :advanced_codec_digital_sdtv
              | :advanced_codec_digital_hdtv
-             | :hevc_digital_hdtv}
-          | {:mpegts_start_pid, integer() | String.t()}
-          | {:mpegts_transport_stream_id, integer() | String.t()}
-          | {:muxrate, integer() | String.t()}
-          | {:nit_period, number() | String.t()}
-          | {:omit_video_pes_length, boolean() | :auto | String.t()}
-          | {:pat_period, number() | String.t()}
-          | {:pcr_period, integer() | String.t()}
-          | {:pes_payload_size, integer() | String.t()}
-          | {:sdt_period, number() | String.t()}
-          | {:tables_version, integer() | String.t()}
-          | {:raw, [Command.av_option()]}
-          | {:video, Command.mapping() | [Command.mapping()]}
-          | {:audio, Command.mapping() | [Command.mapping()]}
-          | {:sources, [Command.mapping()]}
+             | :hevc_digital_hdtv
+             | Command.option_callback()}
+          | {:mpegts_start_pid, integer() | String.t() | Command.option_callback()}
+          | {:mpegts_transport_stream_id, integer() | String.t() | Command.option_callback()}
+          | {:muxrate, integer() | String.t() | Command.option_callback()}
+          | {:nit_period, number() | String.t() | Command.option_callback()}
+          | {:omit_video_pes_length, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:pat_period, number() | String.t() | Command.option_callback()}
+          | {:pcr_period, integer() | String.t() | Command.option_callback()}
+          | {:pes_payload_size, integer() | String.t() | Command.option_callback()}
+          | {:sdt_period, number() | String.t() | Command.option_callback()}
+          | {:tables_version, integer() | String.t() | Command.option_callback()}
+          | {:raw, [Command.output_av_option()]}
+          | {:video, Command.binding() | [Command.binding()]}
+          | {:audio, Command.binding() | [Command.binding()]}
+          | {:sources, [Command.binding()]}
           | {:output_options, [Command.option()]}
   @doc """
   mpegts: MPEG-TS (MPEG-2 Transport Stream)
@@ -1373,10 +1455,17 @@ defmodule FFix.Muxer do
     "reference_stream" => [%{type: :string, constants: []}]
   }
   @type segment_option ::
-          {:avioflags, integer() | String.t() | [String.t() | :direct] | :direct}
+          {:avioflags,
+           integer() | String.t() | [String.t() | :direct] | :direct | Command.option_callback()}
           | {:avoid_negative_ts,
-             integer() | String.t() | :auto | :disabled | :make_non_negative | :make_zero}
-          | {:break_non_keyframes, boolean() | :auto | String.t()}
+             integer()
+             | String.t()
+             | :auto
+             | :disabled
+             | :make_non_negative
+             | :make_zero
+             | Command.option_callback()}
+          | {:break_non_keyframes, boolean() | :auto | String.t() | Command.option_callback()}
           | {:fflags,
              integer()
              | String.t()
@@ -1408,42 +1497,57 @@ defmodule FFix.Muxer do
              | :nobuffer
              | :bitexact
              | :shortest
-             | :autobsf}
-          | {:flush_packets, integer() | String.t()}
-          | {:increment_tc, boolean() | :auto | String.t()}
-          | {:individual_header_trailer, boolean() | :auto | String.t()}
-          | {:initial_offset, number() | String.t()}
-          | {:max_delay, integer() | String.t()}
-          | {:min_seg_duration, number() | String.t()}
-          | {:reference_stream, String.t() | atom()}
-          | {:reset_timestamps, boolean() | :auto | String.t()}
-          | {:segment_atclocktime, boolean() | :auto | String.t()}
-          | {:segment_clocktime_offset, number() | String.t()}
-          | {:segment_clocktime_wrap_duration, number() | String.t()}
-          | {:segment_format, String.t() | atom()}
-          | {:segment_format_options, String.t() | atom()}
-          | {:segment_frames, String.t() | atom()}
-          | {:segment_header_filename, String.t() | atom()}
-          | {:segment_list, String.t() | atom()}
-          | {:segment_list_entry_prefix, String.t() | atom()}
+             | :autobsf
+             | Command.option_callback()}
+          | {:flush_packets, integer() | String.t() | Command.option_callback()}
+          | {:increment_tc, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:individual_header_trailer,
+             boolean() | :auto | String.t() | Command.option_callback()}
+          | {:initial_offset, number() | String.t() | Command.option_callback()}
+          | {:max_delay, integer() | String.t() | Command.option_callback()}
+          | {:min_seg_duration, number() | String.t() | Command.option_callback()}
+          | {:reference_stream, String.t() | atom() | Command.option_callback()}
+          | {:reset_timestamps, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:segment_atclocktime, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:segment_clocktime_offset, number() | String.t() | Command.option_callback()}
+          | {:segment_clocktime_wrap_duration, number() | String.t() | Command.option_callback()}
+          | {:segment_format, String.t() | atom() | Command.option_callback()}
+          | {:segment_format_options, String.t() | atom() | Command.option_callback()}
+          | {:segment_frames, String.t() | atom() | Command.option_callback()}
+          | {:segment_header_filename, String.t() | atom() | Command.option_callback()}
+          | {:segment_list, String.t() | atom() | Command.option_callback()}
+          | {:segment_list_entry_prefix, String.t() | atom() | Command.option_callback()}
           | {:segment_list_flags,
-             integer() | String.t() | [String.t() | :cache | :live] | :cache | :live}
-          | {:segment_list_size, integer() | String.t()}
+             integer()
+             | String.t()
+             | [String.t() | :cache | :live]
+             | :cache
+             | :live
+             | Command.option_callback()}
+          | {:segment_list_size, integer() | String.t() | Command.option_callback()}
           | {:segment_list_type,
-             integer() | String.t() | :flat | :csv | :ext | :ffconcat | :m3u8 | :hls}
-          | {:segment_start_number, integer() | String.t()}
-          | {:segment_time, number() | String.t()}
-          | {:segment_time_delta, number() | String.t()}
-          | {:segment_times, String.t() | atom()}
-          | {:segment_wrap, integer() | String.t()}
-          | {:segment_wrap_number, integer() | String.t()}
-          | {:strftime, boolean() | :auto | String.t()}
-          | {:write_empty_segments, boolean() | :auto | String.t()}
-          | {:write_header_trailer, boolean() | :auto | String.t()}
-          | {:raw, [Command.av_option()]}
-          | {:video, Command.mapping() | [Command.mapping()]}
-          | {:audio, Command.mapping() | [Command.mapping()]}
-          | {:sources, [Command.mapping()]}
+             integer()
+             | String.t()
+             | :flat
+             | :csv
+             | :ext
+             | :ffconcat
+             | :m3u8
+             | :hls
+             | Command.option_callback()}
+          | {:segment_start_number, integer() | String.t() | Command.option_callback()}
+          | {:segment_time, number() | String.t() | Command.option_callback()}
+          | {:segment_time_delta, number() | String.t() | Command.option_callback()}
+          | {:segment_times, String.t() | atom() | Command.option_callback()}
+          | {:segment_wrap, integer() | String.t() | Command.option_callback()}
+          | {:segment_wrap_number, integer() | String.t() | Command.option_callback()}
+          | {:strftime, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:write_empty_segments, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:write_header_trailer, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:raw, [Command.output_av_option()]}
+          | {:video, Command.binding() | [Command.binding()]}
+          | {:audio, Command.binding() | [Command.binding()]}
+          | {:sources, [Command.binding()]}
           | {:output_options, [Command.option()]}
   @doc """
   segment: segment
@@ -1528,9 +1632,16 @@ defmodule FFix.Muxer do
     "use_fifo" => [%{type: :boolean, constants: []}]
   }
   @type tee_option ::
-          {:avioflags, integer() | String.t() | [String.t() | :direct] | :direct}
+          {:avioflags,
+           integer() | String.t() | [String.t() | :direct] | :direct | Command.option_callback()}
           | {:avoid_negative_ts,
-             integer() | String.t() | :auto | :disabled | :make_non_negative | :make_zero}
+             integer()
+             | String.t()
+             | :auto
+             | :disabled
+             | :make_non_negative
+             | :make_zero
+             | Command.option_callback()}
           | {:fflags,
              integer()
              | String.t()
@@ -1562,15 +1673,16 @@ defmodule FFix.Muxer do
              | :nobuffer
              | :bitexact
              | :shortest
-             | :autobsf}
-          | {:fifo_options, String.t() | atom()}
-          | {:flush_packets, integer() | String.t()}
-          | {:max_delay, integer() | String.t()}
-          | {:use_fifo, boolean() | :auto | String.t()}
-          | {:raw, [Command.av_option()]}
-          | {:video, Command.mapping() | [Command.mapping()]}
-          | {:audio, Command.mapping() | [Command.mapping()]}
-          | {:sources, [Command.mapping()]}
+             | :autobsf
+             | Command.option_callback()}
+          | {:fifo_options, String.t() | atom() | Command.option_callback()}
+          | {:flush_packets, integer() | String.t() | Command.option_callback()}
+          | {:max_delay, integer() | String.t() | Command.option_callback()}
+          | {:use_fifo, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:raw, [Command.output_av_option()]}
+          | {:video, Command.binding() | [Command.binding()]}
+          | {:audio, Command.binding() | [Command.binding()]}
+          | {:sources, [Command.binding()]}
           | {:output_options, [Command.option()]}
   @doc """
   tee: Multiple muxer tee
@@ -1627,9 +1739,16 @@ defmodule FFix.Muxer do
     "max_delay" => [%{type: :int, constants: []}]
   }
   @type null_option ::
-          {:avioflags, integer() | String.t() | [String.t() | :direct] | :direct}
+          {:avioflags,
+           integer() | String.t() | [String.t() | :direct] | :direct | Command.option_callback()}
           | {:avoid_negative_ts,
-             integer() | String.t() | :auto | :disabled | :make_non_negative | :make_zero}
+             integer()
+             | String.t()
+             | :auto
+             | :disabled
+             | :make_non_negative
+             | :make_zero
+             | Command.option_callback()}
           | {:fflags,
              integer()
              | String.t()
@@ -1661,13 +1780,14 @@ defmodule FFix.Muxer do
              | :nobuffer
              | :bitexact
              | :shortest
-             | :autobsf}
-          | {:flush_packets, integer() | String.t()}
-          | {:max_delay, integer() | String.t()}
-          | {:raw, [Command.av_option()]}
-          | {:video, Command.mapping() | [Command.mapping()]}
-          | {:audio, Command.mapping() | [Command.mapping()]}
-          | {:sources, [Command.mapping()]}
+             | :autobsf
+             | Command.option_callback()}
+          | {:flush_packets, integer() | String.t() | Command.option_callback()}
+          | {:max_delay, integer() | String.t() | Command.option_callback()}
+          | {:raw, [Command.output_av_option()]}
+          | {:video, Command.binding() | [Command.binding()]}
+          | {:audio, Command.binding() | [Command.binding()]}
+          | {:sources, [Command.binding()]}
           | {:output_options, [Command.option()]}
   @doc """
   null: raw null video
@@ -1729,10 +1849,17 @@ defmodule FFix.Muxer do
     "update" => [%{type: :boolean, constants: []}]
   }
   @type image2_option ::
-          {:atomic_writing, boolean() | :auto | String.t()}
-          | {:avioflags, integer() | String.t() | [String.t() | :direct] | :direct}
+          {:atomic_writing, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:avioflags,
+             integer() | String.t() | [String.t() | :direct] | :direct | Command.option_callback()}
           | {:avoid_negative_ts,
-             integer() | String.t() | :auto | :disabled | :make_non_negative | :make_zero}
+             integer()
+             | String.t()
+             | :auto
+             | :disabled
+             | :make_non_negative
+             | :make_zero
+             | Command.option_callback()}
           | {:fflags,
              integer()
              | String.t()
@@ -1764,18 +1891,19 @@ defmodule FFix.Muxer do
              | :nobuffer
              | :bitexact
              | :shortest
-             | :autobsf}
-          | {:flush_packets, integer() | String.t()}
-          | {:frame_pts, boolean() | :auto | String.t()}
-          | {:max_delay, integer() | String.t()}
-          | {:protocol_opts, String.t() | atom()}
-          | {:start_number, integer() | String.t()}
-          | {:strftime, boolean() | :auto | String.t()}
-          | {:update, boolean() | :auto | String.t()}
-          | {:raw, [Command.av_option()]}
-          | {:video, Command.mapping() | [Command.mapping()]}
-          | {:audio, Command.mapping() | [Command.mapping()]}
-          | {:sources, [Command.mapping()]}
+             | :autobsf
+             | Command.option_callback()}
+          | {:flush_packets, integer() | String.t() | Command.option_callback()}
+          | {:frame_pts, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:max_delay, integer() | String.t() | Command.option_callback()}
+          | {:protocol_opts, String.t() | atom() | Command.option_callback()}
+          | {:start_number, integer() | String.t() | Command.option_callback()}
+          | {:strftime, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:update, boolean() | :auto | String.t() | Command.option_callback()}
+          | {:raw, [Command.output_av_option()]}
+          | {:video, Command.binding() | [Command.binding()]}
+          | {:audio, Command.binding() | [Command.binding()]}
+          | {:sources, [Command.binding()]}
           | {:output_options, [Command.option()]}
   @doc """
   image2: image2 sequence

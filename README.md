@@ -235,6 +235,77 @@ provide `new/2` constructors for this lower layer; `name: nil` leaves selection
 to FFmpeg. Outputs store ordered `Mapping` values in `mappings`, not `sources`;
 existing source-taking output helpers wrap bare references automatically.
 
+### Named Streams In Option Callbacks
+
+Give output mappings names when another option needs to refer to them. Option
+callbacks receive a plain map of their **final output positions**, so reordering
+mappings does not leave stale indexes inside strings:
+
+```elixir
+FFix.command("input.mp4", fn source ->
+  [high, low] = FFix.Filter.split(FFix.video(source), outputs: 2)
+
+  video_720 =
+    high
+    |> FFix.Filter.scale(w: -2, h: 720)
+    |> Encoder.libx264(b: "800k", maxrate: "800k", bufsize: "1600k")
+
+  video_360 =
+    low
+    |> FFix.Filter.scale(w: -2, h: 360)
+    |> Encoder.libx264(b: "400k", maxrate: "400k", bufsize: "800k", g: 12)
+
+  audio_track = Encoder.aac(FFix.audio(source), b: "64k")
+
+  Muxer.hls("out/%v.m3u8",
+    sources: [v720: video_720, v360: video_360, aud: audio_track],
+    hls_time: 2,
+    var_stream_map: fn streams ->
+      "#{streams.v720.specifier},agroup:a,name:720p " <>
+        "#{streams.v360.specifier},agroup:a,name:360p " <>
+        "#{streams.aud.specifier},agroup:a,name:audio,default:yes"
+    end
+  )
+end)
+```
+
+Create the output directory before executing this command. The example preserves
+one shared audio rendition rather than encoding the same audio for each video.
+
+The callback receives:
+
+```elixir
+%{
+  v720: %{index: 0, specifier: "v:0"},
+  v360: %{index: 1, specifier: "v:1"},
+  aud: %{index: 2, specifier: "a:0"}
+}
+```
+
+`index` is absolute within the output. `specifier` counts within video or audio.
+With `sources: [aud: audio_track, v360: video_360, v720: video_720]`, `v720`
+becomes `%{index: 2, specifier: "v:1"}` and its encoding settings follow it too.
+Indexes restart for each output. Names are explicit atoms, unique within that
+output; they are not inferred from variable names or graph export labels.
+
+This is generic: encoder options, muxer options, and raw output CLI options can
+all accept callbacks. There is no special parser for `var_stream_map`. Callbacks
+return ordinary option values, including flag lists on named helpers. Unknown
+option names are checked immediately; metadata value checks run on the returned
+value during serialization. Raw strings and unnamed mappings remain supported.
+Unnamed mappings count toward indexes but do not appear in the callback map.
+
+Callbacks run once per supplied option **per serialization**, not when building
+or structurally validating a command. Keep them pure: printing and executing a
+command can each call them. A missing name raises `KeyError`; callback exceptions
+are not hidden. A callback cannot return another callback or change mappings.
+
+An output using callbacks must select one known audio/video stream per mapping,
+including unnamed ones. Broad/raw selectors and unknown filter output media are
+rejected rather than guessed; use `FFix.shape/2` for dynamic filter shapes when
+needed. This does not probe media files. Input and global options do not receive
+output-stream callbacks.
+
 ### Refresh Helper Metadata
 
 The named functions, docs, and typespecs are checked-in generated Elixir code.
