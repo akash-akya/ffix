@@ -116,6 +116,140 @@ FFix.run(cmd)
 `FFix.to_argv/1` is the canonical boundary. `FFix.to_shell_string/1` is for
 logs and debugging.
 
+## Codec And Format Shortcuts
+
+Named helpers construct the same command data without manual structs:
+
+```elixir
+alias FFix.{Decoder, Demuxer, Encoder, Muxer}
+
+source =
+  Demuxer.mov("input.mp4")
+  |> Decoder.h264({:video, 0}, threads: 2)
+
+cmd =
+  FFix.command(source, fn source ->
+    scaled = FFix.Filter.scale(FFix.video(source), w: 1280, h: -2)
+
+    Muxer.mp4("main.mp4",
+      video: Encoder.libx264(scaled, crf: 18, preset: "slow"),
+      audio: FFix.stream_copy(FFix.audio(source)),
+      movflags: [:faststart],
+      output_options: [t: 10]
+    )
+  end)
+
+FFix.to_argv(cmd)
+```
+
+This example assumes H.264 video and copy-compatible audio. Usually you can
+omit explicit demuxer/decoder selection and pass `"input.mp4"` directly.
+
+`command/2` receives normalized inputs and collects the filter plans attached to
+its returned outputs. It neither runs FFmpeg nor inserts implicit splits. Keep
+`command/3` for separate graph/output callbacks, or `Command.new/1` and
+`FFix.graph/1` for explicit graph settings, terminal sinks, and reusable exports.
+The one-callback form accepts `global: [...]` as a third argument.
+
+| Helper | Returns |
+| --- | --- |
+| `video(input, index \\ 0)`, `audio(input, index \\ 0)` | One input stream reference |
+| `Encoder.libx264(stream, options)` | One configured output mapping |
+| `stream_copy(stream)` | One packet-copy mapping, not the `copy` video filter |
+| `Muxer.mp4(target, options)` | An output declaration |
+| `Demuxer.mov(source, options)` | An input declaration |
+| `Decoder.h264(input, selector, options)` | An updated input declaration |
+
+`use FFix` imports the selectors, `stream_copy`, and command/input/output helpers
+alongside the existing filters. Encoder, decoder, and format helpers remain
+module-qualified to avoid name collisions.
+
+### Compose Ordinary Functions
+
+```elixir
+def web_video(source, options \\ []) do
+  Encoder.libx264(source, Keyword.merge([crf: 18, preset: "slow"], options))
+end
+```
+
+```elixir
+FFix.command("input.mp4", fn source ->
+  Muxer.matroska("qualities.mkv",
+    sources: [
+      FFix.stream_copy(FFix.audio(source)),
+      web_video(FFix.video(source)),
+      web_video(FFix.video(source), crf: 28)
+    ]
+  )
+end)
+```
+
+The audio becomes output stream 0, and the two independent video encodes become
+streams 1 and 2. Encoder options receive those indexes automatically. Indexes
+restart for each output. Reusing a mapping does not share encoded packets.
+
+Use `video/1`, `audio/1`, or explicit indexed access for configured mappings.
+Broad selectors such as `source[:audio]` can select several streams and retain
+that meaning. If an output contains configured encoding, all its mappings must
+select individual streams. Actual filtered outputs cannot use stream copy and
+must be mapped exactly once; use `split` or `asplit` for multiple consumers.
+
+Decoder shortcuts without a selector configure the first stream of their media
+type, e.g. `Decoder.aac(input, threads: 2)`. Configure inputs before passing them
+into a command. Updating an input preserves its identity, but does not mutate an
+input already held by an existing command. Independent decoding of the same
+track requires separate input declarations.
+
+### Options And Escape Hatches
+
+Named helpers include documentation, option typespecs, and basic validation from
+a recorded FFmpeg 7.1.5 baseline. They cover a selected set of common codecs and
+formats, not every registration. They do not query the installed build, emit
+reported defaults, or guarantee codec/container compatibility or hardware
+availability. Applicable shared options supplement private help; metadata owners
+remain distinct when names overlap.
+
+Component options have no leading dash or stream specifier. Booleans are explicit
+values, and flag lists become FFmpeg strings. Other compound values use strings;
+array delimiters are not guessed. Strings remain open values, so validation does
+not pretend FFmpeg's reported constants and ranges are exhaustive.
+
+```elixir
+Encoder.libx264(video, crf: 18, raw: [{"new_option", "value"}])
+Encoder.named(video, "vendor_encoder", [{"vendor_option", "value"}])
+Muxer.named("out.file", "vendor_muxer", sources: [mapped_video])
+Demuxer.named("in.file", "vendor_demuxer", [{"vendor_option", "value"}])
+Decoder.named(input, {:video, 0}, "vendor_decoder", [{"vendor_option", "value"}])
+```
+
+`raw:` bypasses metadata checks, not structural safety checks. Duplicated options,
+pre-scoped component keys, and conflicting raw codec/format selections are
+rejected. Use `output_options:` for raw output CLI controls on muxer shortcuts,
+and `input_options:` for raw input controls on demuxer shortcuts. Those options
+are not muxer/demuxer AVOptions.
+
+The generic `input/2` and `output/2` remain available for automatic format
+selection and raw CLI options. They also accept independent configurations via
+`demuxer:`/`decoders:` and `muxer:` respectively. The four configuration modules
+provide `new/2` constructors for this lower layer; `name: nil` leaves selection
+to FFmpeg. Outputs store ordered `Mapping` values in `mappings`, not `sources`;
+existing source-taking output helpers wrap bare references automatically.
+
+### Refresh Helper Metadata
+
+The named functions, docs, and typespecs are checked-in generated Elixir code.
+No new FFmpeg scans are added to compilation. From the FFix repository:
+
+```sh
+mix ffix.gen.helpers --check
+mix ffix.gen.helpers
+mix ffix.gen.helpers --refresh --ffmpeg /usr/bin/ffmpeg
+```
+
+Only `--refresh` captures live metadata. Normal generation reads the recorded
+snapshot; the generic `named` functions cover implementations without helpers.
+The existing filter helpers still perform their original compile-time discovery.
+
 ## Discover FFmpeg Capabilities
 
 `FFix.Discovery` inspects the installed build without adding a command DSL:

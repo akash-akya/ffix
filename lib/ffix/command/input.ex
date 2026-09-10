@@ -7,11 +7,22 @@ defmodule FFix.Command.Input do
   selectors:
 
     * `input[:input]` maps the whole input, like `-map 0`
-    * `input[:video]` maps/selects the first video stream class, like `0:v`
-    * `input[:audio]` maps/selects the first audio stream class, like `0:a`
+    * `input[:video]` maps the matching video streams, like `0:v`
+    * `input[:audio]` maps the matching audio streams, like `0:a`
     * `input[audio: 1]` maps/selects a specific stream class index, like
       `0:a:1`
     * `input[raw: "s?"]` keeps an explicit ffmpeg selector escape hatch
+
+  `demuxer` optionally selects and configures an `FFix.Demuxer`. Its AVOptions
+  remain separate from raw input CLI options and are rendered before `-i`.
+
+  `decoders` maps indexed selectors (`{:video, n}` or `{:audio, n}`) to
+  `FFix.Decoder` configurations. Decoder options are rendered before this
+  input's `-i`, independently of its position in the command. Updating this
+  configuration preserves the input identity used by existing stream references.
+
+  Keep decoder configuration separate from raw codec selections/options in
+  `options`; conflicting option names are rejected rather than overridden.
 
   ## Examples
 
@@ -30,13 +41,17 @@ defmodule FFix.Command.Input do
   @type source :: String.t() | :stdin | {:pipe, non_neg_integer()} | {:url, String.t()}
   @type option :: {atom() | String.t(), term()}
 
+  @type decoder_selector :: {:video | :audio, non_neg_integer()}
+
   @type t :: %__MODULE__{
           source: source(),
           id: reference() | nil,
-          options: [option()]
+          options: [option()],
+          demuxer: FFix.Demuxer.t() | nil,
+          decoders: %{decoder_selector() => FFix.Decoder.t()}
         }
 
-  defstruct [:source, :id, options: []]
+  defstruct [:source, :id, :demuxer, options: [], decoders: %{}]
 
   @doc false
   @spec fetch(t(), term()) :: {:ok, FFix.Stream.t()} | :error

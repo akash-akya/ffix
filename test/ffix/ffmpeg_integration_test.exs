@@ -2,8 +2,8 @@ defmodule FFix.FFmpegIntegrationTest do
   use ExUnit.Case, async: false
 
   alias FFix.Command
-  alias FFix.Filter
-  alias FFix.Graph
+  alias FFix.Command.{Mapping, Output}
+  alias FFix.{Decoder, Demuxer, Encoder, Filter, Graph, Muxer}
 
   @moduletag :integration
 
@@ -185,6 +185,150 @@ defmodule FFix.FFmpegIntegrationTest do
 
     assert_nonempty_file!(output_path)
     assert ["video", "audio"] == probe_codec_types!(output_path)
+  end
+
+  test "runs separately configured encodes of one input after copied audio", %{
+    tmp_dir: tmp_dir,
+    sample_video: sample_video
+  } do
+    input = Command.input(sample_video)
+    input = %{input | decoders: %{{:video, 0} => %Decoder{name: "mpeg4", options: [threads: 1]}}}
+    output_path = Path.join(tmp_dir, "two-encodes.mkv")
+
+    output = %Output{
+      target: output_path,
+      mappings: [
+        %Mapping{source: input[audio: 0], encoding: :copy},
+        %Mapping{
+          source: input[video: 0],
+          encoding: %Encoder{
+            name: "mpeg4",
+            options: [b: 300_000, threads: 1, data_partitioning: false]
+          }
+        },
+        %Mapping{
+          source: input[video: 0],
+          encoding: %Encoder{
+            name: "mpeg4",
+            options: [b: 600_000, threads: 1, data_partitioning: true]
+          }
+        }
+      ],
+      muxer: %Muxer{name: "matroska", options: [cluster_time_limit: 500]},
+      options: [t: 0.3]
+    }
+
+    command = %Command{global_options: ffmpeg_globals(), inputs: [input], outputs: [output]}
+    run_ffmpeg!(command)
+
+    assert_nonempty_file!(output_path)
+    assert probe_codec_types!(output_path) == ["audio", "video", "video"]
+  end
+
+  test "runs configured filter exports through independent encoders and muxers", %{
+    tmp_dir: tmp_dir,
+    sample_video: sample_video
+  } do
+    input = Command.input(sample_video)
+    [master, preview] = Filter.split(input[video: 0], outputs: 2)
+    preview = Filter.scale(preview, w: 80, h: 48)
+    graph = FFix.graph(outputs: [master: master, preview: preview])
+
+    encoder = %Encoder{name: "mpeg4", options: [b: 300_000, threads: 1]}
+    master_path = Path.join(tmp_dir, "configured-master.mp4")
+    preview_path = Path.join(tmp_dir, "configured-preview.mkv")
+
+    master_output = %Output{
+      target: master_path,
+      mappings: [
+        %Mapping{source: graph[:master], encoding: encoder},
+        %Mapping{source: input[audio: 0], encoding: :copy}
+      ],
+      muxer: %Muxer{name: "mp4", options: [movflags: "faststart", empty_hdlr_name: true]},
+      options: [t: 0.3]
+    }
+
+    preview_output = %Output{
+      target: preview_path,
+      mappings: [%Mapping{source: graph[:preview], encoding: encoder}],
+      muxer: %Muxer{name: "matroska"},
+      options: [t: 0.3]
+    }
+
+    command = %Command{
+      global_options: ffmpeg_globals(),
+      inputs: [input],
+      graph: graph,
+      outputs: [master_output, preview_output]
+    }
+
+    run_ffmpeg!(command)
+
+    assert_nonempty_file!(master_path)
+    assert_nonempty_file!(preview_path)
+    assert probe_codec_types!(master_path) == ["video", "audio"]
+    assert probe_dimensions!(preview_path) == {80, 48}
+  end
+
+  test "shortcut pipeline runs demuxing, decoding, filtered encodes, and independent muxers", %{
+    tmp_dir: tmp_dir,
+    sample_video: sample_video
+  } do
+    input = Demuxer.mov(sample_video, ignore_editlist: true) |> Decoder.mpeg4(threads: 1)
+    main_path = Path.join(tmp_dir, "shortcuts.mp4")
+    preview_path = Path.join(tmp_dir, "shortcuts-preview.mkv")
+
+    command =
+      FFix.command(
+        input,
+        fn source ->
+          [main, preview] = Filter.split(FFix.video(source), outputs: 2)
+          preview = Filter.scale(preview, w: 80, h: 48)
+
+          [
+            Muxer.mp4(main_path,
+              video: Encoder.mpeg4(main, b: 300_000, threads: 1),
+              audio: FFix.stream_copy(FFix.audio(source)),
+              movflags: [:faststart],
+              empty_hdlr_name: true,
+              output_options: [t: 0.3]
+            ),
+            Muxer.matroska(preview_path,
+              video: Encoder.mpeg4(preview, b: 200_000, threads: 1, data_partitioning: true),
+              output_options: [t: 0.3]
+            )
+          ]
+        end,
+        global: ffmpeg_globals()
+      )
+
+    run_ffmpeg!(command)
+    assert probe_codec_types!(main_path) == ["video", "audio"]
+    assert probe_dimensions!(preview_path) == {80, 48}
+  end
+
+  test "rawvideo demuxer and image output shortcuts preserve an explicit input format", %{
+    tmp_dir: tmp_dir
+  } do
+    raw_path = Path.join(tmp_dir, "frame.rgb")
+    png_path = Path.join(tmp_dir, "frame.png")
+    File.write!(raw_path, :binary.copy(<<255, 0, 0>>, 16 * 16))
+
+    input =
+      Demuxer.rawvideo(raw_path, video_size: "16x16", pixel_format: :rgb24, framerate: 1)
+      |> Decoder.rawvideo(threads: 1)
+
+    command =
+      FFix.command(
+        input,
+        fn source ->
+          Muxer.image2(png_path, video: Encoder.png(FFix.video(source)), update: true)
+        end,
+        global: ffmpeg_globals()
+      )
+
+    run_ffmpeg!(command)
+    assert probe_dimensions!(png_path) == {16, 16}
   end
 
   test "runner parses ffmpeg logs and progress events" do

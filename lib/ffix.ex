@@ -4,38 +4,37 @@ defmodule FFix do
 
   The usual workflow is:
 
-    * pass input sources to `command/3`
-    * build streams with generated `FFix.Filter` helpers
-    * map streams to outputs with `output/2`
+    * pass input sources to `command/2`
+    * select streams with `video/1` and `audio/1`, then use `FFix.Filter` helpers
+    * configure mappings with `FFix.Encoder` helpers or `stream_copy/1`
+    * return declarations from `output/2` or `FFix.Muxer` helpers
     * serialize with `to_argv/1` or execute with `run/2`
 
   `use FFix` imports the top-level helpers plus generated filter functions.
   Callbacks receive and return ordinary Elixir values. Examples in this module
-  assume `use FFix`; without it, call `FFix.command/3`, `FFix.output/2`, and
+  assume `use FFix`; without it, call `FFix.command/2`, `FFix.output/2`, and
   `FFix.Filter` functions directly.
 
   ## Quick Start
 
-  `command/3` is the usual entry point. Pass an input source, build filtered
-  streams in the first callback, and map streams to an output target in the
-  second callback:
+  Pass an input source and return an output declaration from the callback:
 
-      command(
-        "input.mp4",
-        fn src ->
-          src[:video] |> crop(w: 720, h: 720)
-        end,
-        fn cropped, src ->
-          output("square.mp4", video: cropped, audio: src[:audio])
-        end
-      )
+      command("input.mp4", fn source ->
+        cropped = source |> video() |> crop(w: 720, h: 720)
 
-  This reads `input.mp4`, crops the video stream, maps the original audio
-  stream, and writes `square.mp4`.
+        FFix.Muxer.mp4("square.mp4",
+          video: FFix.Encoder.libx264(cropped, crf: 18),
+          audio: FFix.Encoder.aac(audio(source), b: "128k")
+        )
+      end)
+
+  This declares a cropped video encode and an audio encode in one MP4 output.
+  The command is ordinary data; construction does not run FFmpeg.
 
   ## Choosing an API Layer
 
-    * `FFix.command/3` is the main API for building ffmpeg commands.
+    * `FFix.command/2` builds commands from one output-producing callback.
+    * `FFix.command/3` also supports separate graph and output callbacks.
     * `FFix.Command` is for constructing or transforming command structs.
     * `FFix.Graph` is for parsing, serializing, or reusing filtergraphs.
     * `FFix.Runner` is the execution boundary for running commands and
@@ -184,9 +183,16 @@ defmodule FFix do
       filter options -> inside -filter_complex
       output options -> before the output target
 
-  Output options are intentionally ffmpeg-shaped and flat for now. Encoding and
-  muxer options such as `"c:v"`, `"c:a"`, `f:`, and `movflags:` belong in
-  `output/2`.
+  Raw output options remain ffmpeg-shaped and flat. Options such as `"c:v"`,
+  `"c:a"`, `f:`, and `movflags:` can still be passed to `output/2`.
+
+  For structured configuration, attach `FFix.Decoder` values to an input's
+  `decoders` map, use `FFix.Command.Mapping` values with `FFix.Encoder` or `:copy`
+  in output sources, and set `FFix.Muxer` on the output struct. Encoding indexes
+  are derived from mapping order. Configured outputs require individual indexed
+  input streams or filtered exports, not broad selectors such as `src[:audio]`.
+  Do not mix raw codec/muxer selections or matching option names with structured
+  configuration for the same input or output.
 
   Copying is still ffmpeg's rule: direct input streams can usually be copied,
   but filtered streams must be encoded again. When mixing them, set codecs per
@@ -262,8 +268,14 @@ defmodule FFix do
     quote do
       import FFix,
         only: [
+          command: 2,
           command: 3,
           command: 4,
+          video: 1,
+          video: 2,
+          audio: 1,
+          audio: 2,
+          stream_copy: 1,
           expr: 1,
           graph: 1,
           input: 1,
@@ -309,6 +321,26 @@ defmodule FFix do
   """
   @spec input(Command.Input.source(), keyword()) :: Command.Input.t()
   def input(source, options) when is_list(options), do: Command.input(source, options)
+
+  @doc group: "Inputs and outputs"
+  @doc "Selects one video stream by its media-relative index; defaults to the first video stream."
+  @spec video(Command.Input.t(), non_neg_integer()) :: Stream.t()
+  def video(%Command.Input{} = input, index \\ 0), do: input[video: index]
+
+  @doc group: "Inputs and outputs"
+  @doc "Selects one audio stream by its media-relative index; defaults to the first audio stream."
+  @spec audio(Command.Input.t(), non_neg_integer()) :: Stream.t()
+  def audio(%Command.Input{} = input, index \\ 0), do: input[audio: index]
+
+  @doc group: "Inputs and outputs"
+  @doc """
+  Declares packet-level stream copy for one output occurrence.
+
+  This is not the `FFix.Filter.copy/2` video filter. Filtered sources cannot use
+  stream copy; command validation checks this after graph references are resolved.
+  """
+  @spec stream_copy(Command.source()) :: Command.Mapping.t()
+  def stream_copy(source), do: Command.Mapping.new(source, :copy)
 
   @doc group: "Filtergraphs"
   @doc """
@@ -419,7 +451,35 @@ defmodule FFix do
 
   @doc group: "Command building"
   @doc """
+  Builds a command from one callback returning an output or ordered output list.
+
+  The callback receives normalized inputs in their original shape. Filter plans
+  attached to mapped streams are collected into a graph; direct input mappings
+  stay direct. Repeated filtered mappings are not implicitly split. Use
+  `command/3` with separate graph/output callbacks for graph settings, terminal
+  sinks, or explicit exports.
+
+      FFix.command("input.mp4", fn source ->
+        scaled = FFix.Filter.scale(FFix.video(source), w: 1280, h: -2)
+
+        FFix.Muxer.mp4("out.mp4",
+          video: FFix.Encoder.libx264(scaled, crf: 18),
+          audio: FFix.stream_copy(FFix.audio(source))
+        )
+      end)
+
+  Pass `global: [...]` as a third argument for command-level options. Construction
+  does not run FFmpeg; use `to_argv/1` to inspect or `run/2` to execute.
+  """
+  @spec command(term(), (term() -> Command.Output.t() | [Command.Output.t()])) :: Command.t()
+  def command(inputs, outputs_fun), do: Build.command(inputs, outputs_fun)
+
+  @doc group: "Command building"
+  @doc """
   Builds a command from inputs, a graph callback, and an output callback.
+
+  Also accepts `command(inputs, output_callback, global: options)` for the
+  one-callback form described in `command/2`.
 
   Simple commands usually pass one input and return one filtered stream:
 
@@ -486,9 +546,10 @@ defmodule FFix do
           | keyword()
           | map(),
           function(),
-          function()
+          function() | keyword()
         ) :: Command.t()
-  def command(inputs, graph_fun, outputs_fun), do: Build.command(inputs, graph_fun, outputs_fun)
+  def command(inputs, callback, outputs_or_options),
+    do: Build.command(inputs, callback, outputs_or_options)
 
   @doc group: "Command building"
   @doc """
