@@ -9,3 +9,7 @@ Refresh: `mix ffix.refresh.metadata --ffmpeg /usr/bin/ffmpeg`
 Use the same FFmpeg build to reproduce a capture. Refresh is atomic and rejects
 missing previously recorded filters; intentional removals require editing the
 baseline first.
+
+`checksums.exs` separately pins BtbN binary downloads. Update it explicitly with
+`mix ffix.ffmpeg.checksum --release TAG`; download with
+`mix ffix.ffmpeg.fetch --variant gpl` (or `lgpl`). Both default to branch `9.0`.

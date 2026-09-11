@@ -400,6 +400,24 @@ registration in it does not guarantee local availability or hardware usability.
 Set `FFMPEG_BIN=/path/to/ffmpeg` for execution/discovery when the executable is
 not on `PATH`, or pass `--ffmpeg /path/to/ffmpeg` to the refresh task.
 
+## Download FFmpeg For Development
+
+Static builds come from [BtbN](https://github.com/BtbN/FFmpeg-Builds/releases).
+Explicitly record a dated build, then download either variant:
+
+```sh
+mix ffix.ffmpeg.checksum --release autobuild-2026-09-07-15-39
+mix ffix.ffmpeg.fetch --variant gpl
+mix ffix.ffmpeg.fetch --variant lgpl
+```
+
+Both tasks default to branch `9.0`; use `--branch` to select another branch.
+GPL includes libx264/libx265; LGPL excludes them. Downloads are verified against
+`priv/ffmpeg/checksums.exs` and extracted under `.ffmpeg/<archive-name>/`.
+No environment or helper metadata is changed. BtbN builds track release branches,
+not necessarily exact point releases, and older downloads may expire.
+Linux builds require glibc 2.28+ and tar/xz; macOS is not supported by BtbN.
+
 ## Installation
 
 ```elixir
