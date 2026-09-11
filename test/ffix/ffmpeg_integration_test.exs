@@ -59,7 +59,7 @@ defmodule FFix.FFmpegIntegrationTest do
         inputs: [src: src],
         graph: FFix.graph(outputs: [stacked: stacked]),
         outputs: [
-          Command.output(output_pattern, :stacked, [
+          Command.output(:stacked, output_pattern, [
             {"frames:v", 1},
             {"q:v", 3},
             {:f, :image2},
@@ -103,7 +103,7 @@ defmodule FFix.FFmpegIntegrationTest do
         inputs: [src: Command.input(sample_video)],
         graph: parsed,
         outputs: [
-          Command.output("-", [parsed[:video], parsed[:audio]], f: :null, t: 0.1, "frames:v": 1)
+          Command.output([parsed[:video], parsed[:audio]], "-", f: :null, t: 0.1, "frames:v": 1)
         ]
       )
 
@@ -135,13 +135,13 @@ defmodule FFix.FFmpegIntegrationTest do
         inputs: [src: src],
         graph: graph,
         outputs: [
-          Command.output(master_path, [graph[:master], src[audio: 0]],
+          Command.output([graph[:master], src[audio: 0]], master_path,
             vcodec: :mpeg4,
             acodec: :aac,
             shortest: true,
             t: 0.25
           ),
-          Command.output(thumb_pattern, :preview, [
+          Command.output(:preview, thumb_pattern, [
             {"frames:v", 1},
             {"q:v", 3},
             {:f, :image2},
@@ -172,7 +172,7 @@ defmodule FFix.FFmpegIntegrationTest do
         inputs: [src: src],
         graph: graph,
         outputs: [
-          Command.output(output_path, [graph[:video], graph[:audio]],
+          Command.output([graph[:video], graph[:audio]], output_path,
             vcodec: :copy,
             acodec: :copy
           )
@@ -274,7 +274,9 @@ defmodule FFix.FFmpegIntegrationTest do
     tmp_dir: tmp_dir,
     sample_video: sample_video
   } do
-    input = Demuxer.mov(sample_video, ignore_editlist: true) |> Decoder.mpeg4(threads: 1)
+    input =
+      Demuxer.mov(sample_video, ignore_editlist: true) |> Decoder.mpeg4({:video, 0}, threads: 1)
+
     main_path = Path.join(tmp_dir, "shortcuts.mp4")
     preview_path = Path.join(tmp_dir, "shortcuts-preview.mkv")
 
@@ -286,15 +288,19 @@ defmodule FFix.FFmpegIntegrationTest do
           preview = Filter.scale(preview, w: 80, h: 48)
 
           [
-            Muxer.mp4(main_path,
-              video: Encoder.mpeg4(main, b: 300_000, threads: 1),
-              audio: FFix.stream_copy(FFix.audio(source)),
+            Muxer.mp4(
+              [
+                Encoder.mpeg4(main, b: 300_000, threads: 1),
+                FFix.stream_copy(FFix.audio(source))
+              ],
+              main_path,
               movflags: [:faststart],
               empty_hdlr_name: true,
               output_options: [t: 0.3]
             ),
-            Muxer.matroska(preview_path,
-              video: Encoder.mpeg4(preview, b: 200_000, threads: 1, data_partitioning: true),
+            Muxer.matroska(
+              [Encoder.mpeg4(preview, b: 200_000, threads: 1, data_partitioning: true)],
+              preview_path,
               output_options: [t: 0.3]
             )
           ]
@@ -316,13 +322,13 @@ defmodule FFix.FFmpegIntegrationTest do
 
     input =
       Demuxer.rawvideo(raw_path, video_size: "16x16", pixel_format: :rgb24, framerate: 1)
-      |> Decoder.rawvideo(threads: 1)
+      |> Decoder.rawvideo({:video, 0}, threads: 1)
 
     command =
       FFix.command(
         input,
         fn source ->
-          Muxer.image2(png_path, video: Encoder.png(FFix.video(source)), update: true)
+          Muxer.image2([Encoder.png(FFix.video(source))], png_path, update: true)
         end,
         global: ffmpeg_globals()
       )
@@ -349,8 +355,9 @@ defmodule FFix.FFmpegIntegrationTest do
 
           sound = Encoder.aac(FFix.audio(source), b: "64k", threads: 1)
 
-          Muxer.hls(Path.join(tmp_dir, "%v.m3u8"),
-            sources: [high: high, low: low, sound: sound],
+          Muxer.hls(
+            [high: high, low: low, sound: sound],
+            Path.join(tmp_dir, "%v.m3u8"),
             # FFmpeg omits segments <= 0.5s from peak-bandwidth calculations.
             hls_time: 1,
             master_pl_name: "master.m3u8",
@@ -519,7 +526,7 @@ defmodule FFix.FFmpegIntegrationTest do
     FFix.command(
       global: [nostdin: true, loglevel: "level+info", stats_period: 0.1, threads: 1],
       inputs: [src: Command.input("testsrc=size=16x16:rate=10:duration=0.3", f: :lavfi)],
-      outputs: [Command.output("-", FFix.Graph.input(0, :video), f: :null)]
+      outputs: [Command.output(FFix.Graph.input(0, :video), "-", f: :null)]
     )
   end
 

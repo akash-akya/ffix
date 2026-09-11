@@ -19,7 +19,7 @@ defmodule FFix.Demuxer do
 
   Strings remain open FFmpeg values, and flag lists are normalized. Use
   `raw: [{"new_option", "value"}]` to bypass metadata checks for selected options,
-  or `named/3` for a dynamic format without a recorded schema. `new/2` builds an
+  or `demux/3` for a dynamic format without a recorded schema. `new/2` builds an
   unbound configuration for `FFix.Command.Input.demuxer`.
   """
 
@@ -37,8 +37,8 @@ defmodule FFix.Demuxer do
   end
 
   @doc "Builds an input for a dynamic demuxer name; extra CLI controls go in input_options."
-  @spec named(Input.source(), String.t(), list()) :: Input.t()
-  def named(source, name, options \\ []), do: build_input(source, name, options, nil)
+  @spec demux(Input.source(), String.t(), list()) :: Input.t()
+  def demux(source, name, options \\ []), do: build_input(source, name, options, nil)
 
   defp build_input(source, name, options, schema) do
     {bindings, options} = Options.split!(options, [:input_options])

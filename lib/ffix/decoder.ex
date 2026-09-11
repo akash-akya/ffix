@@ -3,12 +3,11 @@ defmodule FFix.Decoder do
   Decoder shortcuts that configure streams on an input declaration.
 
   Named helpers return an updated `FFix.Command.Input`, preserving its identity.
-  Their short form selects the first stream of the decoder's media type. Pass
-  an indexed selector and options explicitly to configure another stream.
+  Every call requires an indexed selector. Only options are optional.
 
       input
       |> FFix.Decoder.h264({:video, 0}, threads: 2)
-      |> FFix.Decoder.aac(threads: 1)
+      |> FFix.Decoder.aac({:audio, 0}, threads: 1)
 
   All decoded uses of an input stream share its configuration. Independent
   decoding requires separate input declarations, even for the same source file.
@@ -21,8 +20,9 @@ defmodule FFix.Decoder do
   `raw: [{"new_option", "value"}]` bypasses metadata checks for particular options.
   Registration in the baseline does not guarantee availability in another build.
 
-  `named/4` is the dynamic-name escape hatch. `auto/3` leaves decoder selection to
-  FFmpeg. `new/2` constructs an unbound configuration for the lower-level model.
+  `decode/4` forwards codec or decoder names and options without a metadata schema.
+  `auto/3` leaves decoder selection to FFmpeg. `new/2` constructs an unbound
+  configuration for the lower-level model.
   """
 
   alias FFix.Command
@@ -38,9 +38,9 @@ defmodule FFix.Decoder do
     Command.validate_component!(%__MODULE__{name: name, options: options})
   end
 
-  @doc "Configures one indexed input stream using a dynamic decoder name."
-  @spec named(Input.t(), Input.decoder_selector(), String.t() | nil, list()) :: Input.t()
-  def named(input, selector, name, options \\ []) do
+  @doc "Configures one explicitly indexed input stream using a codec or decoder name."
+  @spec decode(Input.t(), String.t() | nil, Input.decoder_selector(), list()) :: Input.t()
+  def decode(input, name, selector, options \\ []) do
     unless is_struct(input, Input) do
       raise ArgumentError, "decoder configuration expects an input declaration, not a stream"
     end
@@ -53,7 +53,7 @@ defmodule FFix.Decoder do
 
   @doc "Configures one indexed input stream without forcing a decoder implementation."
   @spec auto(Input.t(), Input.decoder_selector(), list()) :: Input.t()
-  def auto(input, selector, options \\ []), do: named(input, selector, nil, options)
+  def auto(input, selector, options \\ []), do: decode(input, nil, selector, options)
 
   defp check_media!(selector, media) do
     case selector do

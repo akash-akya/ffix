@@ -28,7 +28,7 @@ defmodule FFix.Helpers do
       entry.names
       |> Enum.filter(&String.match?(&1, ~r/^[a-z][a-z0-9_]*$/))
       |> Enum.map(fn name ->
-        if name in ~w(new named auto build_input build_output check_media!) do
+        if name in ~w(new encode decode mux demux auto build_input build_output check_media!) do
           raise ArgumentError, "helper name conflicts with an existing function: #{name}"
         end
 
@@ -107,43 +107,36 @@ defmodule FFix.Helpers do
               options =
                 FFix.Options.normalize!(options, unquote(schema), unquote(name <> " encoder"))
 
-              named(source, unquote(name), options)
+              encode(source, unquote(name), options)
             end
           end
 
         :decoder ->
-          selector = Macro.escape({entry.media_type, 0})
-
           quote do
-            @spec unquote(function_name)(FFix.Command.Input.t(), [unquote(type_name)]) ::
-                    FFix.Command.Input.t()
-            def unquote(function_name)(input, options \\ []),
-              do: unquote(function_name)(input, unquote(selector), options)
-
-            @doc unquote(
-                   "Configures an explicitly indexed input stream. See `#{name}/2` for options."
-                 )
             @spec unquote(function_name)(
                     FFix.Command.Input.t(),
                     FFix.Command.Input.decoder_selector(),
                     [unquote(type_name)]
                   ) :: FFix.Command.Input.t()
-            def unquote(function_name)(input, selector, options) do
+            def unquote(function_name)(input, selector, options \\ []) do
               check_media!(selector, unquote(entry.media_type))
 
               options =
                 FFix.Options.normalize!(options, unquote(schema), unquote(name <> " decoder"))
 
-              named(input, selector, unquote(name), options)
+              decode(input, unquote(name), selector, options)
             end
           end
 
         :muxer ->
           quote do
-            @spec unquote(function_name)(FFix.Command.Output.target(), [unquote(type_name)]) ::
-                    FFix.Command.Output.t()
-            def unquote(function_name)(target, options) do
-              build_output(target, unquote(name), options, unquote(schema))
+            @spec unquote(function_name)(
+                    FFix.Command.binding() | [FFix.Command.binding()],
+                    FFix.Command.Output.target(),
+                    [unquote(type_name)]
+                  ) :: FFix.Command.Output.t()
+            def unquote(function_name)(sources, target, options \\ []) do
+              build_output(sources, unquote(name), target, options, unquote(schema))
             end
           end
 
@@ -232,13 +225,7 @@ defmodule FFix.Helpers do
 
     case kind do
       :muxer ->
-        common ++
-          [
-            quote(do: {:video, FFix.Command.binding() | [FFix.Command.binding()]}),
-            quote(do: {:audio, FFix.Command.binding() | [FFix.Command.binding()]}),
-            quote(do: {:sources, [FFix.Command.binding()]}),
-            quote(do: {:output_options, [FFix.Command.option()]})
-          ]
+        common ++ [quote(do: {:output_options, [FFix.Command.option()]})]
 
       :demuxer ->
         common ++ [quote(do: {:input_options, [FFix.Command.option()]})]
@@ -261,10 +248,10 @@ defmodule FFix.Helpers do
           "Maps one source to an independent encoded output stream."
 
         :decoder ->
-          "Configures the first #{entry.media_type} stream; use the three-argument form for another index."
+          "Configures an explicitly indexed #{entry.media_type} input stream."
 
         :muxer ->
-          "Builds an output declaration. Pass video/audio or ordered sources; raw CLI controls go in output_options."
+          "Builds an output declaration from sources and a target. Raw CLI controls go in output_options."
 
         :demuxer ->
           "Builds an input declaration. Raw CLI controls go in input_options."

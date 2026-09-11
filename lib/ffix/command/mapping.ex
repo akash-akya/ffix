@@ -11,7 +11,7 @@ defmodule FFix.Command.Mapping do
         encoding: %FFix.Encoder{name: "libx264", options: [{"crf", 18}]}
       }
 
-  `name` optionally identifies this mapping within its output. Named `sources:`
+  `name` optionally identifies this mapping within its output. Named source
   bindings set it without changing the original mapping value. Names must be
   unique within an output and are not FFmpeg filter labels.
 

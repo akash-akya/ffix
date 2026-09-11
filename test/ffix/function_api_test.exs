@@ -27,17 +27,12 @@ defmodule FFix.FunctionAPITest do
         end,
         fn [master: master, preview: preview], inputs ->
           [
-            output("master.mp4",
-              video: master,
-              audio: inputs[:src][:audio],
+            output([master, inputs[:src][:audio]], "master.mp4",
               vcodec: :libx264,
               acodec: :aac
             ),
-            output("thumb-%03d.jpg", video: preview, f: :image2, vsync: 0),
-            output("podcast.mka",
-              audio: [inputs[:src][audio: 0], inputs[:music][:audio]],
-              acodec: :copy
-            )
+            output([preview], "thumb-%03d.jpg", f: :image2, vsync: 0),
+            output([inputs[:src][audio: 0], inputs[:music][:audio]], "podcast.mka", acodec: :copy)
           ]
         end
       )
@@ -53,13 +48,11 @@ defmodule FFix.FunctionAPITest do
         end,
         fn graph, inputs ->
           [
-            output("master.mp4",
-              video: graph[:master],
-              audio: inputs[:src][:audio],
+            output([graph[:master], inputs[:src][:audio]], "master.mp4",
               vcodec: :libx264,
               acodec: :aac
             ),
-            output("thumb-%03d.jpg", video: graph[:preview], f: :image2, vsync: 0)
+            output([graph[:preview]], "thumb-%03d.jpg", f: :image2, vsync: 0)
           ]
         end
       )
@@ -77,8 +70,9 @@ defmodule FFix.FunctionAPITest do
         end,
         fn [preview: preview], inputs ->
           [
-            output("preview.mkv",
-              sources: [preview, inputs[:src][:audio]],
+            output(
+              [preview, inputs[:src][:audio]],
+              "preview.mkv",
               vcodec: :libx264,
               acodec: :copy
             )
@@ -98,7 +92,7 @@ defmodule FFix.FunctionAPITest do
           ]
         end,
         fn [preview: preview] ->
-          output("thumb-%03d.jpg", video: preview, f: :image2, vsync: 0)
+          output([preview], "thumb-%03d.jpg", f: :image2, vsync: 0)
         end
       )
     end
@@ -114,7 +108,7 @@ defmodule FFix.FunctionAPITest do
           ]
         end,
         fn [outputs: outputs] ->
-          output("out.mp4", video: outputs, vcodec: :copy)
+          output([outputs], "out.mp4", vcodec: :copy)
         end
       )
     end
@@ -232,30 +226,78 @@ defmodule FFix.FunctionAPITest do
            ]
   end
 
-  test "rejects mixing role outputs with sources" do
-    assert_raise ArgumentError, "output/2 accepts either media roles or :sources, not both", fn ->
-      FFix.output("out.mp4", video: :preview, sources: [:audio])
+  test "output sources preserve order without media grouping" do
+    source = FFix.input("input.mp4")
+    sound = FFix.audio(source)
+    picture = FFix.video(source)
+    sources = [{:sound, sound}, picture, {:main, picture}]
+    output = FFix.output(sources, "out.mp4", t: 2)
+
+    assert Enum.map(output.mappings, & &1.source) == [sound, picture, picture]
+    assert Enum.map(output.mappings, & &1.name) == [:sound, nil, :main]
+    assert output == FFix.Command.output(sources, "out.mp4", t: 2)
+    assert output.options == [t: 2]
+  end
+
+  test "output accepts a single source, mapping, or named binding" do
+    source = FFix.input("input.mp4") |> FFix.video()
+    mapping = FFix.stream_copy(source)
+
+    assert source |> FFix.output("out.mp4") |> Map.fetch!(:mappings) ==
+             [FFix.Command.Mapping.new(source)]
+
+    assert mapping |> FFix.output("out.mp4") |> Map.fetch!(:mappings) == [mapping]
+
+    assert {:main, mapping} |> FFix.output("out.mp4") |> Map.fetch!(:mappings) ==
+             [%{mapping | name: :main}]
+  end
+
+  test "output requires nonempty sources and rejects the old target-first forms" do
+    for constructor <- [&FFix.output/2, &FFix.Command.output/2] do
+      for sources <- [[], nil] do
+        assert_raise ArgumentError, "output requires at least one source", fn ->
+          constructor.(sources, "out.mp4")
+        end
+      end
+
+      for old_sources <- [[:preview], [video: :preview], [sources: [:preview]]] do
+        assert_raise ArgumentError, ~r/expected a stream or graph export source/, fn ->
+          constructor.("out.mp4", old_sources)
+        end
+      end
     end
   end
 
-  test "rejects output/2 source lists" do
-    assert_raise ArgumentError,
-                 "output/2 expects keyword options with :video, :audio, or :sources",
-                 fn ->
-                   FFix.output("out.mp4", [:preview])
-                 end
-  end
+  test "appending outputs uses sources before targets with only options defaulted" do
+    source = FFix.input("input.mp4", ss: 1)
+    picture = FFix.video(source)
+    sound = FFix.audio(source)
 
-  test "rejects unsupported output media roles" do
-    assert_raise ArgumentError,
-                 "unsupported output media roles: [:subtitle]; use :video, :audio, or :sources",
-                 fn ->
-                   FFix.output("out.mkv", subtitle: :subtitles, c: :copy)
-                 end
-  end
+    command =
+      FFix.Command.new(inputs: [source])
+      |> FFix.Command.output(picture, "video.mp4")
+      |> FFix.Command.output(sound, "audio.mka", t: 2)
 
-  test "does not expose top-level output/3" do
-    refute function_exported?(FFix, :output, 3)
+    assert command.outputs == [
+             FFix.output(picture, "video.mp4"),
+             FFix.output(sound, "audio.mka", t: 2)
+           ]
+
+    assert FFix.to_argv(command) == [
+             "ffmpeg",
+             "-ss",
+             "1",
+             "-i",
+             "input.mp4",
+             "-map",
+             "0:v:0",
+             "video.mp4",
+             "-map",
+             "0:a:0",
+             "-t",
+             "2",
+             "audio.mka"
+           ]
   end
 
   test "rejects direct keyword graph specs in commands" do
@@ -265,7 +307,7 @@ defmodule FFix.FunctionAPITest do
           inputs: [src: FFix.input("input.mp4")],
           graph: [video: FFix.Graph.input(0, :video)],
           outputs: fn graph ->
-            FFix.output("out.mp4", video: graph.video, vcodec: :copy)
+            FFix.output([graph.video], "out.mp4", vcodec: :copy)
           end
         )
       end

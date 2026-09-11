@@ -182,8 +182,7 @@ preview_cmd =
     end,
     fn video ->
       # MP4 on stdout needs fragmented MP4 flags so it can stream as bytes.
-      output(:stdout,
-        video: video,
+      output([video], :stdout,
         f: :mp4,
         # `movflags` is a flags option; lists serialize as `frag_keyframe+empty_moov`.
         movflags: [:frag_keyframe, :empty_moov],
@@ -234,8 +233,7 @@ normalized_cmd =
       |> crop(w: 1280, h: 720)
     end,
     fn video ->
-      output(:stdout,
-        video: video,
+      output([video], :stdout,
         f: :mp4,
         # Fragmented MP4 lets ffmpeg write MP4 to a pipe instead of seeking.
         movflags: [:frag_keyframe, :empty_moov],
@@ -313,9 +311,7 @@ titled_cmd =
       [video: video, audio: audio]
     end,
     fn [video: video, audio: audio] ->
-      output(titled_path,
-        video: video,
-        audio: audio,
+      output([video, audio], titled_path,
         "c:v": :libx264,
         "c:a": :aac,
         pix_fmt: :yuv420p,
@@ -377,8 +373,7 @@ thumbnail_cmd =
       )
     end,
     fn image ->
-      output(thumbnail_path,
-        video: image,
+      output([image], thumbnail_path,
         # One encoded video frame becomes one JPEG.
         "frames:v": 1,
         # Lower q:v is better JPEG quality in ffmpeg's image2 muxer.
@@ -433,9 +428,7 @@ phone_cmd =
       [video: video, audio: audio]
     end,
     fn [video: video, audio: audio] ->
-      output(phone_path,
-        video: video,
-        audio: audio,
+      output([video, audio], phone_path,
         "c:v": :libx264,
         "c:a": :aac,
         pix_fmt: :yuv420p,
@@ -539,26 +532,21 @@ branch_cmd =
     end,
     fn outputs ->
       [
-        output(wide_path,
-          video: outputs[:wide_video],
-          audio: outputs[:wide_audio],
+        output([outputs[:wide_video], outputs[:wide_audio]], wide_path,
           "c:v": :libx264,
           "c:a": :aac,
           pix_fmt: :yuv420p,
           preset: :veryfast,
           shortest: true
         ),
-        output(phone_branch_path,
-          video: outputs[:phone_video],
-          audio: outputs[:phone_audio],
+        output([outputs[:phone_video], outputs[:phone_audio]], phone_branch_path,
           "c:v": :libx264,
           "c:a": :aac,
           pix_fmt: :yuv420p,
           preset: :veryfast,
           shortest: true
         ),
-        output(sheet_path,
-          video: outputs[:review_sheet],
+        output([outputs[:review_sheet]], sheet_path,
           # The sheet branch is a video stream with one frame; write it as JPEG.
           "frames:v": 1,
           "q:v": 3,
@@ -651,9 +639,7 @@ bumper_cmd =
       [video: video, audio: audio]
     end,
     fn [video: video, audio: audio] ->
-      output(bumper_path,
-        video: video,
-        audio: audio,
+      output([video, audio], bumper_path,
         "c:v": :libx264,
         "c:a": :aac,
         pix_fmt: :yuv420p,

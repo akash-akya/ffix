@@ -73,7 +73,7 @@ defmodule FFix.CommandConfigurationTest do
     command =
       Command.new(
         inputs: [second, first],
-        outputs: [Command.output("out.mkv", [first_video, second[video: 0]])]
+        outputs: [Command.output([first_video, second[video: 0]], "out.mkv")]
       )
 
     assert Command.to_argv(command) == [
@@ -112,7 +112,7 @@ defmodule FFix.CommandConfigurationTest do
 
     command = %Command{
       inputs: [input],
-      outputs: [Command.output("out.mkv", input[:input])]
+      outputs: [Command.output(input[:input], "out.mkv")]
     }
 
     assert Command.to_argv(command) == [
@@ -301,11 +301,12 @@ defmodule FFix.CommandConfigurationTest do
         fn exports, inputs ->
           assert inputs[:source].decoders == input.decoders
 
-          FFix.output("out.mkv",
-            sources: [
+          FFix.output(
+            [
               %Mapping{source: exports.video, encoding: %Encoder{name: "libx264"}},
               %Mapping{source: exports.audio, encoding: :copy}
-            ]
+            ],
+            "out.mkv"
           )
         end
       )
@@ -332,7 +333,7 @@ defmodule FFix.CommandConfigurationTest do
 
   test "unconfigured broad mappings retain raw codec options with a structured muxer" do
     input = Command.input("source.mkv")
-    output = Command.output("out.mkv", input[:input], c: :copy)
+    output = Command.output(input[:input], "out.mkv", c: :copy)
     output = %{output | muxer: %Muxer{name: "matroska"}}
     command = %Command{inputs: [input], outputs: [output]}
 
@@ -378,7 +379,7 @@ defmodule FFix.CommandConfigurationTest do
     command = %Command{
       inputs: [input],
       graph: graph,
-      outputs: [Command.output("out.mka", mapping)]
+      outputs: [Command.output(mapping, "out.mka")]
     }
 
     assert_raise ArgumentError, ~r/every output mapping to select one stream/, fn ->
@@ -394,7 +395,7 @@ defmodule FFix.CommandConfigurationTest do
       command = %Command{
         inputs: [input],
         graph: graph,
-        outputs: [Command.output("out.mkv", %Mapping{source: source, encoding: :copy})]
+        outputs: [Command.output(%Mapping{source: source, encoding: :copy}, "out.mkv")]
       }
 
       assert_raise ArgumentError, "cannot copy a filtered source; use an encoder", fn ->
@@ -405,7 +406,7 @@ defmodule FFix.CommandConfigurationTest do
 
   test "structured decoding requires indexed selectors and decoder values" do
     input = Command.input("source.mkv")
-    output = Command.output("out.mkv", input[video: 0])
+    output = Command.output(input[video: 0], "out.mkv")
 
     for selector <- [:video, :input, {:raw, "v:0"}, {:audio, -1}, {:video, 1.5}] do
       configured = %{input | decoders: %{selector => %Decoder{name: "h264"}}}
@@ -430,7 +431,7 @@ defmodule FFix.CommandConfigurationTest do
     mapping = %Mapping{source: input[video: 0], encoding: encoder}
 
     for option <- [{"c:v", "copy"}, {:vcodec, "copy"}, {"codec:0", "copy"}, {"crf:0", 28}] do
-      output = Command.output("out.mkv", mapping, [option])
+      output = Command.output(mapping, "out.mkv", [option])
       command = %Command{inputs: [input], outputs: [output]}
 
       assert_raise ArgumentError, ~r/cannot be combined with structured encoding/, fn ->
@@ -445,7 +446,7 @@ defmodule FFix.CommandConfigurationTest do
     mapping = %Mapping{source: input[audio: 0], encoding: encoder}
 
     for name <- ["ab", "vb"] do
-      output = Command.output("out.mkv", mapping, [{name, "64k"}])
+      output = Command.output(mapping, "out.mkv", [{name, "64k"}])
       command = %Command{inputs: [input], outputs: [output]}
 
       assert_raise ArgumentError, ~r/cannot be combined with structured encoding/, fn ->
@@ -458,7 +459,7 @@ defmodule FFix.CommandConfigurationTest do
     for option <- [{"c:v", "hevc"}, {"threads:v:0", 8}] do
       input = Command.input("source.mkv", [option])
       input = %{input | decoders: %{{:video, 0} => %Decoder{options: [threads: 2]}}}
-      output = Command.output("out.mkv", input[video: 0])
+      output = Command.output(input[video: 0], "out.mkv")
       command = %Command{inputs: [input], outputs: [output]}
 
       assert_raise ArgumentError, ~r/cannot be combined with structured decoding/, fn ->
@@ -493,7 +494,7 @@ defmodule FFix.CommandConfigurationTest do
     for option <- [{:map, "0:a"}, {:vn, true}, {:an, true}, {:attach, "cover.jpg"}] do
       command = %Command{
         inputs: [input],
-        outputs: [Command.output("out.mkv", mapping, [option])]
+        outputs: [Command.output(mapping, "out.mkv", [option])]
       }
 
       assert_raise ArgumentError, ~r/cannot be combined with structured encoding/, fn ->
@@ -504,7 +505,7 @@ defmodule FFix.CommandConfigurationTest do
 
   test "raw extra inputs and filtergraphs cannot shift configured mapping indexes" do
     input = Command.input("source.mkv")
-    output = Command.output("out.mkv", %Mapping{source: input[video: 0], encoding: :copy})
+    output = Command.output(%Mapping{source: input[video: 0], encoding: :copy}, "out.mkv")
 
     for options <- [[i: "other.mkv"], [filter_complex: "color"]] do
       global_command = %Command{global_options: options, inputs: [input], outputs: [output]}
@@ -534,7 +535,7 @@ defmodule FFix.CommandConfigurationTest do
           %{crf: 18}
         ] do
       encoder = %Encoder{name: "libx264", options: options}
-      output = Command.output("out.mkv", %Mapping{source: input[video: 0], encoding: encoder})
+      output = Command.output(%Mapping{source: input[video: 0], encoding: encoder}, "out.mkv")
       command = %Command{inputs: [input], outputs: [output]}
 
       assert_raise ArgumentError, fn -> Command.to_argv(command) end
@@ -544,7 +545,7 @@ defmodule FFix.CommandConfigurationTest do
   test "copy cannot be disguised as an encoder" do
     input = Command.input("source.mkv")
     mapping = %Mapping{source: input[video: 0], encoding: %Encoder{name: "copy"}}
-    command = %Command{inputs: [input], outputs: [Command.output("out.mkv", mapping)]}
+    command = %Command{inputs: [input], outputs: [Command.output(mapping, "out.mkv")]}
 
     assert_raise ArgumentError, "copy is a mapping mode; use encoding: :copy", fn ->
       Command.to_argv(command)

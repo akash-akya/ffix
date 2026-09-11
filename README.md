@@ -42,7 +42,7 @@ cmd =
       src[:video] |> crop(w: 720, h: 720)
     end,
     fn cropped, src ->
-      output("square.mp4", video: cropped, audio: src[:audio])
+      output([cropped, src[:audio]], "square.mp4")
     end
   )
 
@@ -59,7 +59,7 @@ cmd =
       image[:video] |> scale(w: 640, h: -1)
     end,
     fn scaled ->
-      output(:stdout, video: scaled, f: :image2pipe, vcodec: :png)
+      output([scaled], :stdout, f: :image2pipe, vcodec: :png)
     end
   )
 
@@ -89,7 +89,7 @@ command(
     )
   end,
   fn short, src ->
-    output("short.mp4", video: short, audio: src[:audio])
+    output([short, src[:audio]], "short.mp4")
   end
 )
 ```
@@ -102,7 +102,7 @@ Command-level options are the final argument:
 command(
   "input.mp4",
   fn src -> src[:video] |> scale(w: 1280, h: -1) end,
-  fn video, src -> output("scaled.mp4", video: video, audio: src[:audio]) end,
+  fn video, src -> output([video, src[:audio]], "scaled.mp4") end,
   global: [y: true]
 )
 ```
@@ -131,9 +131,9 @@ cmd =
   FFix.command(source, fn source ->
     scaled = FFix.Filter.scale(FFix.video(source), w: 1280, h: -2)
 
-    Muxer.mp4("main.mp4",
-      video: Encoder.libx264(scaled, crf: 18, preset: "slow"),
-      audio: FFix.stream_copy(FFix.audio(source)),
+    Muxer.mp4(
+      [Encoder.libx264(scaled, crf: 18, preset: "slow"), FFix.stream_copy(FFix.audio(source))],
+      "main.mp4",
       movflags: [:faststart],
       output_options: [t: 10]
     )
@@ -156,9 +156,15 @@ The one-callback form accepts `global: [...]` as a third argument.
 | `video(input, index \\ 0)`, `audio(input, index \\ 0)` | One input stream reference |
 | `Encoder.libx264(stream, options)` | One configured output mapping |
 | `stream_copy(stream)` | One packet-copy mapping, not the `copy` video filter |
-| `Muxer.mp4(target, options)` | An output declaration |
+| `Muxer.mp4(sources, target, options)` | An output declaration |
 | `Demuxer.mov(source, options)` | An input declaration |
 | `Decoder.h264(input, selector, options)` | An updated input declaration |
+
+Only options are optional in codec and format helpers. Inputs take a source;
+outputs take a source or ordered source list before the target. Decoder helpers
+require an indexed selector. Generic operations are `Encoder.encode/3`,
+`Decoder.decode/4`, `Muxer.mux/4`, and `Demuxer.demux/3`; shortcuts fix only the
+codec or format argument.
 
 `use FFix` imports the selectors, `stream_copy`, and command/input/output helpers
 alongside the existing filters. Encoder, decoder, and format helpers remain
@@ -174,12 +180,13 @@ end
 
 ```elixir
 FFix.command("input.mp4", fn source ->
-  Muxer.matroska("qualities.mkv",
-    sources: [
+  Muxer.matroska(
+    [
       FFix.stream_copy(FFix.audio(source)),
       web_video(FFix.video(source)),
       web_video(FFix.video(source), crf: 28)
-    ]
+    ],
+    "qualities.mkv"
   )
 end)
 ```
@@ -194,11 +201,10 @@ that meaning. If an output contains configured encoding, all its mappings must
 select individual streams. Actual filtered outputs cannot use stream copy and
 must be mapped exactly once; use `split` or `asplit` for multiple consumers.
 
-Decoder shortcuts without a selector configure the first stream of their media
-type, e.g. `Decoder.aac(input, threads: 2)`. Configure inputs before passing them
-into a command. Updating an input preserves its identity, but does not mutate an
-input already held by an existing command. Independent decoding of the same
-track requires separate input declarations.
+Configure inputs before passing them into a command, for example
+`Decoder.aac(input, {:audio, 0}, threads: 2)`. Updating an input preserves its
+identity, but does not mutate an input already held by an existing command.
+Independent decoding of the same track requires separate input declarations.
 
 ### Options And Escape Hatches
 
@@ -216,11 +222,17 @@ not pretend FFmpeg's reported constants and ranges are exhaustive.
 
 ```elixir
 Encoder.libx264(video, crf: 18, raw: [{"new_option", "value"}])
-Encoder.named(video, "vendor_encoder", [{"vendor_option", "value"}])
-Muxer.named("out.file", "vendor_muxer", sources: [mapped_video])
-Demuxer.named("in.file", "vendor_demuxer", [{"vendor_option", "value"}])
-Decoder.named(input, {:video, 0}, "vendor_decoder", [{"vendor_option", "value"}])
+Encoder.encode(video, "h264", crf: 23, preset: "slow")
+Encoder.encode(video, "vendor_encoder", [{"vendor_option", "value"}])
+Muxer.mux([mapped_video], "vendor_muxer", "out.file")
+Demuxer.demux("in.file", "vendor_demuxer", [{"vendor_option", "value"}])
+Decoder.decode(input, "vendor_decoder", {:video, 0}, [{"vendor_option", "value"}])
 ```
+
+`Encoder.encode/3` forwards the supplied name without choosing an implementation.
+For `"h264"`, FFmpeg selects the encoder; implementation-specific options depend
+on that choice. `Encoder.libx264/2` fixes the implementation and adds recorded
+option validation.
 
 `raw:` bypasses metadata checks, not structural safety checks. Duplicated options,
 pre-scoped component keys, and conflicting raw codec/format selections are
@@ -228,9 +240,10 @@ rejected. Use `output_options:` for raw output CLI controls on muxer shortcuts,
 and `input_options:` for raw input controls on demuxer shortcuts. Those options
 are not muxer/demuxer AVOptions.
 
-The generic `input/2` and `output/2` remain available for automatic format
-selection and raw CLI options. They also accept independent configurations via
-`demuxer:`/`decoders:` and `muxer:` respectively. The four configuration modules
+The generic `input(source, options)` and `output(sources, target, options)` support
+automatic format selection and raw CLI options; options default to `[]`. They
+also accept independent configurations via `demuxer:`/`decoders:` and `muxer:`
+respectively. The four configuration modules
 provide `new/2` constructors for this lower layer; `name: nil` leaves selection
 to FFmpeg. Outputs store ordered `Mapping` values in `mappings`, not `sources`;
 existing source-taking output helpers wrap bare references automatically.
@@ -257,8 +270,9 @@ FFix.command("input.mp4", fn source ->
 
   audio_track = Encoder.aac(FFix.audio(source), b: "64k")
 
-  Muxer.hls("out/%v.m3u8",
-    sources: [v720: video_720, v360: video_360, aud: audio_track],
+  Muxer.hls(
+    [v720: video_720, v360: video_360, aud: audio_track],
+    "out/%v.m3u8",
     hls_time: 2,
     var_stream_map: fn streams ->
       "#{streams.v720.specifier},agroup:a,name:720p " <>
@@ -283,7 +297,7 @@ The callback receives:
 ```
 
 `index` is absolute within the output. `specifier` counts within video or audio.
-With `sources: [aud: audio_track, v360: video_360, v720: video_720]`, `v720`
+With `[aud: audio_track, v360: video_360, v720: video_720]` as the sources, `v720`
 becomes `%{index: 2, specifier: "v:1"}` and its encoding settings follow it too.
 Indexes restart for each output. Names are explicit atoms, unique within that
 output; they are not inferred from variable names or graph export labels.
@@ -317,7 +331,7 @@ mix ffix.refresh.metadata --ffmpeg /usr/bin/ffmpeg
 ```
 
 Metadata changes automatically rebuild the helpers on the next compilation.
-Generic `named` functions cover implementations without helpers. The existing
+Generic operation functions cover implementations without helpers. The existing
 filter helpers retain their separate compile-time discovery.
 
 ## Discover FFmpeg Capabilities

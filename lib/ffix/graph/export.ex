@@ -8,7 +8,7 @@ defmodule FFix.Graph.Export do
         "input.mp4",
         fn src -> src[:video] |> FFix.Filter.scale(w: 1280, h: -1) end,
         fn video ->
-          FFix.output("out.mp4", video: video, "c:v": :libx264)
+          FFix.output(video, "out.mp4", "c:v": :libx264)
         end
       )
 
