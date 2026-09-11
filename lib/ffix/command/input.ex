@@ -2,9 +2,9 @@ defmodule FFix.Command.Input do
   @moduledoc """
   One ffmpeg input declaration.
 
-  Accessing an input returns `FFix.Stream` references that can be used in graphs
-  or mapped directly to outputs. The access keys mirror common ffmpeg stream
-  selectors:
+  Accessing an input returns `FFix.Graph.StreamRef` values that can be used in
+  graphs or mapped directly to outputs. The access keys mirror common ffmpeg
+  stream selectors:
 
     * `input[:input]` maps the whole input, like `-map 0`
     * `input[:video]` maps the matching video streams, like `0:v`
@@ -38,6 +38,8 @@ defmodule FFix.Command.Input do
 
   @behaviour Access
 
+  alias FFix.Graph.StreamRef
+
   @type source :: String.t() | :stdin | {:pipe, non_neg_integer()} | {:url, String.t()}
   @type option :: {atom() | String.t(), term()}
 
@@ -54,7 +56,7 @@ defmodule FFix.Command.Input do
   defstruct [:source, :id, :demuxer, options: [], decoders: %{}]
 
   @doc false
-  @spec fetch(t(), term()) :: {:ok, FFix.Stream.t()} | :error
+  @spec fetch(t(), term()) :: {:ok, StreamRef.t()} | :error
   def fetch(%__MODULE__{id: id}, key) when is_reference(id) do
     {:ok, FFix.Graph.input(id, selector_from_access!(key))}
   end

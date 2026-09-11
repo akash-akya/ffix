@@ -4,14 +4,14 @@ defmodule FFix.Filter do
 
   Each function mirrors one filter reported by the local `ffmpeg` executable at
   compile time. Function names and option keys stay close to ffmpeg. Function
-  arguments are `FFix.Stream` values; the final argument is a keyword list of
+  arguments are `FFix.Graph.StreamRef` values; the final argument is a keyword list of
   ffmpeg filter options.
 
       video
       |> scale(w: 1280, h: -1)
       |> fps(fps: 30)
 
-  Most filters return a single `FFix.Stream`. Multi-output filters return a tuple
+  Most filters return a single `FFix.Graph.StreamRef`. Multi-output filters return a tuple
   or list:
 
       [left, right] = split(video, outputs: 2)
@@ -25,15 +25,16 @@ defmodule FFix.Filter do
         |> ebur128(video: true)
         |> FFix.shape([:audio, :video])
 
-  Generated metadata is useful but not perfect. Use `FFix.filter/3` when the
-  filter name is dynamic, raw strings for ffmpeg-specific option syntax, and
-  `FFix.shape/2` when a dynamic filter needs an explicit output shape.
+  Use `filter/4` to supply a filter name, explicit output media, and options
+  without metadata lookup. Use `FFix.shape/2` when a named helper needs an
+  explicit output shape.
 
   Timeline-capable filters accept ffmpeg's implicit `enable:` option. Filters
   backed by ffmpeg framesync also accept the common `eof_action:`, `shortest:`,
   `repeatlast:`, and `ts_sync_mode:` options.
   """
   @moduledoc groups: [
+               "Generic filters",
                "Source filters",
                "Video filters",
                "Audio filters",
@@ -43,8 +44,43 @@ defmodule FFix.Filter do
                "Other filters"
              ]
 
-  alias FFix.Filter.Builder
+  alias FFix.Graph.Builder
+  alias FFix.Graph.StreamRef
+  alias FFix.Graph.Terminal
   alias FFix.Filter.Metadata
+
+  @type option :: {atom() | String.t(), String.t() | atom() | number() | FFix.Graph.Expr.t()}
+
+  @doc group: "Generic filters"
+  @doc """
+  Builds a filter from explicit inputs, a name, output media, and optional values.
+
+      video |> FFix.Filter.filter("scale", [:video], w: 1280, h: -2)
+      FFix.Filter.filter([background, foreground], "overlay", [:video], x: 10)
+      FFix.Filter.filter([], "vendor_source", [:audio], frequency: 440)
+      FFix.Filter.filter(video, "nullsink", [])
+
+  Inputs are a stream reference or a flat ordered list. Use `[]` for source
+  filters. Output media is an ordered list of `:video`, `:audio`, or `:unknown`.
+  Zero outputs return a terminal, one returns a reference, and multiple outputs
+  return a list. This shape is graph information, not an emitted FFmpeg option;
+  the caller must ensure it agrees with the actual filter configuration.
+
+  Names and options pass through without registry or option-schema lookup, even
+  for known filters. No defaults, flags, or array delimiters are inferred. Use
+  scalar values, `FFix.expr/1`, or strings for compound syntax. Repeated `:pos`
+  pairs supply positional arguments. Values are escaped during serialization.
+
+  Named helpers retain metadata checks and shape inference. `FFix.Graph.parse!/1`
+  still requires known filters: serialized text does not preserve media shapes
+  supplied to this function.
+  """
+  @spec filter(StreamRef.t() | [StreamRef.t()], atom() | String.t(), [FFix.output_media()], [
+          option()
+        ]) ::
+          StreamRef.t() | [StreamRef.t()] | Terminal.t()
+  def filter(inputs, name, output_media, options \\ []),
+    do: Builder.filter(inputs, name, output_media, options)
 
   filter_group = fn inputs, outputs ->
     cond do
@@ -73,6 +109,10 @@ defmodule FFix.Filter do
   end
 
   Enum.each(Metadata.filters(), fn {name, %{inputs: inputs, outputs: outputs, desc: desc}} ->
+    if name == :filter do
+      raise ArgumentError, "filter helper name conflicts with the generic filter operation"
+    end
+
     inputs = Enum.reject(inputs, &(&1 == :|))
     outputs = Enum.reject(outputs, &(&1 == :|))
     group = filter_group.(inputs, outputs)
@@ -92,24 +132,24 @@ defmodule FFix.Filter do
 
     input_specs =
       Enum.map(inputs, fn
-        :N -> quote(do: [FFix.Stream.t()])
-        _ -> quote(do: FFix.Stream.t())
+        :N -> quote(do: [FFix.Graph.StreamRef.t()])
+        _ -> quote(do: FFix.Graph.StreamRef.t())
       end)
 
     output_specs =
       case outputs do
         [] ->
-          quote(do: FFix.Terminal.t())
+          quote(do: FFix.Graph.Terminal.t())
 
         [:N] ->
-          quote(do: [FFix.Stream.t()])
+          quote(do: [FFix.Graph.StreamRef.t()])
 
         [_single] ->
-          quote(do: FFix.Stream.t())
+          quote(do: FFix.Graph.StreamRef.t())
 
         many ->
           quote do
-            {unquote_splicing(Enum.map(many, fn _ -> quote(do: FFix.Stream.t()) end))}
+            {unquote_splicing(Enum.map(many, fn _ -> quote(do: FFix.Graph.StreamRef.t()) end))}
           end
       end
 

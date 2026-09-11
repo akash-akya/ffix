@@ -69,7 +69,7 @@ defmodule FFix.Command do
   alias FFix.Graph
   alias FFix.Graph.Export
   alias FFix.Graph.InputRef
-  alias FFix.Stream
+  alias FFix.Graph.StreamRef
 
   @type option :: {atom() | String.t(), term()}
   @type av_value :: String.t() | atom() | number()
@@ -78,7 +78,7 @@ defmodule FFix.Command do
   @type streams :: %{atom() => stream_info()}
   @type option_callback :: (streams() -> term())
   @type output_av_option :: {atom() | String.t(), av_value() | option_callback()}
-  @type source :: Export.t() | Stream.t() | atom() | non_neg_integer()
+  @type source :: Export.t() | StreamRef.t() | atom() | non_neg_integer()
   @type mapping :: Mapping.t() | source()
   @type binding :: mapping() | {atom(), mapping()}
 
@@ -660,7 +660,7 @@ defmodule FFix.Command do
 
   defp source_media(source, graph) do
     case source do
-      %Stream{media: media} -> media
+      %StreamRef{media: media} -> media
       %Export{media: media} -> media
       name_or_index -> Graph.export!(graph, name_or_index).media
     end
@@ -693,7 +693,7 @@ defmodule FFix.Command do
 
   defp source_node(source, graph) do
     case source do
-      %Stream{plan: plan} ->
+      %StreamRef{plan: plan} ->
         plan
 
       %Export{ref: ref} ->
@@ -815,7 +815,7 @@ defmodule FFix.Command do
     end
   end
 
-  defp validate_source!(%Stream{} = stream, _graph, input_count, input_index_map) do
+  defp validate_source!(%StreamRef{} = stream, _graph, input_count, input_index_map) do
     resolve_stream_source!(stream, input_count, input_index_map)
     :ok
   end
@@ -881,7 +881,7 @@ defmodule FFix.Command do
     |> mapped_filter_export(graph)
   end
 
-  defp mapped_filter_export(%Stream{}, %Graph{}), do: nil
+  defp mapped_filter_export(%StreamRef{}, %Graph{}), do: nil
 
   defp filter_export?(%Graph{} = graph, %Export{ref: ref}) do
     case Map.fetch!(graph.nodes, ref.node_id) do
@@ -978,7 +978,7 @@ defmodule FFix.Command do
     end
   end
 
-  defp map_source(%Stream{} = stream, _graph, _render, input_count, input_index_map) do
+  defp map_source(%StreamRef{} = stream, _graph, _render, input_count, input_index_map) do
     stream
     |> resolve_stream_source!(input_count, input_index_map)
     |> encode_input_ref()
@@ -1068,14 +1068,14 @@ defmodule FFix.Command do
   end
 
   defp resolve_stream_source!(
-         %Stream{plan: %{kind: :input, input_ref: %InputRef{} = input_ref}},
+         %StreamRef{plan: %{kind: :input, input_ref: %InputRef{} = input_ref}},
          input_count,
          input_index_map
        ) do
     resolve_input_ref!(input_ref, input_count, input_index_map)
   end
 
-  defp resolve_stream_source!(%Stream{} = stream, _input_count, _input_index_map) do
+  defp resolve_stream_source!(%StreamRef{} = stream, _input_count, _input_index_map) do
     raise ArgumentError,
           "invalid output source: #{inspect(stream)}; only direct input streams can be mapped, export graph outputs instead"
   end

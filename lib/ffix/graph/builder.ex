@@ -1,4 +1,4 @@
-defmodule FFix.Filter.Builder do
+defmodule FFix.Graph.Builder do
   @moduledoc false
 
   alias FFix.Graph
@@ -6,8 +6,9 @@ defmodule FFix.Filter.Builder do
   alias FFix.Graph.InputRef
   alias FFix.Graph.Node
   alias FFix.Graph.Ref
-  alias FFix.Stream
-  alias FFix.Terminal
+  alias FFix.Graph.StreamRef
+  alias FFix.Graph.Terminal
+  alias FFix.Graph.Expr
   alias FFix.Filter.Metadata
   alias FFix.Value
 
@@ -17,10 +18,10 @@ defmodule FFix.Filter.Builder do
     @type t :: %__MODULE__{
             id: reference(),
             kind: :input | :filter,
-            name: atom(),
+            name: atom() | String.t(),
             instance: String.t() | atom() | nil,
             input_ref: InputRef.t() | nil,
-            inputs: [Stream.t()],
+            inputs: [StreamRef.t()],
             args: [Node.arg()],
             outputs: non_neg_integer(),
             media: :audio | :video | :unknown
@@ -42,7 +43,7 @@ defmodule FFix.Filter.Builder do
   @type input_id :: InputRef.input_id() | atom()
   @type input_selector :: InputRef.selector()
 
-  @spec input(input_id(), input_selector()) :: Stream.t()
+  @spec input(input_id(), input_selector()) :: StreamRef.t()
   def input(index, selector) do
     input_ref = %InputRef{input: InputRef.normalize_input_id!(index), selector: selector}
 
@@ -55,10 +56,10 @@ defmodule FFix.Filter.Builder do
       media: selector_media(selector)
     }
 
-    %Stream{plan: plan, output: 0, media: plan.media}
+    %StreamRef{plan: plan, output: 0, media: plan.media}
   end
 
-  @spec input_raw(String.t()) :: Stream.t()
+  @spec input_raw(String.t()) :: StreamRef.t()
   def input_raw(spec) when is_binary(spec) do
     case Regex.run(~r/^(\d+):(.*)$/, spec) do
       [_, input, selector] ->
@@ -69,41 +70,52 @@ defmodule FFix.Filter.Builder do
     end
   end
 
-  @spec filter(atom() | String.t(), [Stream.t()], keyword()) ::
-          Stream.t() | Terminal.t() | [Stream.t()] | tuple()
-  def filter(name, inputs, options \\ []) when is_list(inputs) do
-    name = Metadata.filter_name!(name)
-    %{outputs: outputs} = Metadata.filter!(name)
-    option_specs = Metadata.filter_spec(name)
-
-    apply_filter(name, inputs, outputs, options, option_specs)
-  end
-
   @type output_media :: :audio | :video | :unknown
 
-  @spec apply_filter(atom(), [Stream.t() | [Stream.t()]], [atom()], keyword(), map()) ::
-          Stream.t() | Terminal.t() | [Stream.t()] | tuple()
+  @spec filter(StreamRef.t() | [StreamRef.t()], atom() | String.t(), [output_media()], list()) ::
+          StreamRef.t() | Terminal.t() | [StreamRef.t()]
+  def filter(inputs, name, output_media, options) do
+    inputs = if is_struct(inputs, StreamRef), do: [inputs], else: inputs
+    validate_streams!(inputs)
+    name = normalize_filter_name!(name)
+    output_media = normalize_output_shape!(output_media)
+    args = normalize_generic_args!(options)
+    plan = filter_plan(name, inputs, args, output_media)
+
+    case output_media do
+      [] -> %Terminal{plan: plan, media: infer_input_media(inputs)}
+      media -> build_shaped_result(plan, media)
+    end
+  end
+
+  @spec apply_filter(atom(), [StreamRef.t() | [StreamRef.t()]], [atom()], keyword(), map()) ::
+          StreamRef.t() | Terminal.t() | [StreamRef.t()] | tuple()
   def apply_filter(name, inputs, outputs, options, option_specs) do
     inputs = normalize_inputs(inputs)
     validate_streams!(inputs)
     validate_options!(options, option_specs)
 
     {output_count, output_media} = output_shape(name, outputs, options, option_specs, inputs)
+    args = normalize_args(options, option_specs)
+    plan = filter_plan(name, inputs, args, output_media)
+    plan = %{plan | outputs: output_count}
+    build_result(plan, outputs, output_media)
+  end
 
-    plan = %Plan{
+  defp filter_plan(name, inputs, args, output_media) do
+    %Plan{
       id: make_ref(),
       kind: :filter,
       name: name,
       inputs: inputs,
-      args: normalize_args(options, option_specs),
-      outputs: output_count,
+      args: args,
+      outputs: length(output_media),
       media: summarize_media(output_media)
     }
-
-    build_result(plan, outputs, output_media)
   end
 
-  @spec shape(Stream.t() | [Stream.t()] | tuple(), [output_media()]) :: Stream.t() | [Stream.t()]
+  @spec shape(StreamRef.t() | [StreamRef.t()] | tuple(), [output_media()]) ::
+          StreamRef.t() | [StreamRef.t()]
   def shape(result, outputs) when is_list(outputs) do
     output_media = Enum.map(outputs, &normalize_output_media!/1)
 
@@ -128,7 +140,7 @@ defmodule FFix.Filter.Builder do
     nodes = materialize_nodes(plans, id_map)
 
     graph_exports =
-      Enum.map(exports, fn {name, %Stream{plan: plan, output: output, media: media}} ->
+      Enum.map(exports, fn {name, %StreamRef{plan: plan, output: output, media: media}} ->
         %Export{name: name, ref: %Ref{node_id: id_map[plan.id], output: output}, media: media}
       end)
 
@@ -179,16 +191,101 @@ defmodule FFix.Filter.Builder do
 
   defp normalize_inputs(inputs) do
     Enum.flat_map(inputs, fn
-      %Stream{} = stream -> [stream]
+      %StreamRef{} = stream -> [stream]
       streams when is_list(streams) -> streams
     end)
   end
 
-  defp validate_streams!(inputs) do
+  defp validate_streams!(inputs) when is_list(inputs) do
     Enum.each(inputs, fn
-      %Stream{} -> :ok
-      other -> raise ArgumentError, "expected FFix.Stream, got: #{inspect(other)}"
+      %StreamRef{} -> :ok
+      other -> raise ArgumentError, "expected FFix.Graph.StreamRef, got: #{inspect(other)}"
     end)
+  end
+
+  defp validate_streams!(other) do
+    raise ArgumentError,
+          "filter inputs must be a stream reference or a flat list, got: #{inspect(other)}"
+  end
+
+  defp normalize_filter_name!(name) when is_atom(name) and name not in [nil, true, false],
+    do: normalize_filter_name!(Atom.to_string(name))
+
+  defp normalize_filter_name!(name) do
+    if is_binary(name) and String.match?(name, ~r/\A[a-zA-Z0-9_]+\z/) do
+      name
+    else
+      raise ArgumentError, "filter name must be an identifier, got: #{inspect(name)}"
+    end
+  end
+
+  defp normalize_output_shape!(media) when is_list(media),
+    do: Enum.map(media, &normalize_output_media!/1)
+
+  defp normalize_output_shape!(other) do
+    raise ArgumentError, "filter output media must be an ordered list, got: #{inspect(other)}"
+  end
+
+  defp normalize_generic_args!(options) when is_list(options) do
+    {args, _names} =
+      Enum.map_reduce(options, MapSet.new(), fn option, names ->
+        case option do
+          {:pos, value} ->
+            {{:pos, normalize_generic_value!(value)}, names}
+
+          {key, value} when is_atom(key) or is_binary(key) ->
+            key = normalize_option_name!(key)
+
+            if MapSet.member?(names, key) do
+              raise ArgumentError, "duplicate filter option: #{inspect(key)}"
+            end
+
+            {{key, normalize_generic_value!(value)}, MapSet.put(names, key)}
+
+          other ->
+            raise ArgumentError,
+                  "filter options must be ordered name/value pairs, got: #{inspect(other)}"
+        end
+      end)
+
+    args
+  end
+
+  defp normalize_generic_args!(other) do
+    raise ArgumentError, "filter options must be an ordered list, got: #{inspect(other)}"
+  end
+
+  defp normalize_option_name!(key) do
+    name = to_string(key)
+
+    if key not in [nil, true, false] and String.match?(name, ~r/\A[a-zA-Z0-9_][a-zA-Z0-9_-]*\z/) do
+      name
+    else
+      raise ArgumentError, "filter option name must be an unscoped name, got: #{inspect(key)}"
+    end
+  end
+
+  defp normalize_generic_value!(%Expr{source: source} = expr) when is_binary(source) do
+    normalize_generic_value!(source)
+    expr
+  end
+
+  defp normalize_generic_value!(value) when is_binary(value) do
+    if String.contains?(value, <<0>>) do
+      raise ArgumentError, "filter option values cannot contain NUL"
+    end
+
+    value
+  end
+
+  defp normalize_generic_value!(value) when is_number(value) or is_boolean(value), do: value
+
+  defp normalize_generic_value!(value) when is_atom(value) and not is_nil(value),
+    do: Atom.to_string(value)
+
+  defp normalize_generic_value!(other) do
+    raise ArgumentError,
+          "filter option values must be scalars or expressions; use strings for compound values, got: #{inspect(other)}"
   end
 
   # Keep value normalization permissive so raw ffmpeg strings remain an escape hatch.
@@ -256,7 +353,7 @@ defmodule FFix.Filter.Builder do
     end
   end
 
-  defp infer_input_media([%Stream{media: media} | _]), do: media
+  defp infer_input_media([%StreamRef{media: media} | _]), do: media
   defp infer_input_media(_inputs), do: :unknown
 
   defp media_from_io(:A), do: :audio
@@ -268,30 +365,30 @@ defmodule FFix.Filter.Builder do
   end
 
   defp build_result(plan, [_single], [media]) do
-    %Stream{plan: plan, output: 0, media: media}
+    %StreamRef{plan: plan, output: 0, media: media}
   end
 
   defp build_result(plan, [:N], output_media) do
     Enum.with_index(output_media, fn media, output ->
-      %Stream{plan: plan, output: output, media: media}
+      %StreamRef{plan: plan, output: output, media: media}
     end)
   end
 
   defp build_result(plan, _outputs, output_media) do
     output_media
     |> Enum.with_index(fn media, output ->
-      %Stream{plan: plan, output: output, media: media}
+      %StreamRef{plan: plan, output: output, media: media}
     end)
     |> List.to_tuple()
   end
 
   defp build_shaped_result(plan, [media]) do
-    %Stream{plan: plan, output: 0, media: media}
+    %StreamRef{plan: plan, output: 0, media: media}
   end
 
   defp build_shaped_result(plan, output_media) do
     Enum.with_index(output_media, fn media, output ->
-      %Stream{plan: plan, output: output, media: media}
+      %StreamRef{plan: plan, output: output, media: media}
     end)
   end
 
@@ -333,14 +430,14 @@ defmodule FFix.Filter.Builder do
 
   defp normalize_exports(outputs) when is_list(outputs) do
     Enum.map(outputs, fn
-      {name, %Stream{} = stream} when is_atom(name) -> {name, stream}
-      %Stream{} = stream -> {nil, stream}
+      {name, %StreamRef{} = stream} when is_atom(name) -> {name, stream}
+      %StreamRef{} = stream -> {nil, stream}
     end)
   end
 
   defp validate_exports!(exports) do
     Enum.each(exports, fn
-      {_name, %Stream{}} -> :ok
+      {_name, %StreamRef{}} -> :ok
       other -> raise ArgumentError, "invalid graph export: #{inspect(other)}"
     end)
   end
@@ -376,10 +473,10 @@ defmodule FFix.Filter.Builder do
 
   defp normalize_output_media!(media) do
     raise ArgumentError,
-          "shape/2 output media must be :audio, :video, or :unknown, got: #{inspect(media)}"
+          "output media must be :audio, :video, or :unknown, got: #{inspect(media)}"
   end
 
-  defp shape_streams!(%Stream{} = stream), do: [stream]
+  defp shape_streams!(%StreamRef{} = stream), do: [stream]
   defp shape_streams!(streams) when is_list(streams), do: streams
   defp shape_streams!(streams) when is_tuple(streams), do: Tuple.to_list(streams)
 
@@ -392,17 +489,17 @@ defmodule FFix.Filter.Builder do
     raise ArgumentError, "shape/2 expects at least one stream"
   end
 
-  defp shared_plan!([%Stream{plan: plan} | rest]) do
+  defp shared_plan!([%StreamRef{plan: plan} | rest]) do
     Enum.each(rest, fn
-      %Stream{plan: ^plan} ->
+      %StreamRef{plan: ^plan} ->
         :ok
 
-      %Stream{} = stream ->
+      %StreamRef{} = stream ->
         raise ArgumentError,
               "shape/2 expects streams from one filter result, got: #{inspect(stream)}"
 
       other ->
-        raise ArgumentError, "shape/2 expects FFix.Stream values, got: #{inspect(other)}"
+        raise ArgumentError, "shape/2 expects FFix.Graph.StreamRef values, got: #{inspect(other)}"
     end)
 
     plan
@@ -466,7 +563,7 @@ defmodule FFix.Filter.Builder do
     end
   end
 
-  defp plan_of(%Stream{plan: plan}), do: plan
+  defp plan_of(%StreamRef{plan: plan}), do: plan
   defp plan_of(%Terminal{plan: plan}), do: plan
 
   defp assign_ids(plans) do
@@ -500,7 +597,7 @@ defmodule FFix.Filter.Builder do
     end)
   end
 
-  defp to_ref(%Stream{plan: plan, output: output}, id_map) do
+  defp to_ref(%StreamRef{plan: plan, output: output}, id_map) do
     %Ref{node_id: Map.fetch!(id_map, plan.id), output: output}
   end
 

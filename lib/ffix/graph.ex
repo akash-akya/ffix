@@ -49,10 +49,11 @@ defmodule FFix.Graph do
 
   @behaviour Access
 
+  alias __MODULE__.Builder
   alias __MODULE__.Export
   alias __MODULE__.Parse
   alias __MODULE__.Render
-  alias FFix.Filter.Builder
+  alias __MODULE__.StreamRef
 
   @type node_id :: pos_integer()
   @type setting :: {atom() | String.t(), term()}
@@ -105,7 +106,7 @@ defmodule FFix.Graph do
         outputs: [FFix.Command.output([graph[:main], audio], "out.mp4")]
       )
   """
-  @spec input(input_id(), input_selector()) :: FFix.Stream.t()
+  @spec input(input_id(), input_selector()) :: StreamRef.t()
   def input(input, selector), do: Builder.input(input, selector)
 
   @doc group: "Inputs"
@@ -115,7 +116,7 @@ defmodule FFix.Graph do
   This is an escape hatch for selectors that do not have a structured form yet.
   It currently expects an indexed selector such as `"0:v"` or `"1:s?"`.
   """
-  @spec input_raw(String.t()) :: FFix.Stream.t()
+  @spec input_raw(String.t()) :: StreamRef.t()
   def input_raw(spec), do: Builder.input_raw(spec)
 
   @doc group: "Exports"

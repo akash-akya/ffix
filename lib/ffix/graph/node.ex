@@ -1,7 +1,7 @@
 defmodule FFix.Graph.Node do
   @moduledoc false
 
-  alias FFix.Expr
+  alias FFix.Graph.Expr
   alias FFix.Graph
   alias FFix.Graph.InputRef
   alias FFix.Graph.Ref
@@ -23,7 +23,7 @@ defmodule FFix.Graph.Node do
   @type t :: %__MODULE__{
           id: Graph.node_id(),
           kind: :input | :filter,
-          name: atom(),
+          name: atom() | String.t(),
           instance: String.t() | atom() | nil,
           input_ref: InputRef.t() | nil,
           inputs: [Ref.t()],

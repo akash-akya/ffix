@@ -1,4 +1,4 @@
-defmodule FFix.Expr do
+defmodule FFix.Graph.Expr do
   @moduledoc """
   Raw ffmpeg expression value.
 

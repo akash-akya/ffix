@@ -26,6 +26,8 @@ defmodule FFix.Command.Mapping do
   split filtered frames explicitly when multiple consumers are needed.
   """
 
+  alias FFix.Graph.StreamRef
+
   @type t :: %__MODULE__{
           source: FFix.Command.source(),
           name: atom() | nil,
@@ -38,7 +40,7 @@ defmodule FFix.Command.Mapping do
   @spec new(FFix.Command.source(), FFix.Encoder.t() | :copy | nil) :: t()
   def new(source, encoding \\ nil) do
     case source do
-      %FFix.Stream{} ->
+      %StreamRef{} ->
         :ok
 
       %FFix.Graph.Export{} ->

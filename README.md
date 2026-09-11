@@ -94,6 +94,34 @@ command(
 )
 ```
 
+## Generic Filters
+
+Named filter helpers validate options and infer output shapes from metadata.
+For names or options outside that metadata, use an explicit generic operation:
+
+```elixir
+video |> FFix.Filter.filter("vendor_filter", [:video], strength: 0.5)
+FFix.filter([background, foreground], "overlay", [:video], x: 10, y: 20)
+
+[high, low] =
+  FFix.Filter.filter(video, "split", [:video, :video], outputs: 2)
+```
+
+The arguments are inputs, name, output media, then optional filter options.
+Generic calls never consult metadata, even for known names. Output media declares
+pad count and order; it does not emit FFmpeg options or infer their defaults.
+Use `[]` inputs for source filters and `[]` output media for sinks. One output
+returns a reference, multiple outputs return a list, and sinks return a terminal.
+Values may be scalars or `FFix.expr/1` expressions; use strings for compound syntax
+and repeated `:pos` pairs for positional arguments. Escaping happens on serialization.
+`Graph.parse!/1` still needs known-filter metadata; text does not retain declared
+output media for unknown filters.
+
+Graph values live under `FFix.Graph`: `StreamRef` identifies an input selection or
+filter output, `Terminal` ends a branch, and `Expr` holds an expression. The helpers
+construct these values for you. Output `Mapping` values remain under `FFix.Command`
+and describe how an output uses a reference, including its encoding.
+
 ## Run Or Inspect
 
 Command-level options are the final argument:
