@@ -1,0 +1,28 @@
+Filter avsynctest
+  Generate an Audio Video Sync Test.
+    Inputs:
+        none (source filter)
+    Outputs:
+       #0: audio (audio)
+       #1: video (video)
+avsynctest AVOptions:
+   size              <image_size> ..FV....... set frame size (default "hd720")
+   s                 <image_size> ..FV....... set frame size (default "hd720")
+   framerate         <video_rate> ..FV....... set frame rate (default "30")
+   fr                <video_rate> ..FV....... set frame rate (default "30")
+   samplerate        <int>        ..F.A...... set sample rate (from 8000 to 384000) (default 44100)
+   sr                <int>        ..F.A...... set sample rate (from 8000 to 384000) (default 44100)
+   amplitude         <float>      ..F.A....T. set beep amplitude (from 0 to 1) (default 0.7)
+   a                 <float>      ..F.A....T. set beep amplitude (from 0 to 1) (default 0.7)
+   period            <int>        ..F.A...... set beep period (from 1 to 99) (default 3)
+   p                 <int>        ..F.A...... set beep period (from 1 to 99) (default 3)
+   delay             <int>        ..FV.....T. set flash delay (from -30 to 30) (default 0)
+   dl                <int>        ..FV.....T. set flash delay (from -30 to 30) (default 0)
+   cycle             <boolean>    ..FV.....T. set delay cycle (default false)
+   c                 <boolean>    ..FV.....T. set delay cycle (default false)
+   duration          <duration>   ..FVA...... set duration (default 0)
+   d                 <duration>   ..FVA...... set duration (default 0)
+   fg                <color>      ..FV....... set foreground color (default "white")
+   bg                <color>      ..FV....... set background color (default "black")
+   ag                <color>      ..FV....... set additional color (default "gray")
+

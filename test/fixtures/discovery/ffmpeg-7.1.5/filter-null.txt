@@ -1,0 +1,6 @@
+Filter null
+  Pass the source unchanged to the output.
+    Inputs:
+       #0: default (video)
+    Outputs:
+       #0: default (video)

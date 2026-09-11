@@ -192,9 +192,21 @@ defmodule FFix.Parsers.ComponentHelp do
   defp put_pads(info, fields) do
     case info.kind do
       :filter ->
-        inputs = pads(fields, :inputs)
-        outputs = pads(fields, :outputs)
-        Map.merge(info, %{inputs: inputs, outputs: outputs})
+        Enum.reduce([:inputs, :outputs], info, fn direction, info ->
+          {pads, dynamic_description} = pads(fields, direction)
+          info = Map.put(info, direction, pads)
+
+          # Mixed declarations keep fixed pad lists; only those directions get extra metadata.
+          case dynamic_description do
+            nil ->
+              info
+
+            description ->
+              Map.update(info, :dynamic_pads, %{direction => description}, fn dynamic_pads ->
+                Map.put(dynamic_pads, direction, description)
+              end)
+          end
+        end)
 
       _other ->
         info
@@ -208,17 +220,24 @@ defmodule FFix.Parsers.ComponentHelp do
   defp pad_values(fields) do
     case fields do
       [] ->
-        nil
-
-      [_heading, {:dynamic, description} | _rest] ->
-        %{dynamic: description}
+        {nil, nil}
 
       [_heading | remaining_fields] ->
-        pad_fields = Enum.take_while(remaining_fields, &match?({:pad, _}, &1))
+        pad_fields =
+          Enum.take_while(remaining_fields, fn {kind, _value} ->
+            kind in [:pad, :dynamic]
+          end)
 
-        Enum.map(pad_fields, fn {:pad, pad} ->
-          pad
-        end)
+        fixed_pads = Keyword.get_values(pad_fields, :pad)
+        dynamic_description = Keyword.get(pad_fields, :dynamic)
+
+        case {fixed_pads, dynamic_description} do
+          {[], description} when is_binary(description) ->
+            {%{dynamic: description}, nil}
+
+          _other ->
+            {fixed_pads, dynamic_description}
+        end
     end
   end
 

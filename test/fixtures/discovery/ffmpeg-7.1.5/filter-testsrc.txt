@@ -1,0 +1,17 @@
+Filter testsrc
+  Generate test pattern.
+    Inputs:
+        none (source filter)
+    Outputs:
+       #0: default (video)
+testsrc AVOptions:
+   size              <image_size> ..FV....... set video size (default "320x240")
+   s                 <image_size> ..FV....... set video size (default "320x240")
+   rate              <video_rate> ..FV....... set video rate (default "25")
+   r                 <video_rate> ..FV....... set video rate (default "25")
+   duration          <duration>   ..FV....... set video duration (default -0.000001)
+   d                 <duration>   ..FV....... set video duration (default -0.000001)
+   sar               <rational>   ..FV....... set video sample aspect ratio (from 0 to INT_MAX) (default 1/1)
+   decimals          <int>        ..FV....... set number of decimals to show (from 0 to 17) (default 0)
+   n                 <int>        ..FV....... set number of decimals to show (from 0 to 17) (default 0)
+

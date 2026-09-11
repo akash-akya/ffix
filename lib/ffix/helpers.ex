@@ -7,7 +7,7 @@ defmodule FFix.Helpers do
   @codec_options ~w(b g maxrate minrate bufsize threads thread_type flags flags2 profile level strict global_quality compression_level skip_frame skip_idct skip_loop_filter lowres err_detect)
   @format_options ~w(fflags avioflags probesize analyzeduration max_delay flush_packets avoid_negative_ts)
 
-  defmacro define(kind) when kind in [:encoder, :decoder, :muxer, :demuxer] do
+  defmacro define(kind) when kind in [:encoder, :decoder, :muxer, :demuxer, :filter] do
     {metadata, []} = Code.eval_file(@metadata_path)
     definitions = definitions(metadata, kind)
 
@@ -19,6 +19,13 @@ defmodule FFix.Helpers do
 
   @spec definitions(map(), atom()) :: [Macro.t()]
   def definitions(metadata, kind) do
+    case kind do
+      :filter -> FFix.Filter.Helpers.definitions(metadata)
+      _component -> component_definitions(metadata, kind)
+    end
+  end
+
+  defp component_definitions(metadata, kind) do
     metadata.components
     |> Enum.filter(&(&1.kind == kind))
     |> Enum.flat_map(fn entry ->

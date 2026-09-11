@@ -1,17 +1,22 @@
 defmodule Mix.Tasks.Ffix.Refresh.Metadata do
   use Mix.Task
 
-  @shortdoc "Refreshes recorded FFmpeg codec and format metadata"
+  @shortdoc "Refreshes recorded FFmpeg codec, format, and filter metadata"
   @moduledoc """
   Updates `priv/ffmpeg/metadata.exs` from the selected FFmpeg build.
 
       mix ffix.refresh.metadata --ffmpeg /usr/bin/ffmpeg
 
-  The build must provide all registrations in this task's selection. Helpers,
-  docs, and typespecs update on the next compilation.
+  Captures the selected codecs/formats and every registered filter. The build
+  must retain previously recorded filters; intentional removals require editing
+  the recorded baseline first. Capture or validation failures leave it unchanged.
+  Helpers, docs, and typespecs update on the next compilation.
   """
 
   alias FFix.Discovery
+  alias FFix.Discovery.Exec
+  alias FFix.Discovery.Parser
+  alias FFix.Filter.Helpers
 
   @metadata_path "priv/ffmpeg/metadata.exs"
   @selection [
@@ -29,17 +34,35 @@ defmodule Mix.Tasks.Ffix.Refresh.Metadata do
       Mix.raise("use mix ffix.refresh.metadata [--ffmpeg executable]")
     end
 
+    previous = previous_metadata()
     Mix.Task.run("app.start")
-    metadata = capture(options)
-    text = inspect(metadata, pretty: true, limit: :infinity, printable_limit: :infinity)
+    metadata = capture(options, previous)
+
+    text =
+      inspect(metadata,
+        pretty: true,
+        limit: :infinity,
+        printable_limit: :infinity,
+        custom_options: [sort_maps: true]
+      )
+
     formatted = text |> Code.format_string!() |> IO.iodata_to_binary()
-    File.mkdir_p!(Path.dirname(@metadata_path))
-    File.write!(@metadata_path, formatted <> "\n")
+    write_metadata!(formatted <> "\n")
     Mix.shell().info("Updated #{@metadata_path}")
   end
 
-  defp capture(options) do
+  defp previous_metadata do
+    if File.exists?(@metadata_path) do
+      {metadata, []} = Code.eval_file(@metadata_path)
+      metadata
+    else
+      %{}
+    end
+  end
+
+  defp capture(options, previous) do
     version = discovered!(Discovery.version(options))
+    options = Keyword.put(options, :ffmpeg, version.executable)
     shared = discovered!(Discovery.shared(options))
 
     components =
@@ -47,25 +70,96 @@ defmodule Mix.Tasks.Ffix.Refresh.Metadata do
         registrations = discovered!(Discovery.list(kind, options))
 
         Enum.map(names, fn name ->
-          Mix.shell().info("Capturing #{kind} #{name}")
-
           registration = Enum.find(registrations, &(name in &1.names))
 
           if registration == nil do
             Mix.raise("selected #{kind} #{name} is not registered in this FFmpeg build")
           end
 
-          case Discovery.help(kind, name, options) do
-            {:ok, help} ->
-              Map.put(help, :media_type, Map.get(registration, :media_type))
-
-            {:error, error} ->
-              Mix.raise("cannot capture #{kind} #{name}: #{Exception.message(error)}")
-          end
+          help = capture_help!(kind, name, options)
+          Map.put(help, :media_type, Map.get(registration, :media_type))
         end)
       end)
 
-    %{version: version, shared: shared, components: components}
+    registrations = discovered!(Discovery.list(:filter, options))
+    validate_filter_coverage!(previous, registrations)
+
+    filters =
+      registrations
+      |> Enum.sort_by(& &1.names)
+      |> Enum.map(fn registration ->
+        name = hd(registration.names)
+        %{registration: registration, help: capture_help!(:filter, name, options)}
+      end)
+
+    metadata = %{version: version, shared: shared, components: components, filters: filters}
+    Helpers.definitions(metadata)
+    report_signature_changes(previous, filters)
+    metadata
+  end
+
+  defp capture_help!(kind, name, options) do
+    Mix.shell().info("Capturing #{kind} #{name}")
+
+    result =
+      with {:ok, capture} <- Exec.run(["-h", "#{kind}=#{name}"], options),
+           {:ok, help} <- Parser.help(kind, capture.output) do
+        {:ok, help}
+      end
+
+    case result do
+      {:ok, help} ->
+        unless help.kind == kind and name in help.names do
+          Mix.raise("cannot capture #{kind} #{name}: help identity does not match")
+        end
+
+        help
+
+      {:error, error} ->
+        Mix.raise("cannot capture #{kind} #{name}: #{Exception.message(error)}")
+    end
+  end
+
+  defp validate_filter_coverage!(previous, registrations) do
+    previous_names = previous |> Map.get(:filters, []) |> Enum.flat_map(& &1.registration.names)
+    current_names = Enum.flat_map(registrations, & &1.names)
+    missing = Enum.sort(previous_names -- current_names)
+
+    if missing != [] do
+      Mix.raise("FFmpeg build is missing recorded filters: #{Enum.join(missing, ", ")}")
+    end
+  end
+
+  defp report_signature_changes(previous, filters) do
+    signatures = Map.new(Map.get(previous, :filters, []), &signature/1)
+
+    Enum.each(filters, fn entry ->
+      {name, current} = signature(entry)
+
+      case Map.fetch(signatures, name) do
+        {:ok, previous} when previous != current ->
+          Mix.shell().info("Filter #{name} signature changed: #{previous} -> #{current}")
+
+        _unchanged_or_new ->
+          :ok
+      end
+    end)
+  end
+
+  defp signature(%{registration: registration}) do
+    {hd(registration.names), "#{registration.inputs}->#{registration.outputs}"}
+  end
+
+  defp write_metadata!(text) do
+    File.mkdir_p!(Path.dirname(@metadata_path))
+    temporary = "#{@metadata_path}.#{System.pid()}.#{System.unique_integer([:positive])}.tmp"
+
+    try do
+      File.write!(temporary, text, [:exclusive])
+      File.rename!(temporary, @metadata_path)
+    after
+      File.rm(temporary)
+    end
   end
 
   defp discovered!(result) do

@@ -1,0 +1,14 @@
+Filter aformat
+  Convert the input audio to one of the specified formats.
+    Inputs:
+       #0: default (audio)
+    Outputs:
+       #0: default (audio)
+aformat AVOptions:
+   sample_fmts       [<sample_fmt>]..F.A...... A '|'-separated list of sample formats.
+   f                 [<sample_fmt>]..F.A...... A '|'-separated list of sample formats.
+   sample_rates      [<int>     ]..F.A...... A '|'-separated list of sample rates.
+   r                 [<int>     ]..F.A...... A '|'-separated list of sample rates.
+   channel_layouts   [<channel_layout>]..F.A...... A '|'-separated list of channel layouts.
+   cl                [<channel_layout>]..F.A...... A '|'-separated list of channel layouts.
+
