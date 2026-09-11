@@ -1287,10 +1287,7 @@ defmodule FFix.Command do
   end
 
   defp encode_float_option_value(value) do
-    value
-    |> :erlang.float_to_binary(decimals: 15)
-    |> String.trim_trailing("0")
-    |> String.trim_trailing(".")
+    FFix.Value.float_to_string(value)
   end
 
   defp shell_escape(""), do: "''"
