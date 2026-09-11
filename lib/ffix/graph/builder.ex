@@ -9,7 +9,6 @@ defmodule FFix.Graph.Builder do
   alias FFix.Graph.StreamRef
   alias FFix.Graph.Terminal
   alias FFix.Graph.Expr
-  alias FFix.Filter.Metadata
   alias FFix.Value
 
   defmodule Plan do
@@ -23,7 +22,8 @@ defmodule FFix.Graph.Builder do
             input_ref: InputRef.t() | nil,
             inputs: [StreamRef.t()],
             args: [Node.arg()],
-            outputs: non_neg_integer(),
+            outputs: non_neg_integer() | nil,
+            output_media: [FFix.output_media()] | {:unresolved, String.t()},
             media: :audio | :video | :unknown
           }
 
@@ -36,6 +36,7 @@ defmodule FFix.Graph.Builder do
       inputs: [],
       args: [],
       outputs: 1,
+      output_media: [:unknown],
       media: :unknown
     ]
   end
@@ -45,6 +46,7 @@ defmodule FFix.Graph.Builder do
 
   @spec input(input_id(), input_selector()) :: StreamRef.t()
   def input(index, selector) do
+    selector = InputRef.normalize_selector!(selector)
     input_ref = %InputRef{input: InputRef.normalize_input_id!(index), selector: selector}
 
     plan = %Plan{
@@ -53,6 +55,7 @@ defmodule FFix.Graph.Builder do
       name: :input,
       input_ref: input_ref,
       outputs: 1,
+      output_media: [selector_media(selector)],
       media: selector_media(selector)
     }
 
@@ -88,18 +91,43 @@ defmodule FFix.Graph.Builder do
     end
   end
 
-  @spec apply_filter(atom(), [StreamRef.t() | [StreamRef.t()]], [atom()], keyword(), map()) ::
+  @spec apply_filter(
+          atom(),
+          [StreamRef.t() | [StreamRef.t()]],
+          [atom()],
+          [atom()],
+          keyword(),
+          map()
+        ) ::
           StreamRef.t() | Terminal.t() | [StreamRef.t()] | tuple()
-  def apply_filter(name, inputs, outputs, options, option_specs) do
+  def apply_filter(name, inputs, input_signature, outputs, options, option_specs) do
+    validate_named_inputs!(name, inputs, input_signature)
     inputs = normalize_inputs(inputs)
     validate_streams!(inputs)
     validate_options!(options, option_specs)
-
-    {output_count, output_media} = output_shape(name, outputs, options, option_specs, inputs)
     args = normalize_args(options, option_specs)
-    plan = filter_plan(name, inputs, args, output_media)
-    plan = %{plan | outputs: output_count}
-    build_result(plan, outputs, output_media)
+
+    shape =
+      if outputs == [:N] do
+        FFix.Filter.Shape.resolve(name, :outputs, options)
+      else
+        {:ok, Enum.map(outputs, &media_from_io/1)}
+      end
+
+    case shape do
+      {:ok, output_media} ->
+        plan = filter_plan(name, inputs, args, output_media)
+        build_result(plan, outputs, output_media)
+
+      {:unresolved, reason} ->
+        plan = filter_plan(name, inputs, args, [:unknown])
+
+        %StreamRef{
+          plan: %{plan | outputs: nil, output_media: {:unresolved, reason}},
+          output: 0,
+          media: :unknown
+        }
+    end
   end
 
   defp filter_plan(name, inputs, args, output_media) do
@@ -110,6 +138,7 @@ defmodule FFix.Graph.Builder do
       inputs: inputs,
       args: args,
       outputs: length(output_media),
+      output_media: output_media,
       media: summarize_media(output_media)
     }
   end
@@ -123,8 +152,21 @@ defmodule FFix.Graph.Builder do
       raise ArgumentError, "shape/2 expects at least one output media type"
     end
 
-    plan = result |> shape_streams!() |> shared_plan!()
-    plan = %{plan | outputs: length(output_media), media: summarize_media(output_media)}
+    streams = shape_streams!(result)
+    plan = shared_plan!(streams)
+
+    expected = if plan.outputs == nil, do: [0], else: Enum.to_list(0..(plan.outputs - 1))
+
+    unless plan.kind == :filter and Enum.map(streams, & &1.output) == expected do
+      raise ArgumentError, "shape/2 requires the complete ordered result of one filter"
+    end
+
+    plan = %{
+      plan
+      | outputs: length(output_media),
+        output_media: output_media,
+        media: summarize_media(output_media)
+    }
 
     build_shaped_result(plan, output_media)
   end
@@ -139,14 +181,22 @@ defmodule FFix.Graph.Builder do
     {id_map, order} = assign_ids(plans)
     nodes = materialize_nodes(plans, id_map)
 
+    graph_id = make_ref()
+
     graph_exports =
       Enum.map(exports, fn {name, %StreamRef{plan: plan, output: output, media: media}} ->
-        %Export{name: name, ref: %Ref{node_id: id_map[plan.id], output: output}, media: media}
+        %Export{
+          graph_id: graph_id,
+          name: name,
+          ref: %Ref{node_id: id_map[plan.id], output: output},
+          media: media
+        }
       end)
 
     graph_terminals = Enum.map(terminals, fn %Terminal{plan: plan} -> id_map[plan.id] end)
 
     %Graph{
+      id: graph_id,
       nodes: nodes,
       order: order,
       exports: graph_exports,
@@ -157,42 +207,185 @@ defmodule FFix.Graph.Builder do
 
   @spec validate_graph!(Graph.t()) :: Graph.t()
   def validate_graph!(%Graph{} = graph) do
-    Enum.each(graph.order, fn node_id ->
+    unless is_reference(graph.id) and is_map(graph.nodes) and is_list(graph.order) and
+             is_list(graph.exports) and is_list(graph.terminals) do
+      raise ArgumentError, "invalid graph structure"
+    end
+
+    unless Enum.uniq(graph.order) == graph.order and
+             MapSet.new(graph.order) == MapSet.new(Map.keys(graph.nodes)) do
+      raise ArgumentError, "graph order must contain every node exactly once"
+    end
+
+    normalize_settings(graph.settings)
+
+    Enum.reduce(graph.order, %{}, fn node_id, preceding ->
       node = Map.fetch!(graph.nodes, node_id)
-
-      Enum.each(node.inputs, fn %Ref{node_id: input_id, output: output} ->
-        input_node = Map.fetch!(graph.nodes, input_id)
-
-        if output >= input_node.outputs do
-          raise ArgumentError, "invalid input ref #{inspect({input_id, output})}"
-        end
-      end)
+      validate_node!(node, node_id)
+      Enum.each(node.inputs, &validate_ref!(&1, preceding, "input"))
+      validate_node_inputs!(node, preceding)
+      Map.put(preceding, node_id, node)
     end)
 
-    Enum.each(graph.exports, fn %Export{ref: %Ref{node_id: node_id, output: output}} ->
-      node = Map.fetch!(graph.nodes, node_id)
-
-      if output >= node.outputs do
-        raise ArgumentError, "invalid export ref #{inspect({node_id, output})}"
+    Enum.reduce(graph.exports, MapSet.new(), fn export, names ->
+      unless match?(%Export{graph_id: id} when id == graph.id, export) do
+        raise ArgumentError, "graph export belongs to a different graph"
       end
-    end)
 
-    Enum.each(graph.terminals, fn node_id ->
-      node = Map.fetch!(graph.nodes, node_id)
+      validate_ref!(export.ref, graph.nodes, "export")
+      node = Map.fetch!(graph.nodes, export.ref.node_id)
 
-      if node.outputs != 0 do
-        raise ArgumentError, "terminal #{node_id} must point to a sink node"
+      unless export.media == Enum.at(node.output_media, export.ref.output) do
+        raise ArgumentError, "graph export media does not match its output pad"
       end
+
+      name = export.name
+
+      unless is_nil(name) or (is_atom(name) and name not in [true, false]) or
+               (is_binary(name) and name != "") do
+        raise ArgumentError, "invalid graph export name: #{inspect(name)}"
+      end
+
+      key = if name != nil, do: to_string(name)
+
+      if key != nil and MapSet.member?(names, key),
+        do: raise(ArgumentError, "duplicate graph export name: #{inspect(name)}")
+
+      MapSet.put(names, key)
     end)
+
+    sinks =
+      Enum.filter(
+        graph.order,
+        &(graph.nodes[&1].kind == :filter and graph.nodes[&1].outputs == 0)
+      )
+
+    unless Enum.uniq(graph.terminals) == graph.terminals and
+             MapSet.new(sinks) == MapSet.new(graph.terminals) do
+      raise ArgumentError, "graph terminals must contain every sink exactly once"
+    end
 
     validate_connected_outputs!(graph)
     graph
   end
 
+  defp validate_node!(%Node{id: node_id} = node, node_id)
+       when is_integer(node_id) and node_id > 0 do
+    unless node.kind in [:input, :filter] and is_list(node.inputs) and
+             is_integer(node.outputs) and node.outputs >= 0 and is_list(node.output_media) and
+             length(node.output_media) == node.outputs do
+      raise ArgumentError, "invalid output shape for graph node #{node_id}"
+    end
+
+    Enum.each(node.output_media, &normalize_output_media!/1)
+
+    if node.kind == :input do
+      unless node.inputs == [] and node.outputs == 1 and is_struct(node.input_ref, InputRef),
+        do: raise(ArgumentError, "invalid graph input node #{node_id}")
+
+      InputRef.normalize_input_id!(node.input_ref.input)
+      selector = InputRef.normalize_selector!(node.input_ref.selector)
+
+      unless node.output_media == [selector_media(selector)],
+        do: raise(ArgumentError, "graph input media does not match its selector")
+    else
+      normalize_filter_name!(node.name)
+      if node.instance != nil, do: normalize_filter_name!(node.instance)
+      validate_args!(node.args)
+    end
+  end
+
+  defp validate_node!(_node, node_id),
+    do: raise(ArgumentError, "invalid graph node #{inspect(node_id)}")
+
+  defp validate_node_inputs!(%Node{kind: :filter, name: name} = node, nodes) when is_atom(name) do
+    if Map.has_key?(FFix.Filter.Metadata.filters(), name) do
+      case FFix.Filter.Shape.resolve(name, :outputs, node.args) do
+        {:ok, media} when media != node.output_media ->
+          raise ArgumentError, "invalid output media/count for #{name}"
+
+        _ ->
+          :ok
+      end
+
+      expected =
+        case FFix.Filter.Shape.resolve(name, :inputs, node.args) do
+          {:ok, media} ->
+            unless length(media) == length(node.inputs),
+              do: raise(ArgumentError, "invalid input count for #{name}")
+
+            media
+
+          {:unresolved, _reason} ->
+            FFix.Filter.Metadata.filter!(name).inputs
+            |> Enum.filter(&(&1 in [:A, :V]))
+            |> Enum.map(&media_from_io/1)
+        end
+
+      if length(node.inputs) < length(expected),
+        do: raise(ArgumentError, "missing fixed input pads for #{name}")
+
+      if length(node.inputs) < length(expected),
+        do: raise(ArgumentError, "missing fixed inputs for #{name}")
+
+      Enum.zip(node.inputs, expected)
+      |> Enum.each(fn {ref, media} ->
+        actual = Enum.fetch!(nodes[ref.node_id].output_media, ref.output)
+
+        if actual not in [:unknown, media],
+          do: raise(ArgumentError, "#{name} expects #{media} input, got: #{actual}")
+      end)
+    end
+  end
+
+  defp validate_node_inputs!(_node, _nodes), do: :ok
+
+  defp validate_ref!(%Ref{node_id: node_id, output: output}, nodes, context) do
+    case Map.get(nodes, node_id) do
+      %Node{outputs: outputs} when is_integer(output) and output >= 0 and output < outputs ->
+        :ok
+
+      _ ->
+        raise ArgumentError,
+              "invalid #{context} ref #{inspect({node_id, output})}; referenced pads must exist and precede their consumers"
+    end
+  end
+
+  defp validate_ref!(ref, _nodes, context),
+    do: raise(ArgumentError, "invalid #{context} ref: #{inspect(ref)}")
+
+  defp validate_named_inputs!(name, inputs, signature) do
+    unless length(inputs) == length(signature),
+      do: raise(ArgumentError, "invalid input count for #{name}")
+
+    Enum.zip(inputs, signature)
+    |> Enum.each(fn
+      {streams, :N} when is_list(streams) ->
+        validate_streams!(streams)
+
+      {%StreamRef{media: media}, expected} when expected in [:A, :V] ->
+        expected_media = media_from_io(expected)
+
+        if media not in [:unknown, expected_media],
+          do: raise(ArgumentError, "#{name} expects #{expected_media} input, got: #{media}")
+
+      {other, _expected} ->
+        raise ArgumentError,
+              "invalid input for #{name}: #{inspect(other)}; pass one stream per fixed input pad"
+    end)
+  end
+
   defp normalize_inputs(inputs) do
     Enum.flat_map(inputs, fn
-      %StreamRef{} = stream -> [stream]
-      streams when is_list(streams) -> streams
+      %StreamRef{} = stream ->
+        [stream]
+
+      streams when is_list(streams) ->
+        streams
+
+      other ->
+        raise ArgumentError,
+              "expected a stream reference or ordered input list, got: #{inspect(other)}"
     end)
   end
 
@@ -258,7 +451,7 @@ defmodule FFix.Graph.Builder do
   defp normalize_option_name!(key) do
     name = to_string(key)
 
-    if key not in [nil, true, false] and String.match?(name, ~r/\A[a-zA-Z0-9_][a-zA-Z0-9_-]*\z/) do
+    if key not in [nil, true, false] and String.match?(name, ~r{\A/?[a-zA-Z0-9_][a-zA-Z0-9_-]*\z}) do
       name
     else
       raise ArgumentError, "filter option name must be an unscoped name, got: #{inspect(key)}"
@@ -290,60 +483,31 @@ defmodule FFix.Graph.Builder do
 
   # Keep value normalization permissive so raw ffmpeg strings remain an escape hatch.
   defp validate_options!(options, specs) do
-    Enum.each(options, fn
-      {:pos, _value} ->
-        :ok
+    {_special, options} = FFix.Options.split!(options, [])
 
-      {key, _value} ->
-        unless specs == %{} or Map.has_key?(specs, key) do
-          raise ArgumentError, "#{key} is not a valid option"
-        end
+    Enum.each(options, fn {key, value} ->
+      if key != :pos and option_spec(specs, key) == nil do
+        raise ArgumentError, "#{key} is not a valid option"
+      end
+
+      validate_named_value!(value)
     end)
-
-    :ok
   end
+
+  defp option_spec(specs, key) do
+    Enum.find_value(specs, fn {name, spec} -> if to_string(name) == to_string(key), do: spec end)
+  end
+
+  defp validate_named_value!(values) when is_list(values),
+    do: Enum.each(values, &validate_named_value!/1)
+
+  defp validate_named_value!(value), do: normalize_generic_value!(value)
 
   defp normalize_args(options, specs) do
     Enum.map(options, fn
       {:pos, value} -> {:pos, Value.normalize(value, nil)}
-      {key, value} -> {key, Value.normalize(value, Map.get(specs, key))}
+      {key, value} -> {key, Value.normalize(value, option_spec(specs, key))}
     end)
-  end
-
-  defp output_shape(_name, [], _options, _option_specs, inputs) do
-    {0, [infer_input_media(inputs)]}
-  end
-
-  defp output_shape(:concat, [:N], options, option_specs, _inputs) do
-    output_media = concat_output_media(options, option_specs)
-    {length(output_media), output_media}
-  end
-
-  defp output_shape(_name, [:N], options, option_specs, inputs) do
-    count = dynamic_output_count(options, option_specs)
-    {count, List.duplicate(infer_input_media(inputs), count)}
-  end
-
-  defp output_shape(_name, outputs, _options, _option_specs, _inputs) do
-    output_media = Enum.map(outputs, &media_from_io/1)
-    {length(output_media), output_media}
-  end
-
-  # Dynamic filters need a concrete output count once they become graph nodes.
-  # Use normalized metadata defaults, with small per-filter overrides where ffmpeg's
-  # output shape is determined by different options.
-  defp dynamic_output_count(options, option_specs) do
-    case Metadata.dynamic_count_from_options(option_specs, :outputs, options) do
-      count when is_integer(count) and count > 0 -> count
-      _ -> 1
-    end
-  end
-
-  defp concat_output_media(options, option_specs) do
-    video_outputs = integer_option(options, :v, option_specs)
-    audio_outputs = integer_option(options, :a, option_specs)
-
-    List.duplicate(:video, video_outputs) ++ List.duplicate(:audio, audio_outputs)
   end
 
   defp summarize_media(media) do
@@ -360,8 +524,8 @@ defmodule FFix.Graph.Builder do
   defp media_from_io(:V), do: :video
   defp media_from_io(_), do: :unknown
 
-  defp build_result(plan, [], _output_media) do
-    %Terminal{plan: plan, media: plan.media}
+  defp build_result(plan, _signature, []) do
+    %Terminal{plan: plan, media: infer_input_media(plan.inputs)}
   end
 
   defp build_result(plan, [_single], [media]) do
@@ -393,7 +557,15 @@ defmodule FFix.Graph.Builder do
   end
 
   defp validate_graph_keys!(options) do
-    unknown = Keyword.keys(options) -- [:output, :outputs, :terminals, :settings]
+    unless Keyword.keyword?(options),
+      do: raise(ArgumentError, "graph options must be a keyword list")
+
+    keys = Keyword.keys(options)
+
+    if length(keys) != length(Enum.uniq(keys)),
+      do: raise(ArgumentError, "duplicate graph option; specify each root collection once")
+
+    unknown = keys -- [:output, :outputs, :terminals, :settings]
 
     if unknown != [] do
       raise ArgumentError, "unknown graph keys: #{inspect(unknown)}"
@@ -443,29 +615,13 @@ defmodule FFix.Graph.Builder do
   end
 
   defp validate_terminals!(terminals) do
+    unless is_list(terminals), do: raise(ArgumentError, "graph terminals must be an ordered list")
+
     Enum.each(terminals, fn
       %Terminal{} -> :ok
       other -> raise ArgumentError, "invalid graph terminal: #{inspect(other)}"
     end)
   end
-
-  defp integer_option(options, key, option_specs) do
-    case Keyword.get(options, key) do
-      nil -> Metadata.option_default(option_specs[key]) || 0
-      value -> parse_integer(value) || 0
-    end
-  end
-
-  defp parse_integer(value) when is_integer(value), do: value
-
-  defp parse_integer(value) when is_binary(value) do
-    case Integer.parse(value) do
-      {integer, ""} -> integer
-      _ -> nil
-    end
-  end
-
-  defp parse_integer(_value), do: nil
 
   defp normalize_output_media!(:audio), do: :audio
   defp normalize_output_media!(:video), do: :video
@@ -516,15 +672,23 @@ defmodule FFix.Graph.Builder do
           {node_id, output}
         end)
       )
-      |> MapSet.new()
+      |> Enum.frequencies()
 
     Enum.each(graph.order, fn node_id ->
       case Map.fetch!(graph.nodes, node_id) do
         %Node{kind: :filter, outputs: outputs} when outputs > 0 ->
           Enum.each(0..(outputs - 1), fn output ->
-            unless MapSet.member?(used_outputs, {node_id, output}) do
-              raise ArgumentError,
-                    "unconnected filter output #{inspect({node_id, output})}; every produced output must be consumed or exported"
+            case Map.get(used_outputs, {node_id, output}, 0) do
+              0 ->
+                raise ArgumentError,
+                      "unconnected filter output #{inspect({node_id, output})}; every produced output must be consumed or exported"
+
+              1 ->
+                :ok
+
+              count ->
+                raise ArgumentError,
+                      "filter output #{inspect({node_id, output})} is used #{count} times; use split/asplit for multiple consumers"
             end
           end)
 
@@ -534,37 +698,102 @@ defmodule FFix.Graph.Builder do
     end)
   end
 
-  defp normalize_settings(settings) when is_list(settings) do
-    Enum.map(settings, fn {key, value} -> {key, value} end)
+  defp validate_args!(args) when is_list(args) do
+    Enum.each(args, fn
+      {:pos, value} ->
+        validate_argument_value!(value)
+
+      {key, value} when is_atom(key) or is_binary(key) ->
+        normalize_option_name!(key)
+        validate_argument_value!(value)
+
+      other ->
+        raise ArgumentError, "invalid filter argument: #{inspect(other)}"
+    end)
   end
+
+  defp validate_args!(_args), do: raise(ArgumentError, "filter arguments must be an ordered list")
+
+  defp validate_argument_value!(value) when is_list(value),
+    do: Enum.each(value, &normalize_generic_value!/1)
+
+  defp validate_argument_value!(value), do: normalize_generic_value!(value)
+
+  defp normalize_settings(settings) when is_list(settings) do
+    Enum.reduce(settings, MapSet.new(), fn
+      {key, value}, names when is_atom(key) or is_binary(key) ->
+        name = normalize_filter_name!(key)
+
+        if MapSet.member?(names, name),
+          do: raise(ArgumentError, "duplicate graph setting: #{name}")
+
+        if is_list(value),
+          do: Enum.each(value, &normalize_generic_value!/1),
+          else: normalize_generic_value!(value)
+
+        MapSet.put(names, name)
+
+      other, _names ->
+        raise ArgumentError, "invalid graph setting: #{inspect(other)}"
+    end)
+
+    settings
+  end
+
+  defp normalize_settings(_settings),
+    do: raise(ArgumentError, "graph settings must be an ordered list")
 
   defp collect_plans(exports, terminals) do
     export_streams = Enum.map(exports, fn {_name, stream} -> stream end)
     roots = export_streams ++ terminals
 
     {_seen, plans} =
-      Enum.reduce(roots, {MapSet.new(), []}, fn root, acc ->
+      Enum.reduce(roots, {%{}, []}, fn root, acc ->
         visit_plan(plan_of(root), acc)
       end)
 
     plans
   end
 
-  defp visit_plan(%Plan{id: id} = plan, {seen, plans}) do
-    if MapSet.member?(seen, id) do
-      {seen, plans}
-    else
-      {seen, plans} =
-        Enum.reduce(plan.inputs, {MapSet.put(seen, id), plans}, fn input, acc ->
-          visit_plan(input.plan, acc)
-        end)
+  defp visit_plan(%Plan{id: id} = plan, {seen, plans}) when is_reference(id) do
+    case Map.fetch(seen, id) do
+      {:ok, ^plan} ->
+        {seen, plans}
 
-      {seen, plans ++ [plan]}
+      {:ok, _conflicting} ->
+        raise ArgumentError, "conflicting definitions for the same filter/input identity"
+
+      :error ->
+        {seen, plans} =
+          Enum.reduce(plan.inputs, {Map.put(seen, id, plan), plans}, fn input, acc ->
+            visit_plan(plan_of(input), acc)
+          end)
+
+        {seen, plans ++ [plan]}
     end
   end
 
-  defp plan_of(%StreamRef{plan: plan}), do: plan
-  defp plan_of(%Terminal{plan: plan}), do: plan
+  defp visit_plan(plan, _acc),
+    do: raise(ArgumentError, "invalid filter/input plan: #{inspect(plan)}")
+
+  defp plan_of(%StreamRef{plan: %Plan{output_media: {:unresolved, reason}}}) do
+    raise ArgumentError,
+          "unresolved filter output shape: #{reason}; declare the complete shape explicitly"
+  end
+
+  defp plan_of(%StreamRef{plan: %Plan{} = plan, output: output, media: media}) do
+    unless is_integer(output) and output >= 0 and output < plan.outputs and
+             Enum.at(plan.output_media, output) == media do
+      raise ArgumentError, "invalid stream output pad #{inspect(output)}"
+    end
+
+    plan
+  end
+
+  defp plan_of(%Terminal{plan: %Plan{kind: :filter, outputs: 0} = plan}), do: plan
+
+  defp plan_of(other),
+    do: raise(ArgumentError, "invalid graph root or filter input: #{inspect(other)}")
 
   defp assign_ids(plans) do
     {id_map, order} =
@@ -590,6 +819,7 @@ defmodule FFix.Graph.Builder do
         inputs: Enum.map(plan.inputs, &to_ref(&1, id_map)),
         args: plan.args,
         outputs: plan.outputs,
+        output_media: plan.output_media,
         media: plan.media
       }
 

@@ -6,6 +6,11 @@ defmodule FFix.Runner.Result do
   `argv` and `shell` always reflect the exact command that was executed.
   Parsed ffmpeg-style logs and the latest progress update are exposed separately
   from the raw stderr capture.
+
+  `logs_truncated` indicates logs omitted by the stderr retention policy.
+  `diagnostics_truncated` indicates oversized lines or progress records dropped
+  by the parser. Such records are omitted, not emitted as complete diagnostics.
+  With `stderr: :collect`, both raw and parsed diagnostics are unbounded.
   """
 
   alias FFix.Command
@@ -22,6 +27,8 @@ defmodule FFix.Runner.Result do
           stdout: binary() | nil,
           stderr: binary() | nil,
           logs: [Log.t()],
+          logs_truncated: boolean(),
+          diagnostics_truncated: boolean(),
           last_progress: Progress.t() | nil,
           started_at: DateTime.t() | nil,
           finished_at: DateTime.t() | nil,
@@ -39,6 +46,8 @@ defmodule FFix.Runner.Result do
     :started_at,
     :finished_at,
     :duration_ms,
-    logs: []
+    logs: [],
+    logs_truncated: false,
+    diagnostics_truncated: false
   ]
 end

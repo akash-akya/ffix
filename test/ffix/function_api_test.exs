@@ -261,7 +261,7 @@ defmodule FFix.FunctionAPITest do
       end
 
       for old_sources <- [[:preview], [video: :preview], [sources: [:preview]]] do
-        assert_raise ArgumentError, ~r/expected a stream or graph export source/, fn ->
+        assert_raise ArgumentError, ~r/invalid output source\/target/, fn ->
           constructor.("out.mp4", old_sources)
         end
       end

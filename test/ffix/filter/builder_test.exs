@@ -40,9 +40,9 @@ defmodule FFix.Filter.BuilderTest do
     outputs =
       FFix.Graph.input(0, :audio)
       |> Filter.ebur128(video: true)
-      |> FFix.shape([:audio, :video])
+      |> FFix.shape([:video, :audio])
 
-    assert [audio, video] = outputs
+    assert [video, audio] = outputs
     assert audio.media == :audio
     assert video.media == :video
   end

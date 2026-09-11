@@ -29,6 +29,7 @@ defmodule FFix.Graph.Node do
           inputs: [Ref.t()],
           args: [arg()],
           outputs: non_neg_integer(),
+          output_media: [:audio | :video | :unknown],
           media: :audio | :video | :unknown,
           metadata: map()
         }
@@ -42,6 +43,7 @@ defmodule FFix.Graph.Node do
     inputs: [],
     args: [],
     outputs: 1,
+    output_media: [:unknown],
     media: :unknown,
     metadata: %{}
   ]

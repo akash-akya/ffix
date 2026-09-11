@@ -5,7 +5,7 @@ defmodule FFix.Runner.Error do
 
   alias FFix.Runner.Result
 
-  @type kind :: :spawn | :exit
+  @type kind :: :spawn | :exit | :io
 
   @type t :: %__MODULE__{
           kind: kind(),
@@ -35,6 +35,16 @@ defmodule FFix.Runner.Error do
       result: result,
       exit_status: exit_status,
       message: build_exit_message(result)
+    }
+  end
+
+  @doc false
+  @spec io(String.t(), Result.t()) :: t()
+  def io(reason, %Result{} = result) do
+    %__MODULE__{
+      kind: :io,
+      result: result,
+      message: "command I/O failed: #{reason}\ncommand: #{result.shell}"
     }
   end
 

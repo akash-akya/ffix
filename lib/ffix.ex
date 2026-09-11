@@ -282,10 +282,10 @@ defmodule FFix do
   Some ffmpeg filters have output counts or media types that depend on options.
   `shape/2` lets you state the result explicitly before exporting or mapping it.
 
-      [audio, video] =
+      [video, audio] =
         input_audio
         |> ebur128(video: true)
-        |> FFix.shape([:audio, :video])
+        |> FFix.shape([:video, :audio])
   """
   @spec shape(StreamRef.t() | [StreamRef.t()] | tuple(), [output_media()]) ::
           StreamRef.t() | [StreamRef.t()]

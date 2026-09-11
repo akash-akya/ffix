@@ -67,6 +67,7 @@ defmodule FFix.Graph do
           | {:raw, String.t()}
 
   @type t :: %__MODULE__{
+          id: reference(),
           nodes: %{node_id() => term()},
           order: [node_id()],
           exports: [Export.t()],
@@ -74,7 +75,8 @@ defmodule FFix.Graph do
           settings: [setting()]
         }
 
-  defstruct nodes: %{},
+  defstruct id: nil,
+            nodes: %{},
             order: [],
             exports: [],
             terminals: [],
@@ -194,7 +196,8 @@ defmodule FFix.Graph do
 
   The parser is pragmatic: it targets graphs produced by `FFix` and common
   ffmpeg filtergraph syntax. It is not meant to accept every hand-written
-  filtergraph form.
+  filtergraph form. Declare producers before consumers; forward references
+  are rejected rather than guessed to be external input selectors.
 
   ## Examples
 
@@ -207,12 +210,11 @@ defmodule FFix.Graph do
 
   @doc group: "Parsing and serialization"
   @doc """
-  Serializes a graph to ffmpeg filtergraph syntax.
-
-  Prefer `FFix.to_filtergraph/1` when you want validation before serialization.
+  Validates and serializes a graph to ffmpeg filtergraph syntax.
   """
   @spec to_filtergraph(t()) :: String.t()
-  def to_filtergraph(%__MODULE__{} = graph), do: Render.to_filtergraph(graph)
+  def to_filtergraph(%__MODULE__{} = graph),
+    do: graph |> Builder.validate_graph!() |> Render.to_filtergraph()
 
   defp export_name_key(nil), do: nil
   defp export_name_key(name) when is_atom(name) or is_binary(name), do: to_string(name)

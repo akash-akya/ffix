@@ -18,7 +18,7 @@ defmodule FFix.Runner do
       result.stderr
 
   `run/2` returns `{:ok, result}` for exit status `0` and `{:error, error}` for
-  non-zero exits or spawn failures. `run!/2` returns the result or raises
+  non-zero exits, spawn failures, or I/O failures. `run!/2` returns the result or raises
   `FFix.Runner.Error`.
 
   ## Streaming Events
@@ -39,8 +39,14 @@ defmodule FFix.Runner do
     * `{:log, %FFix.Runner.Log{}}`
     * `{:progress, %FFix.Runner.Progress{}}`
     * `{:exit, %FFix.Runner.Result{}}`
+    * `{:error, %FFix.Runner.Error{}}` for spawn or I/O failures
 
-  When running `ffmpeg`, the runner prepends a few quiet-by-default execution flags:
+  Each enumeration serializes and executes afresh. Start is emitted after spawn,
+  before reading output. Early halt cancels and reaps the child without reporting
+  its cancellation status. Application callbacks and consumers retain their
+  original exceptions. There is no execution deadline.
+
+  When running a `%FFix.Command{}`, the runner prepends a few quiet-by-default execution flags:
 
     * `-hide_banner`
     * `-nostats`
@@ -71,9 +77,11 @@ defmodule FFix.Runner do
           | {:log, Log.t()}
           | {:progress, Progress.t()}
           | {:exit, Result.t()}
+          | {:error, Error.t()}
 
   @type option ::
-          {:stdin, stdin_source()}
+          {:ffmpeg, String.t()}
+          | {:stdin, stdin_source()}
           | {:stdout, stdout_mode()}
           | {:stderr, stderr_mode()}
           | {:progress, boolean()}
@@ -90,10 +98,18 @@ defmodule FFix.Runner do
     * `:stdin` - enumerable input for process stdin
     * `:stdout` - `:discard` or `:collect`
     * `:stderr` - `:discard`, `:collect`, or `{:tail, bytes}`
-    * `:progress` - when `true`, adds `-progress pipe:2` for ffmpeg commands
+    * `:ffmpeg` - executable for Command values; defaults to `FFMPEG_BIN`, then `ffmpeg`
+    * `:progress` - parses stderr progress; also adds `-progress pipe:2` for Command values
     * `:on_event` - callback invoked with each emitted event
 
-  By default stdout is discarded and only the trailing stderr is kept.
+  By default stdout is discarded and only 65,536 trailing stderr bytes are kept.
+  Parsed logs use the stderr byte budget (counting raw and message bytes);
+  `:discard` retains no logs. Lines and progress records are limited to 65,536
+  bytes unless stderr is explicitly `:collect`, which retains all diagnostics.
+  Oversized records are dropped; result truncation flags report these omissions.
+  Capture policies never suppress live stdout, stderr, log, or progress events.
+  Progress parsing is opt-in, including for raw argv, which is always executed
+  literally without FFmpeg flags or executable substitution.
 
       FFix.run(command, stderr: :collect)
   """
@@ -102,10 +118,13 @@ defmodule FFix.Runner do
   def run(command, options \\ [])
 
   def run(command, options) when is_list(options) do
-    case prepare_execution(command, options) do
-      {:ok, base_result, normalized_options} -> execute_run(base_result, normalized_options)
-      {:error, %Error{} = error} -> {:error, error}
-    end
+    command
+    |> stream(options)
+    |> Enum.reduce(nil, fn
+      {:exit, result}, _acc -> result_tuple(result)
+      {:error, error}, _acc -> {:error, error}
+      _event, acc -> acc
+    end)
   end
 
   def run(command, options) do
@@ -115,7 +134,7 @@ defmodule FFix.Runner do
 
   @doc group: "Collected execution"
   @doc """
-  Runs a command and raises `FFix.Runner.Error` on spawn failure or non-zero exit.
+  Runs a command and raises `FFix.Runner.Error` on operational failure.
   """
   @spec run!(Command.t() | nonempty_list(String.t()), [option()]) :: Result.t()
   def run!(command, options \\ []) do
@@ -144,13 +163,7 @@ defmodule FFix.Runner do
   def stream(command, options \\ [])
 
   def stream(command, options) when is_list(options) do
-    case prepare_execution(command, options) do
-      {:ok, base_result, normalized_options} ->
-        build_stream(base_result, normalized_options, :plain)
-
-      {:error, %Error{} = error} ->
-        raise error
-    end
+    build_stream(command, normalize_options!(options), :plain)
   end
 
   def stream(command, options) do
@@ -160,19 +173,14 @@ defmodule FFix.Runner do
 
   @doc group: "Streaming execution"
   @doc """
-  Runs a command as a lazy event stream and raises on non-zero exit.
+  Runs a command as a lazy event stream and raises `FFix.Runner.Error` on
+  operational failure. Early halt is cancellation, not a failed exit.
   """
   @spec stream!(Command.t() | nonempty_list(String.t()), [option()]) :: term()
   def stream!(command, options \\ [])
 
   def stream!(command, options) when is_list(options) do
-    case prepare_execution(command, options) do
-      {:ok, base_result, normalized_options} ->
-        build_stream(base_result, normalized_options, :raise)
-
-      {:error, %Error{} = error} ->
-        raise error
-    end
+    build_stream(command, normalize_options!(options), :raise)
   end
 
   def stream!(command, options) do
@@ -180,101 +188,268 @@ defmodule FFix.Runner do
           "runner options must be a keyword list, got: #{inspect({command, options})}"
   end
 
-  defp prepare_execution(command, options) do
-    options = normalize_options!(options)
-    %{command: ff_command, argv: argv} = build_run_spec!(command)
-    argv = apply_runtime_defaults(argv, options)
-    shell = shell_string(argv)
+  defp build_stream(command, options, mode) do
+    Stream.resource(
+      fn -> start_execution(command, options) end,
+      &next_events/1,
+      &cleanup_execution/1
+    )
+    |> Stream.each(fn event ->
+      case event do
+        {:application_error, kind, reason, stacktrace} ->
+          :erlang.raise(kind, reason, stacktrace)
 
-    base_result = %Result{command: ff_command, argv: argv, shell: shell}
+        _ ->
+          emit_events(options.on_event, [event])
+      end
 
-    case resolve_executable(List.first(argv)) do
-      nil ->
-        {:error, Error.spawn(~s(command not found: #{inspect(List.first(argv))}), base_result)}
+      case {mode, event} do
+        {:raise, {:error, error}} ->
+          raise error
 
-      _path ->
-        {:ok, base_result, options}
-    end
+        {:raise, {:exit, %Result{exit_status: status} = result}} when status != 0 ->
+          raise Error.exit(result)
+
+        _ ->
+          :ok
+      end
+    end)
   end
 
-  defp execute_run(%Result{} = base_result, options) do
-    try do
-      started_at = DateTime.utc_now()
-      started_ms = System.monotonic_time(:millisecond)
-      emit_events(options.on_event, [start_event(base_result)])
+  defp start_execution(command, options) do
+    %{command: ff_command, argv: argv} = build_run_spec!(command, options)
+    base_result = %Result{command: ff_command, argv: argv, shell: shell_string(argv)}
 
-      state =
-        base_result
-        |> source_stream(options)
-        |> Enum.reduce(initial_state(options), fn item, state ->
-          {events, state} = process_source_item(item, state)
-          emit_events(options.on_event, events)
-          state
-        end)
-
-      {final_events, result} = finalize_execution(base_result, state, started_at, started_ms)
-      emit_events(options.on_event, final_events)
-      result_tuple(result)
-    rescue
-      error in MatchError ->
-        case error.term do
-          {:error, reason} -> {:error, Error.spawn(format_spawn_reason(reason), base_result)}
-          _other -> reraise error, __STACKTRACE__
-        end
-    end
-  end
-
-  defp build_stream(%Result{} = base_result, options, mode) when mode in [:plain, :raise] do
-    start_event = start_event(base_result)
-
-    base_result
-    |> source_stream(options)
-    |> Stream.transform(
-      fn ->
+    case start_process(argv) do
+      {:ok, process} ->
         %{
+          process: process,
+          writer: start_writer(process, options.stdin),
+          base_result: base_result,
           state: initial_state(options),
           started_at: DateTime.utc_now(),
           started_ms: System.monotonic_time(:millisecond),
-          pending_events: [start_event]
+          phase: :start
         }
-      end,
-      fn item, acc ->
-        {events, state} = process_source_item(item, acc.state)
 
-        case item do
-          {:exit, _status} ->
-            {final_events, result} =
-              finalize_execution(base_result, state, acc.started_at, acc.started_ms)
+      {:error, reason} ->
+        %{phase: :error, error: Error.spawn(format_spawn_reason(reason), base_result)}
+    end
+  end
 
-            emitted_events = acc.pending_events ++ events ++ final_events
-            emit_events(options.on_event, emitted_events)
+  # Exile starts the OS process asynchronously. The call is a startup barrier;
+  # unlinking lets read/await failures become data rather than killing the caller.
+  defp start_process(argv) do
+    previous_trap = Process.flag(:trap_exit, true)
 
-            case {mode, result.exit_status} do
-              {:plain, _status} ->
-                {emitted_events, %{acc | state: state, pending_events: []}}
+    try do
+      case Exile.Process.start_link(argv, stderr: :consume) do
+        {:ok, process} ->
+          Process.unlink(process.pid)
 
-              {:raise, 0} ->
-                {emitted_events, %{acc | state: state, pending_events: []}}
+          case process_call(fn -> Exile.Process.os_pid(process) end) do
+            {:error, reason} ->
+              Process.demonitor(process.monitor_ref, [:flush])
+              flush_process_exit(process.pid)
+              {:error, reason}
 
-              {:raise, _status} ->
-                raise Error.exit(result)
+            _started ->
+              flush_process_exit(process.pid)
+              {:ok, process}
+          end
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    rescue
+      error in MatchError ->
+        case error.term do
+          {:error, reason} -> {:error, reason}
+          _ -> reraise error, __STACKTRACE__
+        end
+    after
+      Process.flag(:trap_exit, previous_trap)
+    end
+  end
+
+  defp flush_process_exit(pid) do
+    receive do
+      {:EXIT, ^pid, _reason} -> :ok
+    after
+      0 -> :ok
+    end
+  end
+
+  defp process_call(callback) do
+    callback.()
+  catch
+    :exit, reason -> {:error, reason}
+  end
+
+  defp next_events(%{phase: :done} = execution), do: {:halt, execution}
+
+  defp next_events(%{phase: :error, error: error} = execution) do
+    {[{:error, error}], %{execution | phase: :done}}
+  end
+
+  defp next_events(%{phase: :start} = execution) do
+    {[start_event(execution.base_result)], %{execution | phase: :read}}
+  end
+
+  defp next_events(%{phase: :read} = execution) do
+    case process_call(fn -> Exile.Process.read_any(execution.process) end) do
+      {:ok, item} ->
+        {events, state} = process_source_item(item, execution.state)
+        {events, %{execution | state: state}}
+
+      :eof ->
+        {[], %{execution | phase: :finish}}
+
+      {:error, reason} ->
+        {events, execution} = io_failure(execution, reason)
+        {events, %{execution | phase: :cancel}}
+    end
+  end
+
+  defp next_events(%{phase: :cancel} = execution), do: {:halt, execution}
+
+  defp next_events(%{phase: :finish} = execution) do
+    writer_result = await_writer(execution.writer)
+    exit_result = process_call(fn -> Exile.Process.await_exit(execution.process, :infinity) end)
+
+    state =
+      case exit_result do
+        {:ok, status} -> %{execution.state | exit_status: status}
+        {:error, _reason} -> execution.state
+      end
+
+    execution = %{execution | phase: :done, state: state}
+
+    case {writer_result, exit_result} do
+      {{:application_error, _, _, _} = event, _} ->
+        {[event], execution}
+
+      {{:error, reason}, _} ->
+        io_failure(execution, reason)
+
+      {:ok, {:error, reason}} ->
+        io_failure(execution, reason)
+
+      {:ok, {:ok, status}} ->
+        state = %{execution.state | exit_status: status}
+
+        {events, _result} =
+          finalize_execution(
+            execution.base_result,
+            state,
+            execution.started_at,
+            execution.started_ms
+          )
+
+        {events, execution}
+    end
+  end
+
+  defp io_failure(execution, reason) do
+    {events, result} =
+      finalize_execution(
+        execution.base_result,
+        execution.state,
+        execution.started_at,
+        execution.started_ms
+      )
+
+    diagnostics = Enum.drop(events, -1)
+    {diagnostics ++ [{:error, Error.io(format_spawn_reason(reason), result)}], execution}
+  end
+
+  defp cleanup_execution(%{phase: :done}), do: :ok
+  defp cleanup_execution(%{phase: :error}), do: :ok
+
+  defp cleanup_execution(execution) do
+    if execution.writer do
+      Task.shutdown(execution.writer, :brutal_kill)
+    end
+
+    # Cancellation is not an execution failure and must not replace a consumer exception.
+    process_call(fn -> Exile.Process.await_exit(execution.process, 1_000) end)
+    :ok
+  end
+
+  defmodule InputSink do
+    @moduledoc false
+    defstruct [:process, :error_ref]
+
+    defimpl Collectable do
+      def into(sink) do
+        collector = fn
+          acc, {:cont, chunk} ->
+            result =
+              try do
+                Exile.Process.write(sink.process, chunk)
+              catch
+                :exit, reason -> {:error, reason}
+              end
+
+            case result do
+              :ok -> acc
+              {:error, reason} -> throw({sink.error_ref, reason})
             end
 
-          _other ->
-            emitted_events = acc.pending_events ++ events
-            emit_events(options.on_event, emitted_events)
-            {emitted_events, %{acc | state: state, pending_events: []}}
+          acc, :done ->
+            acc
+
+          _acc, :halt ->
+            :ok
         end
-      end,
-      fn _acc -> :ok end
-    )
+
+        {:ok, collector}
+      end
+    end
   end
 
-  defp source_stream(%Result{argv: argv}, options) do
-    argv
-    |> Exile.stream(stderr: exile_stderr_mode(options.stderr), input: options.stdin)
-    |> Stream.map(&normalize_source_item/1)
+  defp start_writer(process, nil) do
+    process_call(fn -> Exile.Process.close_stdin(process) end)
+    nil
   end
+
+  defp start_writer(process, input) do
+    Task.async(fn ->
+      error_ref = make_ref()
+      sink = %InputSink{process: process, error_ref: error_ref}
+
+      result =
+        try do
+          case process_call(fn -> Exile.Process.change_pipe_owner(process, :stdin, self()) end) do
+            :ok ->
+              if is_function(input, 1) do
+                input.(sink)
+              else
+                Enum.into(input, sink)
+              end
+
+              :ok
+
+            {:error, reason} ->
+              {:error, reason}
+          end
+        catch
+          :throw, {^error_ref, reason} -> {:error, reason}
+          kind, reason -> {:application_error, kind, reason, __STACKTRACE__}
+        after
+          process_call(fn -> Exile.Process.close_stdin(process) end)
+        end
+
+      if result != :ok do
+        process_call(fn -> Exile.Process.kill(process, :sigkill) end)
+      end
+
+      result
+    end)
+  end
+
+  defp await_writer(nil), do: :ok
+  defp await_writer(writer), do: Task.await(writer, :infinity)
 
   defp start_event(%Result{} = base_result) do
     {:start, %{command: base_result.command, argv: base_result.argv, shell: base_result.shell}}
@@ -285,8 +460,8 @@ defmodule FFix.Runner do
       stdout: new_capture(options.stdout),
       stderr: new_capture(options.stderr),
       exit_status: nil,
-      stderr_parser: new_stderr_parser(),
-      logs: [],
+      stderr_parser: new_stderr_parser(options),
+      logs: new_logs(options.stderr),
       last_progress: nil
     }
   end
@@ -314,16 +489,8 @@ defmodule FFix.Runner do
     {[{:stderr, chunk}] ++ parsed_events, state}
   end
 
-  defp process_source_item({:exit, {:status, status}}, state) do
-    {[], %{state | exit_status: status}}
-  end
-
-  defp process_source_item({:exit, :epipe}, state) do
-    {[], %{state | exit_status: :epipe}}
-  end
-
   defp finalize_execution(%Result{} = base_result, state, started_at, started_ms) do
-    {_stderr_parser, trailing_events} = finalize_stderr_parser(state.stderr_parser)
+    {stderr_parser, trailing_events} = finalize_stderr_parser(state.stderr_parser)
     {logs, last_progress} = merge_parsed_events(trailing_events, state.logs, state.last_progress)
 
     finished_at = DateTime.utc_now()
@@ -333,7 +500,9 @@ defmodule FFix.Runner do
       base_result
       | stdout: finalize_capture(state.stdout),
         stderr: finalize_capture(state.stderr),
-        logs: Enum.reverse(logs),
+        logs: Enum.map(:queue.to_list(logs.queue), fn {log, _bytes} -> log end),
+        logs_truncated: logs.truncated,
+        diagnostics_truncated: stderr_parser.truncated,
         last_progress: last_progress,
         exit_status: state.exit_status,
         started_at: started_at,
@@ -348,19 +517,39 @@ defmodule FFix.Runner do
   defp result_tuple(%Result{} = result), do: {:error, Error.exit(result)}
 
   defp normalize_options!(options) do
-    unknown = Keyword.keys(options) -- [:stdin, :stdout, :stderr, :progress, :on_event]
+    unless Keyword.keyword?(options) do
+      raise ArgumentError, "runner options must be a keyword list"
+    end
+
+    unknown = Keyword.keys(options) -- [:stdin, :stdout, :stderr, :progress, :on_event, :ffmpeg]
 
     if unknown != [] do
       raise ArgumentError, "unknown runner options: #{inspect(unknown)}"
     end
 
     %{
-      stdin: Keyword.get(options, :stdin),
+      stdin: normalize_stdin!(Keyword.get(options, :stdin)),
+      ffmpeg: normalize_ffmpeg!(Keyword.get(options, :ffmpeg)),
       stdout: normalize_stdout!(Keyword.get(options, :stdout, :discard)),
       stderr: normalize_stderr!(Keyword.get(options, :stderr, {:tail, @default_stderr_tail})),
       progress: normalize_progress!(Keyword.get(options, :progress, false)),
       on_event: normalize_on_event!(Keyword.get(options, :on_event))
     }
+  end
+
+  defp normalize_stdin!(input) do
+    if is_nil(input) or is_function(input, 1) or Enumerable.impl_for(input) != nil do
+      input
+    else
+      raise ArgumentError, "runner :stdin must be an enumerable or a function with arity 1"
+    end
+  end
+
+  defp normalize_ffmpeg!(nil), do: nil
+  defp normalize_ffmpeg!(name) when is_binary(name) and byte_size(name) > 0, do: name
+
+  defp normalize_ffmpeg!(name) do
+    raise ArgumentError, "runner :ffmpeg must be a non-empty string, got: #{inspect(name)}"
   end
 
   defp normalize_stdout!(:discard), do: :discard
@@ -395,11 +584,22 @@ defmodule FFix.Runner do
           "runner :on_event must be a function with arity 1, got: #{inspect(callback)}"
   end
 
-  defp build_run_spec!(%Command{} = command) do
-    %{command: command, argv: Command.to_argv(command)}
+  defp build_run_spec!(%Command{} = command, options) do
+    [_executable | args] = Command.to_argv(command)
+    executable = options.ffmpeg || System.get_env("FFMPEG_BIN") || "ffmpeg"
+    defaults = ["-hide_banner", "-nostats", "-loglevel", "level+warning"]
+
+    progress_args =
+      if options.progress do
+        ["-progress", "pipe:2"]
+      else
+        []
+      end
+
+    %{command: command, argv: [executable | defaults ++ progress_args ++ args]}
   end
 
-  defp build_run_spec!(argv) when is_list(argv) and argv != [] do
+  defp build_run_spec!(argv, _options) when is_list(argv) and argv != [] do
     if Enum.all?(argv, &is_binary/1) do
       %{command: nil, argv: argv}
     else
@@ -407,38 +607,10 @@ defmodule FFix.Runner do
     end
   end
 
-  defp build_run_spec!(command) do
+  defp build_run_spec!(command, _options) do
     raise ArgumentError,
           "runner expects an FFix.Command or argv list, got: #{inspect(command)}"
   end
-
-  defp apply_runtime_defaults([executable | args] = argv, options) do
-    if ffmpeg_executable?(executable) do
-      defaults =
-        ["-hide_banner", "-nostats", "-loglevel", "level+warning"] ++
-          if(options.progress, do: ["-progress", "pipe:2"], else: [])
-
-      [executable | defaults ++ args]
-    else
-      argv
-    end
-  end
-
-  defp ffmpeg_executable?(executable) when is_binary(executable) do
-    Path.basename(executable) == "ffmpeg"
-  end
-
-  defp resolve_executable(nil), do: nil
-
-  defp resolve_executable(executable) when is_binary(executable),
-    do: System.find_executable(executable)
-
-  defp normalize_source_item(chunk) when is_binary(chunk), do: {:stdout, chunk}
-  defp normalize_source_item(item), do: item
-
-  defp exile_stderr_mode(:discard), do: :disable
-  defp exile_stderr_mode(:collect), do: :consume
-  defp exile_stderr_mode({:tail, _size}), do: :consume
 
   defp new_capture(:discard), do: :discard
   defp new_capture(:collect), do: []
@@ -464,46 +636,118 @@ defmodule FFix.Runner do
 
   defp finalize_capture({{:tail, _size}, data}), do: data
 
-  defp new_stderr_parser do
-    %{buffer: "", progress_fields: %{}}
+  defp new_stderr_parser(options) do
+    limit =
+      case options.stderr do
+        :collect -> :infinity
+        _ -> @default_stderr_tail
+      end
+
+    %{
+      buffer: "",
+      dropping_line: false,
+      progress: options.progress,
+      progress_fields: %{},
+      progress_bytes: 0,
+      dropping_progress: false,
+      limit: limit,
+      truncated: false
+    }
   end
 
   defp parse_stderr_chunk(%{buffer: buffer} = state, chunk) do
-    text = buffer <> chunk
-    pieces = String.split(text, "\n")
+    pieces = :binary.split(buffer <> chunk, "\n", [:global])
     {lines, [next_buffer]} = Enum.split(pieces, -1)
-    state = %{state | buffer: next_buffer}
+    state = %{state | buffer: ""}
 
-    Enum.reduce(lines, {state, []}, fn line, {state, events} ->
-      {state, line_events} = parse_stderr_line(state, String.trim_trailing(line, "\r"))
-      {state, events ++ line_events}
-    end)
+    {state, events} =
+      Enum.reduce(lines, {state, []}, fn line, {state, events} ->
+        {state, line_events} = complete_stderr_line(state, line)
+        {state, Enum.reverse(line_events, events)}
+      end)
+
+    state =
+      if state.dropping_line or exceeds_limit?(byte_size(next_buffer), state.limit) do
+        %{truncate_record(state) | buffer: "", dropping_line: true}
+      else
+        %{state | buffer: :binary.copy(next_buffer)}
+      end
+
+    {state, Enum.reverse(events)}
   end
+
+  defp complete_stderr_line(state, line) do
+    if state.dropping_line or exceeds_limit?(byte_size(line), state.limit) do
+      {%{truncate_record(state) | dropping_line: false}, []}
+    else
+      parse_stderr_line(state, String.trim_trailing(line, "\r"))
+    end
+  end
+
+  defp truncate_record(state) do
+    %{
+      state
+      | truncated: true,
+        progress_fields: %{},
+        progress_bytes: 0,
+        dropping_progress: state.progress
+    }
+  end
+
+  defp exceeds_limit?(_size, :infinity), do: false
+  defp exceeds_limit?(size, limit), do: size > limit
 
   defp finalize_stderr_parser(%{buffer: ""} = state), do: {state, []}
 
   defp finalize_stderr_parser(%{buffer: buffer} = state) do
-    parse_stderr_line(%{state | buffer: ""}, String.trim_trailing(buffer, "\r"))
+    complete_stderr_line(%{state | buffer: ""}, buffer)
   end
 
   defp parse_stderr_line(state, ""), do: {state, []}
 
-  defp parse_stderr_line(%{progress_fields: progress_fields} = state, line) do
-    if progress_line?(line) do
+  defp parse_stderr_line(state, line) do
+    if state.progress and progress_line?(line) do
       [key, value] = String.split(line, "=", parts: 2)
-      progress_fields = Map.put(progress_fields, key, String.trim(value))
-
-      if key == "progress" do
-        progress = build_progress(progress_fields)
-        {%{state | progress_fields: %{}}, [{:progress, progress}]}
-      else
-        {%{state | progress_fields: progress_fields}, []}
-      end
+      parse_progress_field(state, :binary.copy(key), :binary.copy(String.trim(value)))
     else
       case parse_log_line(line) do
         nil -> {state, []}
         log -> {state, [{:log, log}]}
       end
+    end
+  end
+
+  defp parse_progress_field(state, key, value) do
+    previous_bytes =
+      case Map.fetch(state.progress_fields, key) do
+        {:ok, previous} -> byte_size(key) + byte_size(previous)
+        :error -> 0
+      end
+
+    bytes = state.progress_bytes - previous_bytes + byte_size(key) + byte_size(value)
+
+    state =
+      if state.dropping_progress or exceeds_limit?(bytes, state.limit) do
+        truncate_record(state)
+      else
+        %{
+          state
+          | progress_fields: Map.put(state.progress_fields, key, value),
+            progress_bytes: bytes
+        }
+      end
+
+    if key == "progress" do
+      events =
+        if state.dropping_progress do
+          []
+        else
+          [{:progress, build_progress(state.progress_fields)}]
+        end
+
+      {%{state | progress_fields: %{}, progress_bytes: 0, dropping_progress: false}, events}
+    else
+      {state, []}
     end
   end
 
@@ -520,8 +764,8 @@ defmodule FFix.Runner do
       [level, message] ->
         %Log{
           level: String.to_atom(level),
-          message: if(message == "", do: line, else: message),
-          raw: line
+          message: :binary.copy(if(message == "", do: line, else: message)),
+          raw: :binary.copy(line)
         }
 
       _ ->
@@ -597,10 +841,35 @@ defmodule FFix.Runner do
     end
   end
 
+  defp new_logs(mode) do
+    limit =
+      case mode do
+        :collect -> :infinity
+        :discard -> 0
+        {:tail, size} -> size
+      end
+
+    %{queue: :queue.new(), bytes: 0, limit: limit, truncated: false}
+  end
+
+  defp retain_log(logs, log) do
+    bytes = byte_size(log.raw) + byte_size(log.message)
+    trim_logs(%{logs | queue: :queue.in({log, bytes}, logs.queue), bytes: logs.bytes + bytes})
+  end
+
+  defp trim_logs(logs) do
+    if exceeds_limit?(logs.bytes, logs.limit) do
+      {{:value, {_log, bytes}}, queue} = :queue.out(logs.queue)
+      trim_logs(%{logs | queue: queue, bytes: logs.bytes - bytes, truncated: true})
+    else
+      logs
+    end
+  end
+
   defp merge_parsed_events(events, logs, last_progress) do
     Enum.reduce(events, {logs, last_progress}, fn
       {:log, %Log{} = log}, {logs, last_progress} ->
-        {[log | logs], last_progress}
+        {retain_log(logs, log), last_progress}
 
       {:progress, %Progress{} = progress}, {logs, _last_progress} ->
         {logs, progress}

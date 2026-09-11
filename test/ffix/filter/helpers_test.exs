@@ -96,6 +96,16 @@ defmodule FFix.Filter.HelpersTest do
     assert Filter.split(video) |> hd() |> Map.fetch!(:plan) |> Map.fetch!(:args) == []
   end
 
+  test "named helper output counts honor aliases and positional options" do
+    video = Graph.input(0, :video)
+    audio = Graph.input(0, :audio)
+
+    assert [%StreamRef{}, %StreamRef{}] = Filter.select(video, n: 2)
+    assert [%StreamRef{}, %StreamRef{}, %StreamRef{}] = Filter.split(video, pos: 3)
+    assert [%StreamRef{}, %StreamRef{}] = Filter.asplit(audio, pos: 3, outputs: 2)
+    assert [%StreamRef{}, %StreamRef{}] = Filter.select(video, outputs: 3, n: 2)
+  end
+
   test "filter helpers preserve arrays, raw strings, expressions, flags and positional order" do
     audio = Graph.input(0, :audio)
     formatted = Filter.aformat(audio, sample_rates: ["44100", 48000], sample_fmts: [:fltp, :s16])
@@ -119,7 +129,13 @@ defmodule FFix.Filter.HelpersTest do
 
     assert Filter.scale(video, pos: 1280, pos: -1).plan.args == [pos: 1280, pos: -1]
     assert Filter.scale(video, w: 1280, w: "iw/2").plan.args == [w: 1280, w: "iw/2"]
-    assert Filter.null(video, vendor_option: :literal).plan.args == [vendor_option: "literal"]
+
+    assert_raise ArgumentError, ~r/vendor_option is not a valid option/, fn ->
+      Filter.null(video, vendor_option: :literal)
+    end
+
+    assert Filter.filter(video, "null", [:video], vendor_option: :literal).plan.args ==
+             [{"vendor_option", "literal"}]
   end
 
   test "specs describe dynamic singleton results and permissive filter values" do
@@ -129,6 +145,7 @@ defmodule FFix.Filter.HelpersTest do
     assert signature(:concat, 2) =~
              "FFix.Graph.StreamRef.t() | [FFix.Graph.StreamRef.t()]"
 
+    assert signature(:split, 2) =~ "FFix.Graph.Terminal.t()"
     assert signature(:nullsink, 2) =~ "FFix.Graph.Terminal.t()"
 
     assert signature(:scale2ref, 3) =~

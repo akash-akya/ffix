@@ -9,9 +9,26 @@ defmodule FFix.Parsers.FilterGraph do
   whitespace = ascii_string(@ws_chars, min: 1)
   maybe_whitespace = ignore(optional(whitespace))
 
+  # av_get_token removes escapes outside quotes; inside quotes, even a
+  # backslash is literal. Protected whitespace must survive trailing trim.
+  escaped_piece =
+    ignore(string("\\"))
+    |> utf8_string([], 1)
+    |> unwrap_and_tag(:protected)
+
+  quoted_piece =
+    ignore(string("'"))
+    |> utf8_string([{:not, ?'}], min: 0)
+    |> ignore(optional(string("'")))
+    |> unwrap_and_tag(:protected)
+
+  label_char = utf8_string([{:not, ?]}, {:not, ?'}, {:not, ?\\}], 1)
+
   label =
     ignore(string("["))
-    |> concat(utf8_string([{:not, ?]}], min: 1))
+    |> concat(maybe_whitespace)
+    |> repeat(choice([quoted_piece, escaped_piece, label_char]))
+    |> reduce({__MODULE__, :decode_label, []})
     |> ignore(string("]"))
 
   labels =
@@ -30,29 +47,11 @@ defmodule FFix.Parsers.FilterGraph do
     |> wrap()
     |> tag(:filter_name)
 
-  escaped_piece =
-    string("\\")
-    |> concat(utf8_string([], 1))
-    |> reduce({Enum, :join, [""]})
-
-  quoted_piece =
-    string("'")
-    |> repeat(
-      choice([
-        escaped_piece,
-        utf8_string([{:not, ?'}], min: 1)
-      ])
-    )
-    |> string("'")
-    |> reduce({Enum, :join, [""]})
-
-  arg_char =
-    lookahead_not(choice([string("["), string(","), string(";")]))
-    |> utf8_string([], 1)
+  arg_char = utf8_string([{:not, ?[}, {:not, ?]}, {:not, ?,}, {:not, ?;}, {:not, ?'}], 1)
 
   raw_args =
     repeat(choice([quoted_piece, escaped_piece, arg_char]))
-    |> reduce({Enum, :join, [""]})
+    |> reduce({__MODULE__, :decode_token, []})
 
   args =
     ignore(string("="))
@@ -84,13 +83,11 @@ defmodule FFix.Parsers.FilterGraph do
     |> repeat(chain_separator |> concat(filter))
     |> reduce({__MODULE__, :build_chain, []})
 
-  setting_value_char =
-    lookahead_not(string(";"))
-    |> utf8_string([], 1)
+  setting_value_char = utf8_string([{:not, ?;}, {:not, ?'}], 1)
 
   setting_value =
     repeat(choice([quoted_piece, escaped_piece, setting_value_char]))
-    |> reduce({Enum, :join, [""]})
+    |> reduce({__MODULE__, :decode_token, []})
 
   setting =
     maybe_whitespace
@@ -111,9 +108,45 @@ defmodule FFix.Parsers.FilterGraph do
 
   defparsec(:filter_graph, graph)
 
+  option_char = utf8_string([{:not, ?:}, {:not, ?'}], 1)
+
+  option_value =
+    maybe_whitespace
+    |> repeat(choice([quoted_piece, escaped_piece, option_char]))
+    |> reduce({__MODULE__, :decode_token, []})
+
+  option_key =
+    ascii_string(@name_chars ++ [?-, ?/], min: 1)
+    |> concat(maybe_whitespace)
+    |> ignore(string("="))
+
+  option =
+    maybe_whitespace
+    |> optional(option_key)
+    |> concat(option_value)
+    |> reduce({__MODULE__, :build_option, []})
+
+  options = option |> repeat(ignore(string(":")) |> concat(option))
+  defparsec(:filter_options, options)
+  defparsec(:setting_option, option_value)
+
   @spec parse(String.t()) :: [tuple()]
   def parse(source) when is_binary(source) do
-    case filter_graph(source) do
+    reject_nul!(source)
+    source |> filter_graph() |> parsed!()
+  end
+
+  @doc "Decodes option syntax after the filtergraph escaping layer has been removed."
+  @spec parse_args(String.t() | nil) :: [{String.t() | :pos, String.t()}]
+  def parse_args(source) when source in [nil, ""], do: []
+
+  def parse_args(source) when is_binary(source) do
+    reject_nul!(source)
+    source |> filter_options() |> parsed!()
+  end
+
+  defp parsed!(result) do
+    case result do
       {:ok, parsed, "", %{}, _, _} ->
         parsed
 
@@ -124,6 +157,34 @@ defmodule FFix.Parsers.FilterGraph do
         raise ArgumentError, "#{message} at #{inspect(rest)}"
     end
   end
+
+  defp reject_nul!(source) do
+    if String.contains?(source, <<0>>) do
+      raise ArgumentError, "filtergraph values must not contain NUL"
+    end
+  end
+
+  def decode_label(pieces) do
+    case decode_token(pieces) do
+      "" -> raise ArgumentError, "filtergraph labels must not be empty"
+      label -> label
+    end
+  end
+
+  def decode_token(pieces) do
+    pieces
+    |> Enum.reverse()
+    |> Enum.drop_while(&(&1 in [" ", "\t", "\r", "\n"]))
+    |> Enum.reverse()
+    |> Enum.map(fn
+      {:protected, value} -> value
+      value -> value
+    end)
+    |> IO.iodata_to_binary()
+  end
+
+  def build_option([value]), do: {:pos, value}
+  def build_option([key, value]), do: {key, value}
 
   def build_filter(parts) do
     Enum.reduce(parts, %{inputs: [], name: nil, instance: nil, args: nil, outputs: []}, fn
@@ -140,11 +201,14 @@ defmodule FFix.Parsers.FilterGraph do
         end
 
       {:args, values}, filter ->
-        args = values |> List.flatten() |> Enum.join() |> String.trim()
-        %{filter | args: args}
+        %{filter | args: values |> List.flatten() |> Enum.join()}
     end)
   end
 
   def build_chain(filters), do: {:chain, filters}
-  def build_setting([value]), do: {:setting, "sws_flags", String.trim(value)}
+
+  def build_setting([value]) do
+    [decoded] = value |> setting_option() |> parsed!()
+    {:setting, "sws_flags", decoded}
+  end
 end

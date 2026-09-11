@@ -139,8 +139,15 @@ defmodule FFix.Filter.GenericTest do
              [pos: text, pos: 2] ++
                [{"enabled", false}, {"width", expression}, {"mode", "fast"}]
 
-    assert render(result) ==
-             ~S|vendor=a\:b\,c\;\[d\]\'e\\f:2:enabled=false:width=if(gt(iw\,320)\,320\,iw):mode=fast[out0];|
+    assert [{:chain, [parsed]}] = FFix.Parsers.FilterGraph.parse(render(result))
+
+    assert FFix.Parsers.FilterGraph.parse_args(parsed.args) == [
+             {:pos, text},
+             {:pos, "2"},
+             {"enabled", "false"},
+             {"width", expression.source},
+             {"mode", "fast"}
+           ]
   end
 
   test "mixed generic and named filters use deterministic collision-free labels" do

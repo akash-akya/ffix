@@ -111,6 +111,8 @@ defmodule FFix.Helpers do
             @spec unquote(function_name)(FFix.Command.source(), [unquote(type_name)]) ::
                     FFix.Command.Mapping.t()
             def unquote(function_name)(source, options \\ []) do
+              FFix.Encoder.validate_source_media!(source, unquote(entry.media_type))
+
               options =
                 FFix.Options.normalize!(options, unquote(schema), unquote(name <> " encoder"))
 

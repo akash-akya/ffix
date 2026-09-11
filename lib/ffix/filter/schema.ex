@@ -3,8 +3,9 @@ defmodule FFix.Filter.Schema do
 
   @doc """
   Adapts trusted recorded filter registrations and complete public help to the
-  builder schema. Catalog signatures determine helper arities; help pad details
-  remain in the recording rather than overriding those signatures.
+  builder schema. Catalog signatures determine helper arities. Mixed fixed and
+  dynamic help annotations are retained separately rather than replacing the
+  catalog's fixed pads.
 
   The effective option declaration is primary-first, framesync-last. Each spec
   retains its selected owner and all selected owner-tagged declarations.
@@ -23,10 +24,17 @@ defmodule FFix.Filter.Schema do
         flags: catalog_flags(registration.flags),
         inputs: catalog_pads!(registration.inputs, name, :inputs),
         outputs: catalog_pads!(registration.outputs, name, :outputs),
+        dynamic_pads: Map.get(help, :dynamic_pads, %{}),
         desc: registration.description
       }
 
-      specs = help.option_sections |> option_specs() |> add_timeline(filter.flags)
+      specs =
+        help.option_sections
+        |> option_specs()
+        |> add_timeline(filter.flags)
+        |> Map.new(fn {option, spec} ->
+          {option, Map.put(spec, :filter_name, filter_name)}
+        end)
 
       %{
         filters: Map.put(metadata.filters, filter_name, filter),
