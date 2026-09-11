@@ -27,6 +27,7 @@ ffix-*.tar
 /tmp/
 /.dexter.*
 /.tmux/
+/.ffmpeg/
 
 # Local media fixtures used during development. Integration tests generate
 # their own fixtures at runtime.
