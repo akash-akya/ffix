@@ -1,0 +1,6 @@
+Filter nullsink
+  Do absolutely nothing with the input video.
+    Inputs:
+       #0: default (video)
+    Outputs:
+        none (sink filter)

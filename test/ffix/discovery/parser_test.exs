@@ -125,6 +125,150 @@ defmodule FFix.Discovery.ParserTest do
 
     assert {:ok, split} = Parser.help(:filter, fixture("filter-split"))
     assert split.outputs == %{dynamic: "dynamic (depending on the options)"}
+    refute Map.has_key?(split, :dynamic_pads)
+    refute Map.has_key?(help, :dynamic_pads)
+  end
+
+  test "scale preserves mixed input pads without changing option sections or other metadata" do
+    text = fixture("filter-scale")
+    assert {:ok, help} = Parser.help(:filter, text)
+    assert help.inputs == [%{index: 0, name: "default", media_type: "video"}]
+    assert help.outputs == [%{index: 0, name: "default", media_type: "video"}]
+    assert help.dynamic_pads == %{inputs: "dynamic (depending on the options)"}
+
+    assert [
+             %{name: "scale"} = scale,
+             %{name: "SWScaler"} = scaler,
+             %{name: "framesync"} = framesync
+           ] =
+             help.option_sections
+
+    assert option(scale, "param0").declared_default == "DBL_MAX"
+    assert option(scaler, "param0").declared_default == "123456"
+    assert option(framesync, "eof_action").declared_default == "repeat"
+
+    fixed_text = String.replace(text, "        dynamic (depending on the options)\n", "")
+    assert {:ok, fixed_help} = Parser.help(:filter, fixed_text)
+    assert Map.delete(help, :dynamic_pads) == fixed_help
+  end
+
+  test "mixed output pads retain fixed pad order, properties, notes, and option owners" do
+    text = """
+    Filter example
+      Example filter.
+        slice threading supported
+        Inputs:
+           #0: default (video)
+        Outputs:
+           #0: main (video)
+           #1: preview (video)
+            dynamic (additional outputs)
+        Threading: slice
+    example AVOptions:
+       count <int> ..FV....... Output count (from 1 to 8) (default 2)
+    framesync AVOptions:
+       shortest <boolean> ..FV....... Stop early (default false)
+    This filter has support for timeline through the 'enable' option.
+    """
+
+    assert {:ok, help} = Parser.help(:filter, text)
+    assert help.inputs == [%{index: 0, name: "default", media_type: "video"}]
+
+    assert help.outputs == [
+             %{index: 0, name: "main", media_type: "video"},
+             %{index: 1, name: "preview", media_type: "video"}
+           ]
+
+    assert help.dynamic_pads == %{outputs: "dynamic (additional outputs)"}
+    assert help.properties == [{"Threading", "slice"}]
+
+    assert help.notes == [
+             "slice threading supported",
+             "This filter has support for timeline through the 'enable' option."
+           ]
+
+    assert Enum.map(help.option_sections, & &1.name) == ["example", "framesync"]
+    fixed_text = String.replace(text, "        dynamic (additional outputs)\n", "")
+    assert {:ok, fixed_help} = Parser.help(:filter, fixed_text)
+    assert Map.delete(help, :dynamic_pads) == fixed_help
+  end
+
+  test "dynamic declarations stay within their direction even when headings are reversed" do
+    text = """
+    Filter example
+      Example filter.
+        Outputs:
+           #0: main (video)
+            dynamic (extra outputs)
+        Inputs:
+           #0: source (video)
+            dynamic (extra inputs)
+    """
+
+    assert {:ok, help} = Parser.help(:filter, text)
+    assert help.inputs == [%{index: 0, name: "source", media_type: "video"}]
+    assert help.outputs == [%{index: 0, name: "main", media_type: "video"}]
+
+    assert help.dynamic_pads == %{
+             inputs: "dynamic (extra inputs)",
+             outputs: "dynamic (extra outputs)"
+           }
+  end
+
+  test "pure dynamic inputs do not turn neighboring fixed outputs into mixed pads" do
+    text = """
+    Filter example
+      Example filter.
+        Inputs:
+            dynamic (depending on the options)
+        Outputs:
+           #0: default (video)
+    """
+
+    assert {:ok, help} = Parser.help(:filter, text)
+    assert help.inputs == %{dynamic: "dynamic (depending on the options)"}
+    assert help.outputs == [%{index: 0, name: "default", media_type: "video"}]
+    refute Map.has_key?(help, :dynamic_pads)
+  end
+
+  test "empty or missing pad directions do not consume the next direction's declarations" do
+    for input_heading <- ["", "    Inputs:\n", "    Inputs:\n        none (source filter)\n"] do
+      text =
+        "Filter example\n  Example filter.\n" <>
+          input_heading <>
+          "    Outputs:\n       #0: default (video)\n        dynamic (extra outputs)\n"
+
+      assert {:ok, help} = Parser.help(:filter, text)
+      assert help.outputs == [%{index: 0, name: "default", media_type: "video"}]
+      assert help.dynamic_pads == %{outputs: "dynamic (extra outputs)"}
+
+      case input_heading do
+        "" -> assert help.inputs == nil
+        _heading -> assert help.inputs == []
+      end
+    end
+  end
+
+  test "pad declarations stop at properties and unindented section boundaries" do
+    text = """
+    Filter example
+      Example filter.
+        Inputs:
+           #0: default (video)
+        Outputs:
+           #0: default (video)
+        Threading: slice
+            dynamic (not a pad declaration)
+    Additional information:
+        dynamic (not a pad declaration either)
+    """
+
+    assert {:ok, help} = Parser.help(:filter, text)
+    assert help.inputs == [%{index: 0, name: "default", media_type: "video"}]
+    assert help.outputs == [%{index: 0, name: "default", media_type: "video"}]
+    assert help.properties == [{"Threading", "slice"}]
+    assert "dynamic (not a pad declaration either)" in help.notes
+    refute Map.has_key?(help, :dynamic_pads)
   end
 
   test "constant names can contain spaces without swallowing their value columns" do

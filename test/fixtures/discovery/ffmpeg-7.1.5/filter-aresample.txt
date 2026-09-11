@@ -1,0 +1,78 @@
+Filter aresample
+  Resample audio data.
+    Inputs:
+       #0: default (audio)
+    Outputs:
+       #0: default (audio)
+aresample AVOptions:
+   sample_rate       <int>        ..F.A...... (from 0 to INT_MAX) (default 0)
+
+SWResampler AVOptions:
+  -isr               <int>        ....A...... set input sample rate (from 0 to INT_MAX) (default 0)
+  -in_sample_rate    <int>        ....A...... set input sample rate (from 0 to INT_MAX) (default 0)
+  -osr               <int>        ....A...... set output sample rate (from 0 to INT_MAX) (default 0)
+  -out_sample_rate   <int>        ....A...... set output sample rate (from 0 to INT_MAX) (default 0)
+  -isf               <sample_fmt> ....A...... set input sample format (default none)
+  -in_sample_fmt     <sample_fmt> ....A...... set input sample format (default none)
+  -osf               <sample_fmt> ....A...... set output sample format (default none)
+  -out_sample_fmt    <sample_fmt> ....A...... set output sample format (default none)
+  -tsf               <sample_fmt> ....A...... set internal sample format (default none)
+  -internal_sample_fmt <sample_fmt> ....A...... set internal sample format (default none)
+  -ichl              <channel_layout> ....A...... set input channel layout
+  -in_chlayout       <channel_layout> ....A...... set input channel layout
+  -ochl              <channel_layout> ....A...... set output channel layout
+  -out_chlayout      <channel_layout> ....A...... set output channel layout
+  -uchl              <channel_layout> ....A...... set used channel layout
+  -used_chlayout     <channel_layout> ....A...... set used channel layout
+  -clev              <float>      ....A...... set center mix level (from -32 to 32) (default 0.707107)
+  -center_mix_level  <float>      ....A...... set center mix level (from -32 to 32) (default 0.707107)
+  -slev              <float>      ....A...... set surround mix level (from -32 to 32) (default 0.707107)
+  -surround_mix_level <float>      ....A...... set surround mix Level (from -32 to 32) (default 0.707107)
+  -lfe_mix_level     <float>      ....A...... set LFE mix level (from -32 to 32) (default 0)
+  -rmvol             <float>      ....A...... set rematrix volume (from -1000 to 1000) (default 1)
+  -rematrix_volume   <float>      ....A...... set rematrix volume (from -1000 to 1000) (default 1)
+  -rematrix_maxval   <float>      ....A...... set rematrix maxval (from 0 to 1000) (default 0)
+  -flags             <flags>      ....A...... set flags (default 0)
+     res                          ....A...... force resampling
+  -swr_flags         <flags>      ....A...... set flags (default 0)
+     res                          ....A...... force resampling
+  -dither_scale      <float>      ....A...... set dither scale (from 0 to INT_MAX) (default 1)
+  -dither_method     <int>        ....A...... set dither method (from 0 to 71) (default 0)
+     rectangular     1            ....A...... select rectangular dither
+     triangular      2            ....A...... select triangular dither
+     triangular_hp   3            ....A...... select triangular dither with high pass
+     lipshitz        65           ....A...... select Lipshitz noise shaping dither
+     shibata         69           ....A...... select Shibata noise shaping dither
+     low_shibata     70           ....A...... select low Shibata noise shaping dither
+     high_shibata    71           ....A...... select high Shibata noise shaping dither
+     f_weighted      66           ....A...... select f-weighted noise shaping dither
+     modified_e_weighted 67           ....A...... select modified-e-weighted noise shaping dither
+     improved_e_weighted 68           ....A...... select improved-e-weighted noise shaping dither
+  -filter_size       <int>        ....A...... set swr resampling filter size (from 0 to INT_MAX) (default 32)
+  -phase_shift       <int>        ....A...... set swr resampling phase shift (from 0 to 24) (default 10)
+  -linear_interp     <boolean>    ....A...... enable linear interpolation (default true)
+  -exact_rational    <boolean>    ....A...... enable exact rational (default true)
+  -cutoff            <double>     ....A...... set cutoff frequency ratio (from 0 to 1) (default 0)
+  -resample_cutoff   <double>     ....A...... set cutoff frequency ratio (from 0 to 1) (default 0)
+  -resampler         <int>        ....A...... set resampling Engine (from 0 to 1) (default swr)
+     swr             0            ....A...... select SW Resampler
+     soxr            1            ....A...... select SoX Resampler
+  -precision         <double>     ....A...... set soxr resampling precision (in bits) (from 15 to 33) (default 20)
+  -cheby             <boolean>    ....A...... enable soxr Chebyshev passband & higher-precision irrational ratio approximation (default false)
+  -min_comp          <float>      ....A...... set minimum difference between timestamps and audio data (in seconds) below which no timestamp compensation of either kind is applied (from 0 to FLT_MAX) (default FLT_MAX)
+  -min_hard_comp     <float>      ....A...... set minimum difference between timestamps and audio data (in seconds) to trigger padding/trimming the data. (from 0 to INT_MAX) (default 0.1)
+  -comp_duration     <float>      ....A...... set duration (in seconds) over which data is stretched/squeezed to make it match the timestamps. (from 0 to INT_MAX) (default 1)
+  -max_soft_comp     <float>      ....A...... set maximum factor by which data is stretched/squeezed to make it match the timestamps. (from INT_MIN to INT_MAX) (default 0)
+  -async             <float>      ....A...... simplified 1 parameter audio timestamp matching, 0(disabled), 1(filling and trimming), >1(maximum stretch/squeeze in samples per second) (from INT_MIN to INT_MAX) (default 0)
+  -first_pts         <int64>      ....A...... Assume the first pts should be this value (in samples). (from I64_MIN to I64_MAX) (default I64_MIN)
+  -matrix_encoding   <int>        ....A...... set matrixed stereo encoding (from 0 to 6) (default none)
+     none            0            ....A...... select none
+     dolby           1            ....A...... select Dolby
+     dplii           2            ....A...... select Dolby Pro Logic II
+  -filter_type       <int>        ....A...... select swr filter type (from 0 to 2) (default kaiser)
+     cubic           0            ....A...... select cubic
+     blackman_nuttall 1            ....A...... select Blackman Nuttall windowed sinc
+     kaiser          2            ....A...... select Kaiser windowed sinc
+  -kaiser_beta       <double>     ....A...... set swr Kaiser window beta (from 2 to 16) (default 9)
+  -output_sample_bits <int>        ....A...... set swr number of output sample bits (from 0 to 64) (default 0)
+

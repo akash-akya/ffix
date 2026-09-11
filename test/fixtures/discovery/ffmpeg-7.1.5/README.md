@@ -11,6 +11,9 @@ ffmpeg -hide_banner -h full
 The other catalogs and help topics use their corresponding CLI arguments.
 Component help files are complete. Large catalogs retain their original
 headers and selected rows; whitespace and descriptions are unchanged.
+`filters-full.txt` is the complete 551-filter catalog captured with
+`LC_ALL=C ffmpeg -hide_banner -v quiet -filters`. The additional filter help
+captures use `LC_ALL=C ffmpeg -hide_banner -v quiet -h filter=NAME`.
 `shared-excerpt.txt` is a contiguous full-help excerpt containing the complete
 AVFormatContext, AVIOContext, and URLContext sections and neighboring private
 options. Tests use these captures without requiring the same installed build.

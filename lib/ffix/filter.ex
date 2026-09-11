@@ -2,10 +2,10 @@ defmodule FFix.Filter do
   @moduledoc """
   Generated helpers for ffmpeg filters.
 
-  Each function mirrors one filter reported by the local `ffmpeg` executable at
-  compile time. Function names and option keys stay close to ffmpeg. Function
-  arguments are `FFix.Graph.StreamRef` values; the final argument is a keyword list of
-  ffmpeg filter options.
+  Each named function mirrors one filter in the recorded FFmpeg metadata snapshot.
+  Compilation and graph construction do not run FFmpeg. Function names and option
+  keys stay close to ffmpeg. Arguments are `FFix.Graph.StreamRef` values; the final
+  argument is a keyword list of ffmpeg filter options.
 
       video
       |> scale(w: 1280, h: -1)
@@ -26,8 +26,11 @@ defmodule FFix.Filter do
         |> FFix.shape([:audio, :video])
 
   Use `filter/4` to supply a filter name, explicit output media, and options
-  without metadata lookup. Use `FFix.shape/2` when a named helper needs an
-  explicit output shape.
+  without metadata lookup.
+
+  Reported defaults/ranges are metadata, not emitted defaults or complete
+  validation. Strings and `FFix.Graph.Expr` values preserve FFmpeg syntax;
+  repeated `:pos` options supply positional arguments.
 
   Timeline-capable filters accept ffmpeg's implicit `enable:` option. Filters
   backed by ffmpeg framesync also accept the common `eof_action:`, `shortest:`,
@@ -47,7 +50,6 @@ defmodule FFix.Filter do
   alias FFix.Graph.Builder
   alias FFix.Graph.StreamRef
   alias FFix.Graph.Terminal
-  alias FFix.Filter.Metadata
 
   @type option :: {atom() | String.t(), String.t() | atom() | number() | FFix.Graph.Expr.t()}
 
@@ -82,99 +84,6 @@ defmodule FFix.Filter do
   def filter(inputs, name, output_media, options \\ []),
     do: Builder.filter(inputs, name, output_media, options)
 
-  filter_group = fn inputs, outputs ->
-    cond do
-      inputs == [] ->
-        "Source filters"
-
-      outputs == [] ->
-        "Sink filters"
-
-      :N in inputs or :N in outputs ->
-        "Multi-stream filters"
-
-      :A in inputs or :A in outputs ->
-        if :V in inputs or :V in outputs do
-          "Audio/video filters"
-        else
-          "Audio filters"
-        end
-
-      :V in inputs or :V in outputs ->
-        "Video filters"
-
-      true ->
-        "Other filters"
-    end
-  end
-
-  Enum.each(Metadata.filters(), fn {name, %{inputs: inputs, outputs: outputs, desc: desc}} ->
-    if name == :filter do
-      raise ArgumentError, "filter helper name conflicts with the generic filter operation"
-    end
-
-    inputs = Enum.reject(inputs, &(&1 == :|))
-    outputs = Enum.reject(outputs, &(&1 == :|))
-    group = filter_group.(inputs, outputs)
-
-    input_args =
-      inputs
-      |> Enum.with_index()
-      |> Enum.map(fn {type, idx} ->
-        case type do
-          :V -> "video_#{idx}"
-          :A -> "audio_#{idx}"
-          :N -> "streams"
-        end
-        |> String.to_atom()
-        |> Macro.var(__MODULE__)
-      end)
-
-    input_specs =
-      Enum.map(inputs, fn
-        :N -> quote(do: [FFix.Graph.StreamRef.t()])
-        _ -> quote(do: FFix.Graph.StreamRef.t())
-      end)
-
-    output_specs =
-      case outputs do
-        [] ->
-          quote(do: FFix.Graph.Terminal.t())
-
-        [:N] ->
-          quote(do: [FFix.Graph.StreamRef.t()])
-
-        [_single] ->
-          quote(do: FFix.Graph.StreamRef.t())
-
-        many ->
-          quote do
-            {unquote_splicing(Enum.map(many, fn _ -> quote(do: FFix.Graph.StreamRef.t()) end))}
-          end
-      end
-
-    option_specs = Metadata.filter_spec(name)
-    options_doc = Metadata.build_options_doc(option_specs)
-    options_typespec = Metadata.build_options_typespec(option_specs)
-
-    @doc group: group
-    @doc """
-    #{desc}
-
-    ## Options
-
-    #{options_doc}
-    """
-    @spec unquote(name)(unquote_splicing(input_specs), unquote(options_typespec)) ::
-            unquote(output_specs)
-    def unquote(name)(unquote_splicing(input_args), options \\ []) do
-      Builder.apply_filter(
-        unquote(name),
-        [unquote_splicing(input_args)],
-        unquote(outputs),
-        options,
-        unquote(Macro.escape(option_specs))
-      )
-    end
-  end)
+  require FFix.Helpers
+  FFix.Helpers.define(:filter)
 end

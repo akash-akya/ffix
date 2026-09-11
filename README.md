@@ -21,8 +21,8 @@ pieces easier to compose, inspect, and run from Elixir.
 
 ## Filters
 
-`FFix.Filter` exposes helpers for the filters reported by the local `ffmpeg`
-executable at compile time. Use them like normal Elixir functions:
+`FFix.Filter` exposes ordinary functions from recorded FFmpeg metadata, including
+the complete 551-filter catalog of the FFmpeg 7.1.5 baseline:
 `scale/2`, `crop/2`, `overlay/3`, `drawtext/2`, `fps/2`, and so on.
 
 The generated docs include filter descriptions and known options. `FFix.Filter`
@@ -358,9 +358,16 @@ Refresh the recorded metadata explicitly:
 mix ffix.refresh.metadata --ffmpeg /usr/bin/ffmpeg
 ```
 
-Metadata changes automatically rebuild the helpers on the next compilation.
-Generic operation functions cover implementations without helpers. The existing
-filter helpers retain their separate compile-time discovery.
+The snapshot contains selected codecs/formats and every filter in the captured
+build. Filter catalog signatures and parsed help remain separate, preserving
+private, child, and framesync option sections. Helpers expose the primary and
+framesync options; recording child sections does not silently enable new options.
+
+Refresh captures everything before atomically replacing the snapshot. It rejects
+missing previously recorded filters; intentional removals require editing the
+baseline first. Reproducing a capture requires the same FFmpeg build. Metadata
+changes rebuild the helpers on the next compilation. Generic operations remain
+available for names or options outside the baseline.
 
 ## Discover FFmpeg Capabilities
 
@@ -382,16 +389,16 @@ Discovery is explicit and bounded; detailed help is fetched on demand. Pass
 `ffmpeg: "/path/to/ffmpeg"` to select a build. `FFix.Discovery.Parser` parses
 recorded output without subprocesses. Names, aliases, and option sections stay
 separate; reported defaults and ranges are metadata, not a complete validator.
-The existing compile-time filter helpers remain unchanged.
 
 ## Requirements
 
-`ffmpeg` must be available when compiling the library. `FFix` generates filter
-helpers from local ffmpeg metadata at compile time, so generated functions match
-the ffmpeg version in the build environment.
+FFmpeg is required for execution, discovery, and explicit metadata refresh—not
+for compiling the library or constructing graphs and commands. The recorded
+baseline fixes the helper API independently of the installed executable;
+registration in it does not guarantee local availability or hardware usability.
 
-Set `FFMPEG_BIN=/path/to/ffmpeg` if the executable is not named `ffmpeg` or is
-not on `PATH`.
+Set `FFMPEG_BIN=/path/to/ffmpeg` for execution/discovery when the executable is
+not on `PATH`, or pass `--ffmpeg /path/to/ffmpeg` to the refresh task.
 
 ## Installation
 

@@ -49,6 +49,8 @@ defmodule FFix.Discovery.Parser do
   Protocol help only identifies option classes, so its `names` list is empty.
   `FFix.Discovery.help/3` supplies protocol names from the registry instead.
   `properties` is an ordered list of `{label, value}` strings, not a merged map.
+  Filter pads are ordered lists or `%{dynamic: description}`. Mixed fixed/dynamic
+  declarations retain the fixed list and add `dynamic_pads` keyed by direction.
   """
   @spec help(atom(), String.t()) :: result(map())
   def help(kind, text) do
