@@ -1,8 +1,6 @@
 defmodule FFix.Value do
   @moduledoc false
 
-  alias FFix.Graph.Expr
-
   @type option_spec :: %{optional(:type) => term()} | nil
 
   # FFmpeg duration options accept decimal notation, not scientific notation.
@@ -74,7 +72,6 @@ defmodule FFix.Value do
     end
   end
 
-  defp normalize_untyped(%Expr{} = expr), do: expr
   defp normalize_untyped(value) when is_nil(value), do: value
   defp normalize_untyped(value) when is_boolean(value), do: value
   defp normalize_untyped(value) when is_integer(value), do: value
@@ -86,7 +83,6 @@ defmodule FFix.Value do
 
   defp flag_component(value) do
     case normalize_untyped(value) do
-      %Expr{source: source} -> source
       value when is_binary(value) -> value
       value when is_integer(value) -> Integer.to_string(value)
       value when is_float(value) -> float_to_string(value)

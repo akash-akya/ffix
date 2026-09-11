@@ -239,15 +239,17 @@ defmodule FFix.RunnerTest do
   test "serialization is lazy and fresh on each enumeration" do
     parent = self()
 
+    source = FFix.input("in.mp4")
+
     command =
-      FFix.command("in.mp4", fn source ->
+      FFix.command(
         FFix.output(FFix.video(source), "out.mp4",
           metadata: fn _ ->
             send(parent, :serialized)
             "title=test"
           end
         )
-      end)
+      )
 
     stream = Runner.stream(command, ffmpeg: "true")
     refute_received :serialized

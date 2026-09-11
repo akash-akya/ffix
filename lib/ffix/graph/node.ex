@@ -1,7 +1,6 @@
 defmodule FFix.Graph.Node do
   @moduledoc false
 
-  alias FFix.Graph.Expr
   alias FFix.Graph
   alias FFix.Graph.InputRef
   alias FFix.Graph.Ref
@@ -15,13 +14,13 @@ defmodule FFix.Graph.Node do
           | float()
           | String.t()
           | atom()
-          | Expr.t()
           | [arg_value()]
 
   @type arg :: {arg_key(), arg_value()}
 
   @type t :: %__MODULE__{
           id: Graph.node_id(),
+          identity: reference(),
           kind: :input | :filter,
           name: atom() | String.t(),
           instance: String.t() | atom() | nil,
@@ -29,13 +28,14 @@ defmodule FFix.Graph.Node do
           inputs: [Ref.t()],
           args: [arg()],
           outputs: non_neg_integer(),
-          output_media: [:audio | :video | :unknown],
-          media: :audio | :video | :unknown,
+          output_media: [FFix.Graph.StreamRef.media()],
+          media: FFix.Graph.StreamRef.media(),
           metadata: map()
         }
 
   defstruct [
     :id,
+    :identity,
     :kind,
     :name,
     :instance,

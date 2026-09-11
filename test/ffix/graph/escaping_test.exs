@@ -67,15 +67,11 @@ defmodule FFix.Graph.EscapingTest do
     end
   end
 
-  test "expressions and strings have identical boundary encoding" do
+  test "expression strings round-trip through boundary encoding" do
     expression = "if(gt(iw,32),32,iw)"
     video = Graph.input(0, :video)
     plain = video |> Filter.scale(w: expression, h: 32) |> then(&FFix.graph(output: &1))
 
-    annotated =
-      video |> Filter.scale(w: FFix.expr(expression), h: 32) |> then(&FFix.graph(output: &1))
-
-    assert FFix.to_filtergraph(plain) == FFix.to_filtergraph(annotated)
     [{:chain, [filter]}] = plain |> FFix.to_filtergraph() |> FilterGraph.parse()
     assert FilterGraph.parse_args(filter.args) == [{"w", expression}, {"h", "32"}]
   end
@@ -96,7 +92,7 @@ defmodule FFix.Graph.EscapingTest do
   end
 
   test "renderer rejects NUL in named values and expressions" do
-    for value <- ["bad\0text", FFix.expr("bad\0expression")] do
+    for value <- ["bad\0text", "bad\0expression"] do
       assert_raise ArgumentError, ~r/NUL/, fn ->
         [text: value] |> text_graph(:named) |> FFix.to_filtergraph()
       end
@@ -136,7 +132,7 @@ defmodule FFix.Graph.EscapingTest do
       |> then(&FFix.graph(output: &1))
       |> FFix.to_filtergraph()
 
-    for width <- ["if(gt(iw,32),32,iw)", FFix.expr("if(gt(iw,32),32,iw)")] do
+    for width <- ["if(gt(iw,32),32,iw)", "min(iw,32)"] do
       actual =
         video
         |> Filter.scale(w: width, h: 32)

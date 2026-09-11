@@ -83,8 +83,8 @@ defmodule FFix.Filter.HelpersTest do
     assert %StreamRef{} = Filter.threshold(video, video, video, video)
     assert %Terminal{} = Filter.nullsink(video)
     assert %Terminal{} = Filter.anullsink(audio)
-    assert {%StreamRef{}, %StreamRef{}} = Filter.scale2ref(video, other_video)
-    assert {%StreamRef{media: :audio}, %StreamRef{media: :video}} = Filter.avsynctest()
+    assert [%StreamRef{}, %StreamRef{}] = Filter.scale2ref(video, other_video)
+    assert [%StreamRef{media: :audio}, %StreamRef{media: :video}] = Filter.avsynctest()
     assert %StreamRef{} = Filter.split(video, outputs: 1)
     assert [%StreamRef{}, %StreamRef{}] = Filter.split(video)
     assert [%StreamRef{}, %StreamRef{}] = Filter.asplit(audio)
@@ -119,7 +119,7 @@ defmodule FFix.Filter.HelpersTest do
              [sample_rates: "44100|48000"]
 
     video = Graph.input(0, :video)
-    expression = FFix.expr("between(t,1,2)")
+    expression = "between(t,1,2)"
 
     assert Filter.fade(video, type: :out, start_frame: "2").plan.args ==
              [type: "out", start_frame: 2]
@@ -149,12 +149,12 @@ defmodule FFix.Filter.HelpersTest do
     assert signature(:nullsink, 2) =~ "FFix.Graph.Terminal.t()"
 
     assert signature(:scale2ref, 3) =~
-             "{FFix.Graph.StreamRef.t(), FFix.Graph.StreamRef.t()}"
+             "[FFix.Graph.StreamRef.t()]"
 
     for name <- [:scale, :fade, :aformat, :drawtext] do
       spec = signature(name, 2)
       assert spec =~ "String.t()"
-      assert spec =~ "FFix.Graph.Expr.t()"
+      refute spec =~ "FFix.Graph.Expr.t()"
       assert spec =~ "number()"
       assert spec =~ "atom()"
       assert spec =~ "pos:"
@@ -165,7 +165,7 @@ defmodule FFix.Filter.HelpersTest do
     array_type = Helpers.build_options_typespec(%{rates: %{type: {:array, :int}}})
 
     assert Macro.to_string(array_type) =~
-             "[String.t() | atom() | number() | FFix.Graph.Expr.t()]"
+             "[String.t() | atom() | number()]"
 
     assert Macro.to_string(Helpers.build_options_typespec(%{})) == "keyword()"
   end

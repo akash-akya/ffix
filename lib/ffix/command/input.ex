@@ -1,49 +1,40 @@
 defmodule FFix.Command.Input do
   @moduledoc """
-  One ffmpeg input declaration.
+  One ffmpeg input declaration, with an identity independent of its filename.
 
-  Accessing an input returns `FFix.Graph.StreamRef` values that can be used in
-  graphs or mapped directly to outputs. The access keys mirror common ffmpeg
-  stream selectors:
+  `new/2` stores raw input CLI options, an optional `FFix.Demuxer`, and indexed
+  `FFix.Decoder` configurations. Options render before this input's `-i`.
 
-    * `input[:input]` maps the whole input, like `-map 0`
-    * `input[:video]` maps the matching video streams, like `0:v`
-    * `input[:audio]` maps the matching audio streams, like `0:a`
-    * `input[audio: 1]` maps/selects a specific stream class index, like
-      `0:a:1`
-    * `input[raw: "s?"]` keeps an explicit ffmpeg selector escape hatch
+  `select/2` returns a filterable or directly mappable stream that captures the
+  complete declaration. Configure decoding before selecting streams: changing
+  an input later does not mutate existing references. Conflicting snapshots of
+  the same declaration cannot be used in one command.
 
-  `demuxer` optionally selects and configures an `FFix.Demuxer`. Its AVOptions
-  remain separate from raw input CLI options and are rendered before `-i`.
+      input = FFix.Command.Input.new("input.mp4", ss: "00:00:03")
+      FFix.Command.Input.select(input, {:video, 0})
+      FFix.Command.Input.select(input, {:audio, :all})
 
-  `decoders` maps indexed selectors (`{:video, n}` or `{:audio, n}`) to
-  `FFix.Decoder` configurations. Decoder options are rendered before this
-  input's `-i`, independently of its position in the command. Updating this
-  configuration preserves the input identity used by existing stream references.
-
-  Keep decoder configuration separate from raw codec selections/options in
-  `options`; conflicting option names are rejected rather than overridden.
-
-  ## Examples
-
-      src = FFix.Command.input("input.mp4", ss: "00:00:03")
-      logo = FFix.Command.input("logo.png", loop: 1, framerate: 1)
-
-      src[:input]
-      src[:video]
-      src[:audio]
-      src[audio: 1]
-      logo[:video]
+  Selectors are `:all`, `{media, index}`, `{media, :all}`, `{:index, index}` for
+  an absolute stream index, and `{:raw, selector}` for an FFmpeg selector string.
+  Media types are `:video`, `:audio`, `:subtitle`, `:data`, and `:attachment`.
+  Broad and raw selections are not assumed to select exactly one stream.
   """
 
-  @behaviour Access
-
+  alias FFix.Command
+  alias FFix.Graph.Builder
+  alias FFix.Graph.InputRef
   alias FFix.Graph.StreamRef
+  alias FFix.Options
 
   @type source :: String.t() | :stdin | {:pipe, non_neg_integer()} | {:url, String.t()}
   @type option :: {atom() | String.t(), term()}
-
-  @type decoder_selector :: {:video | :audio, non_neg_integer()}
+  @type media :: :video | :audio | :subtitle | :data | :attachment
+  @type decoder_selector :: {media(), non_neg_integer()} | {:index, non_neg_integer()}
+  @type selector ::
+          :all
+          | {media(), non_neg_integer() | :all}
+          | {:index, non_neg_integer()}
+          | {:raw, String.t()}
 
   @type t :: %__MODULE__{
           source: source(),
@@ -55,52 +46,42 @@ defmodule FFix.Command.Input do
 
   defstruct [:source, :id, :demuxer, options: [], decoders: %{}]
 
-  @doc false
-  @spec fetch(t(), term()) :: {:ok, StreamRef.t()} | :error
-  def fetch(%__MODULE__{id: id}, key) when is_reference(id) do
-    {:ok, FFix.Graph.input(id, selector_from_access!(key))}
+  @doc "Builds an input declaration without probing or evaluating callbacks."
+  @spec new(source(), [option()]) :: t()
+  def new(source, options \\ []) do
+    Command.validate_endpoint!(source, :input)
+    {configuration, raw_options} = Options.split!(options, [:demuxer, :decoders])
+
+    if List.keymember?(raw_options, :label, 0) do
+      raise ArgumentError, "input labels are not supported; bind named graph inputs explicitly"
+    end
+
+    input = %__MODULE__{
+      id: make_ref(),
+      source: source,
+      options: raw_options,
+      demuxer: Keyword.get(configuration, :demuxer),
+      decoders: Keyword.get(configuration, :decoders, %{})
+    }
+
+    Command.validate_input!(input)
   end
 
-  def fetch(%__MODULE__{}, _key) do
-    raise ArgumentError,
-          "command input access requires an input created with FFix.Command.input/2"
-  end
+  @doc "Selects streams while capturing this input's complete configuration."
+  @spec select(t(), selector()) :: StreamRef.t()
+  def select(%__MODULE__{} = input, selector) do
+    case selector do
+      :all ->
+        :ok
 
-  @doc false
-  def get_and_update(%__MODULE__{}, _key, _fun) do
-    raise ArgumentError, "FFix.Command.Input access is read-only"
-  end
+      {_kind, _value} ->
+        InputRef.normalize_selector!(selector)
 
-  @doc false
-  def pop(%__MODULE__{}, _key) do
-    raise ArgumentError, "FFix.Command.Input access is read-only"
-  end
+      _other ->
+        raise ArgumentError,
+              "invalid input selector: #{inspect(selector)}; use :all or an explicit indexed, media-wide, or raw selector"
+    end
 
-  defp selector_from_access!(:input), do: :input
-  defp selector_from_access!(:video), do: :video
-  defp selector_from_access!(:audio), do: :audio
-  defp selector_from_access!(video: index), do: {:video, normalize_track_index!(index)}
-  defp selector_from_access!(audio: index), do: {:audio, normalize_track_index!(index)}
-  defp selector_from_access!(raw: selector), do: normalize_raw_selector!(selector)
-  defp selector_from_access!({:video, index}), do: {:video, normalize_track_index!(index)}
-  defp selector_from_access!({:audio, index}), do: {:audio, normalize_track_index!(index)}
-  defp selector_from_access!({:raw, selector}), do: normalize_raw_selector!(selector)
-
-  defp selector_from_access!(key) do
-    raise ArgumentError,
-          "invalid input selector #{inspect(key)}; expected :input, :video, :audio, [video: n], [audio: n], or {:raw, selector}"
-  end
-
-  defp normalize_track_index!(index) when is_integer(index) and index >= 0, do: index
-
-  defp normalize_track_index!(index) do
-    raise ArgumentError, "track index must be a non-negative integer, got: #{inspect(index)}"
-  end
-
-  defp normalize_raw_selector!(selector) when is_binary(selector) and selector != "",
-    do: {:raw, selector}
-
-  defp normalize_raw_selector!(selector) do
-    raise ArgumentError, "raw selector must be a non-empty string, got: #{inspect(selector)}"
+    Builder.input(input, selector)
   end
 end

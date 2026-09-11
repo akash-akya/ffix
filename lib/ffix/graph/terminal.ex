@@ -9,8 +9,9 @@ defmodule FFix.Graph.Terminal do
 
   @opaque t :: %__MODULE__{
             plan: term(),
-            media: :audio | :video | :unknown | nil
+            media: FFix.Graph.StreamRef.media() | nil,
+            context: FFix.Graph.StreamRef.context() | nil
           }
 
-  defstruct [:plan, :media]
+  defstruct [:plan, :media, :context]
 end

@@ -45,8 +45,7 @@ defmodule FFix.Demuxer do
     input_options = Keyword.get(bindings, :input_options, [])
     {_special, input_options} = Options.split!(input_options, [])
     demuxer_options = Options.normalize!(options, schema, "#{name} demuxer")
-    input = Command.input(source)
-    %{input | demuxer: new(name, demuxer_options), options: input_options}
+    Input.new(source, [{:demuxer, new(name, demuxer_options)} | input_options])
   end
 
   require FFix.Helpers

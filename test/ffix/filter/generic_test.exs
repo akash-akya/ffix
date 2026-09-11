@@ -2,13 +2,14 @@ defmodule FFix.Filter.GenericTest do
   use ExUnit.Case, async: true
 
   alias FFix.{Command, Encoder, Filter, Graph, Muxer}
-  alias FFix.Graph.{Expr, StreamRef, Terminal}
+  alias FFix.Graph.{StreamRef, Terminal}
 
-  test "graph references, expressions, terminals, and plans share a namespace" do
+  test "graph references, terminals, and plans share a namespace without expression wrappers" do
     source = FFix.input("in.mp4")
     assert %StreamRef{} = video = FFix.video(source)
     assert %Graph.Builder.Plan{} = video.plan
-    assert %Expr{source: "iw/2"} = FFix.expr("iw/2")
+    refute function_exported?(FFix, :expr, 1)
+    refute Code.ensure_loaded?(FFix.Graph.Expr)
     assert %StreamRef{} = Filter.scale(video, w: 320, h: -2)
     assert %Terminal{} = Filter.nullsink(video)
     assert %Command.Mapping{} = Encoder.libx264(video)
@@ -19,7 +20,6 @@ defmodule FFix.Filter.GenericTest do
     direct = Filter.filter(video, "scale", [:video], w: 320, h: -2)
     delegated = FFix.filter([video], :scale, [:video], w: 320, h: -2)
     piped = video |> Filter.filter("scale", [:video], w: 320, h: -2)
-
     assert render(direct) == "[0:v]scale=w=320:h=-2[out0];"
     assert render(delegated) == render(direct)
     assert render(piped) == render(direct)
@@ -37,7 +37,6 @@ defmodule FFix.Filter.GenericTest do
   test "unknown names and options serialize without creating atoms" do
     name = "vendor_filter_#{System.unique_integer([:positive])}"
     assert_raise ArgumentError, fn -> String.to_existing_atom(name) end
-
     result = Filter.filter(Graph.input(0, :video), name, [:video], [{"custom-option", 5}])
     assert result.plan.name == name
     assert render(result) == "[0:v]#{name}=custom-option=5[out0];"
@@ -63,7 +62,6 @@ defmodule FFix.Filter.GenericTest do
   test "source and sink filters use explicit empty input and output lists" do
     source = Filter.filter([], "vendor_source", [:audio], frequency: 440)
     assert render(source) == "vendor_source=frequency=440[out0];"
-
     terminal = Filter.filter(source, "vendor_sink", [])
     assert %Terminal{} = terminal
     graph = FFix.graph(terminals: [terminal])
@@ -76,24 +74,18 @@ defmodule FFix.Filter.GenericTest do
     inputs = [Graph.input(0, :audio), Graph.input(1, :video)]
     [sound, picture, unknown] = Filter.filter(inputs, "vendor_mixed", [:audio, :video, :unknown])
     assert Enum.map([sound, picture, unknown], & &1.media) == [:audio, :video, :unknown]
-
     graph = FFix.graph(outputs: [picture: picture, sound: sound, other: unknown])
-
-    assert FFix.to_filtergraph(graph) ==
-             "[0:a][1:v]vendor_mixed[sound][picture][other];"
-
+    assert FFix.to_filtergraph(graph) == "[0:a][1:v]vendor_mixed[sound][picture][other];"
     assert Enum.map(graph.exports, & &1.media) == [:video, :audio, :unknown]
   end
 
   test "generic output media reaches encoders, muxers, and output callbacks" do
-    command =
-      FFix.command("in.mp4", fn source ->
-        [picture, sound] =
-          Filter.filter(FFix.video(source), "vendor_mixed", [:video, :audio])
+    source = FFix.input("in.mp4")
+    [picture, sound] = Filter.filter(FFix.video(source), "vendor_mixed", [:video, :audio])
 
-        Muxer.matroska(
-          [sound: Encoder.aac(sound), picture: Encoder.libx264(picture)],
-          "out.mkv",
+    command =
+      FFix.command(
+        Muxer.matroska([sound: Encoder.aac(sound), picture: Encoder.libx264(picture)], "out.mkv",
           output_options: [
             metadata: fn output_streams ->
               assert output_streams == %{
@@ -105,26 +97,25 @@ defmodule FFix.Filter.GenericTest do
             end
           ]
         )
-      end)
+      )
 
     assert "title=mixed" in FFix.to_argv(command)
   end
 
   test "unnamed unknown media still rejects output-index callbacks" do
-    command =
-      FFix.command("in.mp4", fn source ->
-        result = Filter.filter(FFix.video(source), "vendor", [:unknown])
-        FFix.output(result, "out.mp4", metadata: fn _streams -> flunk("must not run") end)
-      end)
+    source = FFix.input("in.mp4")
+    result = Filter.filter(FFix.video(source), "vendor", [:unknown])
 
-    assert_raise ArgumentError, ~r/require known audio\/video media/, fn ->
-      FFix.to_argv(command)
+    assert_raise ArgumentError, ~r/require known.*media/, fn ->
+      FFix.command(
+        FFix.output(result, "out.mp4", metadata: fn _streams -> flunk("must not run") end)
+      )
     end
   end
 
   test "generic values preserve expressions, positional arguments, and boundary escaping" do
     text = ~S(a:b,c;[d]'e\f)
-    expression = FFix.expr("if(gt(iw,320),320,iw)")
+    expression = "if(gt(iw,320),320,iw)"
 
     result =
       Filter.filter([], "vendor", [:video], [
@@ -132,20 +123,19 @@ defmodule FFix.Filter.GenericTest do
         {:pos, 2},
         {:enabled, false},
         {"width", expression},
-        {:mode, :fast}
+        mode: :fast
       ])
 
     assert result.plan.args ==
-             [pos: text, pos: 2] ++
-               [{"enabled", false}, {"width", expression}, {"mode", "fast"}]
+             [pos: text, pos: 2] ++ [{"enabled", false}, {"width", expression}, {"mode", "fast"}]
 
-    assert [{:chain, [parsed]}] = FFix.Parsers.FilterGraph.parse(render(result))
+    assert [chain: [parsed]] = FFix.Parsers.FilterGraph.parse(render(result))
 
     assert FFix.Parsers.FilterGraph.parse_args(parsed.args) == [
              {:pos, text},
              {:pos, "2"},
              {"enabled", "false"},
-             {"width", expression.source},
+             {"width", expression},
              {"mode", "fast"}
            ]
   end
@@ -191,7 +181,7 @@ defmodule FFix.Filter.GenericTest do
       assert_raise ArgumentError, fn -> Filter.filter(video, "vendor", [:video], options) end
     end
 
-    for value <- [nil, %{}, [:fast], fn -> 1 end, fn _streams -> 1 end, %Expr{source: 1}, "bad\0"] do
+    for value <- [nil, %{}, [:fast], fn -> 1 end, fn _streams -> 1 end, %{source: 1}, "bad\0"] do
       assert_raise ArgumentError, fn ->
         Filter.filter(video, "vendor", [:video], custom: value)
       end
@@ -201,5 +191,7 @@ defmodule FFix.Filter.GenericTest do
     assert_raise ArgumentError, ~r/unconnected filter output/, fn -> render(kept) end
   end
 
-  defp render(result), do: result |> then(&FFix.graph(output: &1)) |> FFix.to_filtergraph()
+  defp render(result) do
+    result |> then(&FFix.graph(output: &1)) |> FFix.to_filtergraph()
+  end
 end

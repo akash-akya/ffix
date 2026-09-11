@@ -1,7 +1,19 @@
 defmodule FFix.OutputCallbackTest do
   use ExUnit.Case, async: true
-  use FFix
 
+  import FFix,
+    only: [
+      input: 1,
+      input: 2,
+      output: 2,
+      output: 3,
+      command: 1,
+      command: 2,
+      video: 1,
+      audio: 1
+    ]
+
+  import FFix.Filter
   alias FFix.Command
   alias FFix.Command.Mapping
   alias FFix.{Decoder, Demuxer, Encoder, Muxer}
@@ -41,11 +53,8 @@ defmodule FFix.OutputCallbackTest do
       "title=#{streams.main.specifier}"
     end
 
-    built =
-      command("in.mp4", fn source ->
-        output([main: video(source)], "out.mp4", metadata: callback)
-      end)
-
+    source = FFix.input("in.mp4")
+    built = command(output([main: video(source)], "out.mp4", metadata: callback))
     Command.validate!(built)
     refute_received {:called, _info}
 
@@ -59,10 +68,11 @@ defmodule FFix.OutputCallbackTest do
   end
 
   test "unnamed mappings affect indexes but do not acquire implicit names" do
-    built =
-      command("in.mp4", fn source ->
-        mappings = [audio(source), video(source), {:main, video(source)}]
+    source = FFix.input("in.mp4")
+    mappings = [audio(source), video(source), main: video(source)]
 
+    built =
+      command(
         output(
           mappings,
           "out.mp4",
@@ -71,33 +81,29 @@ defmodule FFix.OutputCallbackTest do
             "title=track-#{streams.main.index}"
           end
         )
-      end)
+      )
 
     assert values(FFix.to_argv(built), "-metadata") == ["title=track-2"]
   end
 
   test "names and indexes are local to each output" do
+    source = FFix.input("in.mp4")
+
     built =
-      command("in.mp4", fn source ->
-        [
-          output(
-            [sound: audio(source), main: video(source)],
-            "first.mp4",
-            metadata: fn streams ->
-              assert streams.main == %{index: 1, specifier: "v:0"}
-              "title=first"
-            end
-          ),
-          output(
-            [main: video(source)],
-            "second.mp4",
-            metadata: fn streams ->
-              assert streams == %{main: %{index: 0, specifier: "v:0"}}
-              "title=second"
-            end
-          )
-        ]
-      end)
+      command([
+        output([sound: audio(source), main: video(source)], "first.mp4",
+          metadata: fn streams ->
+            assert streams.main == %{index: 1, specifier: "v:0"}
+            "title=first"
+          end
+        ),
+        output([main: video(source)], "second.mp4",
+          metadata: fn streams ->
+            assert streams == %{main: %{index: 0, specifier: "v:0"}}
+            "title=second"
+          end
+        )
+      ])
 
     assert values(FFix.to_argv(built), "-metadata") == ["title=first", "title=second"]
   end
@@ -105,7 +111,7 @@ defmodule FFix.OutputCallbackTest do
   test "named bindings also work without callbacks and do not mutate reusable mappings" do
     source = input("in.mp4")
     mapping = Encoder.libx264(video(source))
-    output = Command.output([first: mapping, second: mapping], "out.mp4")
+    output = FFix.output([first: mapping, second: mapping], "out.mp4")
     assert mapping.name == nil
     assert Enum.map(output.mappings, & &1.name) == [:first, :second]
     built = Command.new(inputs: [source], outputs: [output])
@@ -115,25 +121,24 @@ defmodule FFix.OutputCallbackTest do
 
   test "encoder, muxer, and raw output options all support callbacks with normal value rendering" do
     parent = self()
+    source = FFix.input("in.mp4")
+
+    mapping =
+      Encoder.libx264(video(source),
+        threads: fn streams -> streams.main.index + 1 end,
+        fastfirstpass: fn _streams -> false end
+      )
 
     built =
-      command("in.mp4", fn source ->
-        mapping =
-          Encoder.libx264(video(source),
-            threads: fn streams -> streams.main.index + 1 end,
-            fastfirstpass: fn _streams -> false end
-          )
-
-        Muxer.mp4(
-          [main: mapping],
-          "out.mp4",
+      command(
+        Muxer.mp4([main: mapping], "out.mp4",
           movflags: fn streams ->
             send(parent, {:muxer_callback, streams})
             [:faststart, :use_metadata_tags]
           end,
-          output_options: [shortest: fn _streams -> true end]
+          output_options: [shortest: fn _streams -> :flag end]
         )
-      end)
+      )
 
     refute_received {:muxer_callback, _streams}
     argv = FFix.to_argv(built)
@@ -150,19 +155,17 @@ defmodule FFix.OutputCallbackTest do
     encoder = Encoder.new("vendor", custom: fn streams -> streams.main.specifier end)
     mapping = Mapping.new(video(source), encoder)
     muxer = Muxer.new("vendor_muxer", custom: fn streams -> streams.main.index end)
-    output = Command.output([main: mapping], "out.bin", muxer: muxer)
+    output = FFix.output([main: mapping], "out.bin", muxer: muxer)
     built = Command.new(inputs: [source], outputs: [output])
     assert values(FFix.to_argv(built), "-custom:0") == ["v:0"]
     assert values(FFix.to_argv(built), "-custom") == ["0"]
 
     built =
-      command(source, fn source ->
-        Muxer.mp4(
-          [main: video(source)],
-          "out.mp4",
+      command(
+        Muxer.mp4([main: video(source)], "out.mp4",
           raw: [future: fn streams -> streams.main.specifier end]
         )
-      end)
+      )
 
     assert values(FFix.to_argv(built), "-future") == ["v:0"]
   end
@@ -176,12 +179,9 @@ defmodule FFix.OutputCallbackTest do
     end
 
     built =
-      command(source, fn source ->
-        output(
-          [main: Encoder.libx264(video(source), crf: fn _streams -> true end)],
-          "out.mp4"
-        )
-      end)
+      command(
+        output([main: Encoder.libx264(video(source), crf: fn _streams -> true end)], "out.mp4")
+      )
 
     Command.validate!(built)
 
@@ -190,42 +190,32 @@ defmodule FFix.OutputCallbackTest do
     end
 
     built =
-      command(source, fn source ->
-        Muxer.mp4(
-          [main: video(source)],
-          "out.mp4",
+      command(
+        Muxer.mp4([main: video(source)], "out.mp4",
           movflags: fn _streams -> [:misspelled_flag] end
         )
-      end)
+      )
 
     assert_raise ArgumentError, ~r/invalid value/, fn -> FFix.to_argv(built) end
   end
 
   test "bad callback results and arities are rejected without executing nested callbacks" do
     for callback <- [fn _streams -> %{} end, fn _streams -> fn _nested -> "bad" end end] do
-      built =
-        command("in.mp4", fn source ->
-          output([main: video(source)], "out.mp4", metadata: callback)
-        end)
-
+      source = FFix.input("in.mp4")
+      built = command(output([main: video(source)], "out.mp4", metadata: callback))
       assert_raise ArgumentError, fn -> FFix.to_argv(built) end
     end
 
-    built =
-      command("in.mp4", fn source ->
-        output([main: video(source)], "out.mp4", metadata: fn -> "bad" end)
-      end)
+    source = FFix.input("in.mp4")
 
     assert_raise ArgumentError, ~r/must accept one streams argument/, fn ->
-      FFix.to_argv(built)
+      command(output([main: video(source)], "out.mp4", metadata: fn -> "bad" end))
     end
 
     for value <- [nil, %{}, [:not_a_scalar]] do
-      built =
-        command("in.mp4", fn source ->
-          mapping = Encoder.encode(video(source), "vendor", custom: fn _streams -> value end)
-          output([main: mapping], "out.mp4")
-        end)
+      source = FFix.input("in.mp4")
+      mapping = Encoder.encode(video(source), "vendor", custom: fn _streams -> value end)
+      built = command(output([main: mapping], "out.mp4"))
 
       assert_raise ArgumentError, ~r/component option values must be/, fn ->
         FFix.to_argv(built)
@@ -234,25 +224,24 @@ defmodule FFix.OutputCallbackTest do
   end
 
   test "missing names and user exceptions propagate instead of being masked" do
+    source = FFix.input("in.mp4")
+
     built =
-      command("in.mp4", fn source ->
-        output(
-          [main: video(source)],
-          "out.mp4",
+      command(
+        output([main: video(source)], "out.mp4",
           metadata: fn streams -> streams.missing.specifier end
         )
-      end)
+      )
 
     assert_raise KeyError, ~r/key :missing not found/, fn -> FFix.to_argv(built) end
+    source = FFix.input("in.mp4")
 
     built =
-      command("in.mp4", fn source ->
-        output(
-          [main: video(source)],
-          "out.mp4",
+      command(
+        output([main: video(source)], "out.mp4",
           metadata: fn _streams -> raise "application error" end
         )
-      end)
+      )
 
     assert_raise RuntimeError, "application error", fn -> FFix.to_argv(built) end
   end
@@ -262,7 +251,7 @@ defmodule FFix.OutputCallbackTest do
     callback = fn _streams -> flunk("must not run") end
 
     output =
-      Command.output([main: video(source), main: audio(source)], "out.mp4", metadata: callback)
+      FFix.output([main: video(source), main: audio(source)], "out.mp4", metadata: callback)
 
     built = Command.new(inputs: [source], outputs: [output])
 
@@ -272,7 +261,11 @@ defmodule FFix.OutputCallbackTest do
 
     for name <- ["main", true, false, 1] do
       output =
-        Command.output(%Mapping{source: video(source), name: name}, "out.mp4", metadata: callback)
+        FFix.output(
+          %Mapping{source: video(source), name: name},
+          "out.mp4",
+          metadata: callback
+        )
 
       built = Command.new(inputs: [source], outputs: [output])
       assert_raise ArgumentError, ~r/output mapping name must be/, fn -> FFix.to_argv(built) end
@@ -282,10 +275,10 @@ defmodule FFix.OutputCallbackTest do
   test "callbacks reject broad and raw selections, including unnamed and exported selections" do
     source = input("in.mp4")
 
-    for selector <- [:video, :audio, :input, {:raw, "v:0"}, {:raw, "a:0?"}] do
-      broad = source[selector]
+    for selector <- [{:video, :all}, {:audio, :all}, :all, raw: "v:0", raw: "a:0?"] do
+      broad = FFix.select(source, selector)
       callback = fn _streams -> flunk("must not run") end
-      output = Command.output([video(source), {:broad, broad}], "out.mp4", metadata: callback)
+      output = FFix.output([video(source), broad: broad], "out.mp4", metadata: callback)
       built = Command.new(inputs: [source], outputs: [output])
 
       assert_raise ArgumentError, ~r/callbacks require every mapping to select one stream/, fn ->
@@ -293,7 +286,7 @@ defmodule FFix.OutputCallbackTest do
       end
 
       graph = FFix.graph(outputs: [broad: broad])
-      output = Command.output(graph[:broad], "out.mp4", metadata: callback)
+      output = FFix.output(hd(graph.exports), "out.mp4", metadata: callback)
       built = Command.new(inputs: [source], graph: graph, outputs: [output])
 
       assert_raise ArgumentError, ~r/callbacks require every mapping to select one stream/, fn ->
@@ -307,7 +300,7 @@ defmodule FFix.OutputCallbackTest do
 
     for name <- [:map, :an, :attach, :filter_complex] do
       output =
-        Command.output([main: video(source)], "out.mp4", [
+        FFix.output([main: video(source)], "out.mp4", [
           {name, fn _streams -> flunk("must not run") end}
         ])
 
@@ -319,7 +312,7 @@ defmodule FFix.OutputCallbackTest do
     end
 
     output =
-      Command.output([main: video(source)], "out.mp4",
+      FFix.output([main: video(source)], "out.mp4",
         metadata: fn _streams -> flunk("must not run") end
       )
 
@@ -348,19 +341,19 @@ defmodule FFix.OutputCallbackTest do
       Demuxer.new("mov", probesize: callback)
     end
 
-    source = input("in.mp4", ss: callback)
-    built = command(source, fn source -> output([video(source)], "out.mp4") end)
-    assert_raise ArgumentError, ~r/only supported on outputs/, fn -> FFix.to_argv(built) end
+    assert_raise ArgumentError, ~r/only supported on outputs/, fn ->
+      source = input("in.mp4", ss: callback)
+      command(output(video(source), "out.mp4"))
+    end
 
-    built =
-      command("in.mp4", fn source -> output([video(source)], "out.mp4") end,
-        global: [loglevel: callback]
-      )
+    source = input("in.mp4")
 
-    assert_raise ArgumentError, ~r/only supported on outputs/, fn -> FFix.to_argv(built) end
+    assert_raise ArgumentError, ~r/only supported on outputs/, fn ->
+      command(output(video(source), "out.mp4"), global: [loglevel: callback])
+    end
   end
 
-  test "mixed-media filter exports retain per-pad media in both callback forms" do
+  test "mixed-media streams and graph exports retain per-pad callback media" do
     check = fn streams ->
       assert streams == %{
                sound: %{index: 0, specifier: "a:0"},
@@ -371,19 +364,16 @@ defmodule FFix.OutputCallbackTest do
     end
 
     build_streams = fn source -> concat([video(source), audio(source)], n: 1, v: 1, a: 1) end
-
-    built =
-      command("in.mp4", fn source ->
-        [picture, sound] = build_streams.(source)
-        output([sound: sound, picture: picture], "out.mp4", metadata: check)
-      end)
-
+    source = FFix.input("in.mp4")
+    [picture, sound] = build_streams.(source)
+    built = command(output([sound: sound, picture: picture], "out.mp4", metadata: check))
     assert values(FFix.to_argv(built), "-metadata") == ["title=mixed"]
+    graph = FFix.graph(outputs: [picture: picture, sound: sound])
 
     built =
-      command("in.mp4", build_streams, fn [picture, sound] ->
-        output([sound: sound, picture: picture], "out.mp4", metadata: check)
-      end)
+      command(
+        output([sound: graph[:sound], picture: graph[:picture]], "out.mp4", metadata: check)
+      )
 
     assert values(FFix.to_argv(built), "-metadata") == ["title=mixed"]
   end
@@ -393,7 +383,7 @@ defmodule FFix.OutputCallbackTest do
     graph = FFix.Graph.parse!("[0:a:0]showwaves=s=320x100[wave]")
 
     output =
-      Command.output([main: graph[:wave]], "out.mp4",
+      FFix.output([main: hd(graph.exports)], "out.mp4",
         metadata: fn streams -> streams.main.specifier end
       )
 
@@ -402,52 +392,44 @@ defmodule FFix.OutputCallbackTest do
   end
 
   test "unknown output media is rejected rather than guessed" do
-    built =
-      command("in.mp4", fn source ->
-        unknown = source |> video() |> FFix.Filter.filter("null", [:unknown])
+    source = FFix.input("in.mp4")
+    unknown = source |> video() |> FFix.Filter.filter("null", [:unknown])
 
-        output(
-          [main: unknown],
-          "out.mp4",
-          metadata: fn _streams -> flunk("must not run") end
-        )
-      end)
-
-    assert_raise ArgumentError, ~r/require known audio\/video media/, fn ->
-      FFix.to_argv(built)
+    assert_raise ArgumentError, ~r/require known.*media/, fn ->
+      command(
+        output([main: unknown], "out.mp4", metadata: fn _streams -> flunk("must not run") end)
+      )
     end
   end
 
   defp hls_command do
     source = input("in.mp4")
     other = input("other.mp4")
+    [high, low] = split(video(source), outputs: 2)
 
-    command([source, other], fn [source, _other] ->
-      [high, low] = split(video(source), outputs: 2)
+    high =
+      high
+      |> scale(w: -2, h: 720)
+      |> Encoder.libx264(b: "800k", maxrate: "800k", bufsize: "1600k")
 
-      high =
-        high
-        |> scale(w: -2, h: 720)
-        |> Encoder.libx264(b: "800k", maxrate: "800k", bufsize: "1600k")
+    low =
+      low
+      |> scale(w: -2, h: 360)
+      |> Encoder.libx264(b: "400k", maxrate: "400k", bufsize: "800k", g: 12)
 
-      low =
-        low
-        |> scale(w: -2, h: 360)
-        |> Encoder.libx264(b: "400k", maxrate: "400k", bufsize: "800k", g: 12)
+    sound = Encoder.aac(audio(source), b: "64k")
 
-      sound = Encoder.aac(audio(source), b: "64k")
-
-      Muxer.hls(
-        [v720: high, v360: low, aud: sound],
-        "out/%v.m3u8",
+    command(
+      Muxer.hls([v720: high, v360: low, aud: sound], "out/%v.m3u8",
         hls_time: 2,
         var_stream_map: fn streams ->
           "#{streams.v720.specifier},agroup:a,name:720p " <>
             "#{streams.v360.specifier},agroup:a,name:360p " <>
             "#{streams.aud.specifier},agroup:a,name:audio,default:yes"
         end
-      )
-    end)
+      ),
+      inputs: [source, other]
+    )
   end
 
   defp values(argv, key) do

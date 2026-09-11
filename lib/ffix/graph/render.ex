@@ -1,7 +1,6 @@
 defmodule FFix.Graph.Render do
   @moduledoc false
 
-  alias FFix.Graph.Expr
   alias FFix.Graph
   alias FFix.Graph.Export
   alias FFix.Graph.InputRef
@@ -102,7 +101,6 @@ defmodule FFix.Graph.Render do
 
   defp encode_setting_value(value), do: value |> encode_value() |> escape_graph()
 
-  defp encode_value(%Expr{source: source}), do: escape_value(source)
   defp encode_value(value) when is_boolean(value), do: to_string(value)
   defp encode_value(value) when is_integer(value), do: Integer.to_string(value)
   defp encode_value(value) when is_float(value), do: FFix.Value.float_to_string(value)
@@ -127,23 +125,11 @@ defmodule FFix.Graph.Render do
     |> List.to_string()
   end
 
-  defp input_ref_to_string(%InputRef{input: input, selector: :input}),
-    do: "#{graph_input_id!(input)}"
-
-  defp input_ref_to_string(%InputRef{input: input, selector: :video}),
-    do: "#{graph_input_id!(input)}:v"
-
-  defp input_ref_to_string(%InputRef{input: input, selector: :audio}),
-    do: "#{graph_input_id!(input)}:a"
-
-  defp input_ref_to_string(%InputRef{input: input, selector: {:video, stream}}),
-    do: "#{graph_input_id!(input)}:v:#{stream}"
-
-  defp input_ref_to_string(%InputRef{input: input, selector: {:audio, stream}}),
-    do: "#{graph_input_id!(input)}:a:#{stream}"
-
-  defp input_ref_to_string(%InputRef{input: input, selector: {:raw, selector}}),
-    do: "#{graph_input_id!(input)}:#{selector}"
+  defp input_ref_to_string(%InputRef{input: input, selector: selector}) do
+    input = graph_input_id!(input)
+    suffix = InputRef.selector_string(selector)
+    if suffix == "", do: to_string(input), else: "#{input}:#{suffix}"
+  end
 
   defp graph_input_id!(input) when is_integer(input), do: input
 

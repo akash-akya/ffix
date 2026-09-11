@@ -6,20 +6,23 @@ defmodule FFix.Command do
   ordered outputs. It is still just data until `FFix.to_argv/1`, `FFix.run/1`, or
   another boundary function serializes it.
 
-  Prefer `FFix.command/3` for the function-based API. Use this module directly
+  Prefer `FFix.command/2` for the output-first API. Use this module directly
   when you want to construct or transform `%FFix.Command{}` values in smaller
-  steps.
+  steps. Supply inputs explicitly and map direct input selections or canonical
+  `graph.exports` handles with their graph. This layer does not collect graph
+  reference contexts or infer dependencies. Captured input snapshots must still
+  match the supplied declarations.
 
   ## Examples
 
-      input = FFix.Command.input("input.mp4", ss: "00:00:03", stream_loop: -1)
-      video = input[:video]
+      input = FFix.Command.Input.new("input.mp4", ss: "00:00:03", stream_loop: -1)
+      video = FFix.Command.Input.select(input, {:video, :all})
 
       command =
         FFix.Command.new(
-          global: [y: true],
+          global: [y: :flag],
           inputs: [input],
-          outputs: [FFix.Command.output(video, "out.mp4", vcodec: :copy)]
+          outputs: [FFix.Command.Output.new(video, "out.mp4", vcodec: :copy)]
         )
 
       FFix.to_argv(command)
@@ -78,7 +81,7 @@ defmodule FFix.Command do
   @type streams :: %{atom() => stream_info()}
   @type option_callback :: (streams() -> term())
   @type output_av_option :: {atom() | String.t(), av_value() | option_callback()}
-  @type source :: Export.t() | StreamRef.t() | atom() | non_neg_integer()
+  @type source :: Export.t() | StreamRef.t()
   @type mapping :: Mapping.t() | source()
   @type binding :: mapping() | {atom(), mapping()}
 
@@ -100,7 +103,7 @@ defmodule FFix.Command do
   Returns an empty command.
 
   This is useful when building a command step by step with `global/2`,
-  `input/3`, `graph/2`, and `output/4`.
+  `add_input/2`, `graph/2`, and `add_output/2`.
   """
   @spec new() :: t()
   def new, do: %__MODULE__{}
@@ -110,13 +113,15 @@ defmodule FFix.Command do
   Builds a command from already-normalized command data.
 
   This lower-level constructor expects ordered input and output structs. For the
-  function callback API, use `FFix.command/3`.
+  output-first API, use `FFix.command/2`. Filtered mappings here require canonical
+  exports from the explicit `:graph`; no dependency inference occurs.
 
-      src = FFix.Command.input("input.mp4")
+      src = FFix.Command.Input.new("input.mp4")
+      video = FFix.Command.Input.select(src, {:video, 0})
 
       FFix.Command.new(
         inputs: [src],
-        outputs: [FFix.Command.output(src[:video], "out.mp4", "c:v": :copy)]
+        outputs: [FFix.Command.Output.new(video, "out.mp4", "c:v": :copy)]
       )
   """
   @spec new(keyword()) :: t()
@@ -125,9 +130,6 @@ defmodule FFix.Command do
 
     graph = normalize_graph!(Keyword.get(options, :graph))
     outputs = normalize_outputs!(Keyword.get(options, :outputs, []))
-
-    {graph, outputs} =
-      if graph, do: {graph, outputs}, else: FFix.Command.Build.export_output_sources(outputs)
 
     %__MODULE__{
       global_options: normalize_option_list!(Keyword.get(options, :global, []), :global),
@@ -144,7 +146,7 @@ defmodule FFix.Command do
   Global options are rendered before inputs:
 
       FFix.Command.new()
-      |> FFix.Command.global(y: true, loglevel: :error)
+      |> FFix.Command.global(y: :flag, loglevel: :error)
   """
   @spec global(t(), keyword()) :: t()
   def global(%__MODULE__{global_options: global_options} = command, options)
@@ -153,85 +155,10 @@ defmodule FFix.Command do
   end
 
   @doc group: "Inputs"
-  @doc """
-  Builds an input declaration.
-
-  Input options are rendered before `-i`:
-
-      src = FFix.Command.input("input.mp4", ss: "00:00:03")
-      src[:video]
-      src[:audio]
-
-  Prefer shaping inputs in `FFix.command/3` rather than storing labels on the
-  input itself.
-  """
-  @spec input(Input.source()) :: Input.t()
-  def input(source), do: input(source, [])
-
-  @doc group: "Inputs"
-  @doc """
-  Builds an input with options, or appends an input to a command.
-
-  Called as `input(source, options)`, it returns an `%FFix.Command.Input{}`:
-
-      src = FFix.Command.input("input.mp4", ss: "00:00:03")
-
-  `demuxer:` accepts an `FFix.Demuxer` configuration and `decoders:` accepts a map
-  of indexed selectors to `FFix.Decoder` values. Remaining options are raw input
-  CLI controls.
-
-  Called as `input(command, source)`, it appends an input without options and
-  returns the updated command:
-
-      FFix.Command.new()
-      |> FFix.Command.input("input.mp4")
-  """
-  @spec input(Input.source(), keyword()) :: Input.t()
-  @spec input(t(), Input.source()) :: t()
-  def input(%__MODULE__{} = command, source), do: input(command, source, [])
-
-  def input(source, options) when is_list(options) do
-    validate_endpoint!(source, :input)
-    {configuration, raw_options} = Options.split!(options, [:demuxer, :decoders])
-    validate_cli_options!(raw_options)
-
-    if Keyword.has_key?(options, :label) do
-      raise ArgumentError, "input labels are not supported; name inputs in command inputs instead"
-    end
-
-    %Input{
-      id: make_ref(),
-      source: source,
-      options: raw_options,
-      demuxer: Keyword.get(configuration, :demuxer),
-      decoders: Keyword.get(configuration, :decoders, %{})
-    }
-  end
-
-  def input(source, options) do
-    raise ArgumentError,
-          "input options must be a keyword list, got: #{inspect({source, options})}"
-  end
-
-  @doc group: "Inputs"
-  @doc """
-  Appends an input declaration with options to a command.
-
-      FFix.Command.new()
-      |> FFix.Command.input("input.mp4", ss: "00:00:03")
-  """
-  @spec input(t(), Input.source(), keyword()) :: t()
-  def input(%__MODULE__{} = command, %Input{} = input, []) do
+  @doc "Appends an existing input declaration to a low-level command."
+  @spec add_input(t(), Input.t()) :: t()
+  def add_input(%__MODULE__{} = command, %Input{} = input) do
     %{command | inputs: command.inputs ++ [input]}
-  end
-
-  def input(%__MODULE__{} = command, source, options) when is_list(options) do
-    %{command | inputs: command.inputs ++ [input(source, options)]}
-  end
-
-  def input(%__MODULE__{}, source, options) do
-    raise ArgumentError,
-          "command input options must be a keyword list, got: #{inspect({source, options})}"
   end
 
   @doc group: "Filtergraph"
@@ -244,99 +171,10 @@ defmodule FFix.Command do
   end
 
   @doc group: "Outputs"
-  @doc """
-  Builds an output declaration from explicit sources.
-
-  Pass graph exports, graph export names/indexes, direct input streams, or
-  configured mappings. Sources precede the target, as in `FFix.output/3`.
-
-      src = FFix.Command.input("input.mp4")
-      FFix.Command.output([src[:video], src[:audio]], "copy.mp4", c: :copy)
-
-  Bare sources become unconfigured `FFix.Command.Mapping` values. Pass mappings
-  directly to configure each output occurrence independently. Pass `muxer:` to
-  attach a separate `FFix.Muxer` configuration. Remaining output options are raw
-  CLI controls rendered after `-map` entries and before the target.
-
-  Ordered `{name, source_or_mapping}` pairs assign output-local names. Output
-  option callbacks receive a map from those names to `t:stream_info/0` values.
-  See `FFix.Command.Output` for callback timing and cardinality requirements.
-  """
-  @spec output(binding() | [binding()], Output.target()) :: Output.t()
-  def output(sources, target), do: output(sources, target, [])
-
-  @doc group: "Outputs"
-  @doc """
-  Builds an output with options, or appends an output to a command.
-
-  Called as `output(sources, target, options)`, it returns an
-  `%FFix.Command.Output{}`:
-
-      FFix.Command.output([src[:video], src[:audio]], "copy.mp4", c: :copy)
-
-  Called as `output(command, sources, target)`, it appends an output without
-  options and returns the updated command.
-  """
-  @spec output(binding() | [binding()], Output.target(), keyword()) :: Output.t()
-  @spec output(t(), binding() | [binding()], Output.target()) :: t()
-  def output(%__MODULE__{} = command, sources, target), do: output(command, sources, target, [])
-
-  def output(sources, target, options) when is_list(options) do
-    validate_endpoint!(target, :output)
-    {configuration, raw_options} = Options.split!(options, [:muxer])
-    validate_cli_options!(raw_options)
-    sources = List.wrap(sources)
-
-    if sources == [] do
-      raise ArgumentError, "output requires at least one source"
-    end
-
-    mappings =
-      Enum.map(sources, fn source ->
-        case source do
-          {name, %Mapping{} = mapping} when is_atom(name) and name not in [nil, true, false] ->
-            %{mapping | name: name}
-
-          {name, source} when is_atom(name) and name not in [nil, true, false] ->
-            %{Mapping.new(source) | name: name}
-
-          %Mapping{} = mapping ->
-            mapping
-
-          source ->
-            Mapping.new(source)
-        end
-      end)
-
-    %Output{
-      target: target,
-      mappings: mappings,
-      muxer: Keyword.get(configuration, :muxer),
-      options: raw_options
-    }
-  end
-
-  def output(sources, target, options) do
-    raise ArgumentError,
-          "output options must be a keyword list, got: #{inspect({sources, target, options})}"
-  end
-
-  @doc group: "Outputs"
-  @doc """
-  Appends an output declaration with options to a command.
-
-      FFix.Command.new()
-      |> FFix.Command.input("input.mp4")
-      |> FFix.Command.output(0, "copy.mp4", c: :copy)
-  """
-  @spec output(t(), binding() | [binding()], Output.target(), keyword()) :: t()
-  def output(%__MODULE__{} = command, sources, target, options) when is_list(options) do
-    %{command | outputs: command.outputs ++ [output(sources, target, options)]}
-  end
-
-  def output(%__MODULE__{}, sources, target, options) do
-    raise ArgumentError,
-          "command output options must be a keyword list, got: #{inspect({sources, target, options})}"
+  @doc "Appends an existing output declaration to a low-level command."
+  @spec add_output(t(), Output.t()) :: t()
+  def add_output(%__MODULE__{} = command, %Output{} = output) do
+    %{command | outputs: command.outputs ++ [output]}
   end
 
   @doc group: "Validation"
@@ -356,15 +194,7 @@ defmodule FFix.Command do
     Enum.each(command.inputs, fn input ->
       case input do
         %Input{} ->
-          validate_endpoint!(input.source, :input)
-          validate_cli_options!(input.options)
-
-          unless is_nil(input.id) or is_reference(input.id),
-            do: raise(ArgumentError, "input identity must be a reference or nil")
-
-          validate_option_callbacks!(input.options, false)
-          validate_demuxer!(input)
-          validate_decoders!(input)
+          validate_input!(input)
 
         other ->
           raise ArgumentError, "invalid command input: #{inspect(other)}"
@@ -411,6 +241,7 @@ defmodule FFix.Command do
       end)
     end
 
+    validate_input_snapshots!(command.inputs, graph, command.outputs, input_index_map)
     validate_graph_export_mappings!(command.outputs, graph)
     command
   end
@@ -509,6 +340,21 @@ defmodule FFix.Command do
     raise ArgumentError, "command outputs must be a list"
   end
 
+  @doc false
+  def validate_input!(%Input{} = input) do
+    validate_endpoint!(input.source, :input)
+    validate_cli_options!(input.options)
+
+    unless is_nil(input.id) or is_reference(input.id) do
+      raise ArgumentError, "input identity must be a reference or nil"
+    end
+
+    validate_option_callbacks!(input.options, false)
+    validate_demuxer!(input)
+    validate_decoders!(input)
+    input
+  end
+
   defp validate_demuxer!(%Input{demuxer: demuxer, options: options}) do
     case demuxer do
       nil ->
@@ -533,11 +379,52 @@ defmodule FFix.Command do
       validate_decoder!(selector, decoder)
     end)
 
+    namespaces =
+      decoders
+      |> Map.keys()
+      |> Enum.map(fn
+        {:index, _index} -> :absolute
+        {_media, _index} -> :media_relative
+      end)
+      |> Enum.uniq()
+
+    if length(namespaces) > 1 do
+      raise ArgumentError,
+            "cannot mix absolute and media-relative decoder selectors on one input"
+    end
+
     if map_size(decoders) > 0 do
       configured_options = component_option_names(Map.values(decoders))
       reserved = @codec_selection_options ++ configured_options
       validate_raw_options!(options, reserved, "structured decoding")
     end
+  end
+
+  defp validate_input_snapshots!(inputs, graph, outputs, input_index_map) do
+    graph_refs =
+      if graph do
+        for {_id, %{kind: :input, input_ref: input_ref}} <- graph.nodes, do: input_ref
+      else
+        []
+      end
+
+    direct_refs =
+      for output <- outputs,
+          %Mapping{source: %StreamRef{plan: %{kind: :input, input_ref: input_ref}}} <-
+            output.mappings,
+          do: input_ref
+
+    Enum.each(graph_refs ++ direct_refs, fn
+      %InputRef{declaration: nil} ->
+        :ok
+
+      %InputRef{declaration: declaration} = input_ref ->
+        resolved = resolve_input_ref!(input_ref, length(inputs), input_index_map)
+
+        if Enum.at(inputs, resolved.input) != declaration do
+          raise ArgumentError, "conflicting input snapshots for #{inspect(input_ref.input)}"
+        end
+    end)
   end
 
   defp validate_output!(output, graph, input_count, input_index_map) do
@@ -656,7 +543,7 @@ defmodule FFix.Command do
     {streams, _counts} =
       output.mappings
       |> Enum.with_index()
-      |> Enum.reduce({%{}, %{video: 0, audio: 0}}, fn {mapping, index}, {streams, counts} ->
+      |> Enum.reduce({%{}, %{}}, fn {mapping, index}, {streams, counts} ->
         unless single_source?(mapping.source, graph) do
           raise ArgumentError,
                 "output option callbacks require every mapping to select one stream; use indexed inputs or filtered exports"
@@ -664,20 +551,13 @@ defmodule FFix.Command do
 
         media = source_media(mapping.source, graph)
 
-        prefix =
-          case media do
-            :video ->
-              "v"
+        if media == :unknown do
+          raise ArgumentError,
+                "output option callbacks require known media for every mapping; absolute input indexes cannot supply media-relative specifiers; use indexed media selectors or Filter.filter/4 with explicit media"
+        end
 
-            :audio ->
-              "a"
-
-            _unknown ->
-              raise ArgumentError,
-                    "output option callbacks require known audio/video media for every mapping; use FFix.shape/2 for dynamic filter outputs"
-          end
-
-        media_index = Map.fetch!(counts, media)
+        prefix = InputRef.media_prefix(media)
+        media_index = Map.get(counts, media, 0)
         info = %{index: index, specifier: "#{prefix}:#{media_index}"}
         counts = Map.put(counts, media, media_index + 1)
 
@@ -693,13 +573,7 @@ defmodule FFix.Command do
     streams
   end
 
-  defp source_media(source, graph) do
-    case source do
-      %StreamRef{media: media} -> media
-      %Export{media: media} -> media
-      name_or_index -> Graph.export!(graph, name_or_index).media
-    end
-  end
+  defp source_media(source, _graph), do: source.media
 
   defp validate_encoding!(encoding, source, graph) do
     case encoding do
@@ -722,7 +596,7 @@ defmodule FFix.Command do
   defp single_source?(source, graph) do
     case source_node(source, graph) do
       %{kind: :filter} -> true
-      %{kind: :input, input_ref: input_ref} -> single_selector?(input_ref.selector)
+      %{kind: :input, input_ref: input_ref} -> InputRef.single?(input_ref.selector)
     end
   end
 
@@ -733,25 +607,14 @@ defmodule FFix.Command do
 
       %Export{ref: ref} ->
         Map.fetch!(graph.nodes, ref.node_id)
-
-      name_or_index ->
-        export = Graph.export!(graph, name_or_index)
-        Map.fetch!(graph.nodes, export.ref.node_id)
-    end
-  end
-
-  defp single_selector?(selector) do
-    case selector do
-      {media, index} when media in [:video, :audio] and is_integer(index) and index >= 0 -> true
-      _other -> false
     end
   end
 
   @doc false
   def validate_decoder!(selector, decoder) do
-    unless single_selector?(selector) do
+    unless InputRef.single?(selector) do
       raise ArgumentError,
-            "decoder selector must be {:video, index} or {:audio, index}, got: #{inspect(selector)}"
+            "decoder selector must be {media, nonnegative_index} or {:index, nonnegative_index}, got: #{inspect(selector)}"
     end
 
     case decoder do
@@ -857,22 +720,15 @@ defmodule FFix.Command do
     end
   end
 
+  defp validate_source!(%StreamRef{context: context}, _graph, _input_count, _input_index_map)
+       when not is_nil(context) do
+    raise ArgumentError,
+          "graph references require FFix.command/2 or canonical graph.exports handles with an explicit graph"
+  end
+
   defp validate_source!(%StreamRef{} = stream, _graph, input_count, input_index_map) do
     resolve_stream_source!(stream, input_count, input_index_map)
     :ok
-  end
-
-  defp validate_source!(source, %Graph{} = graph, _input_count, _input_index_map)
-       when is_atom(source) or (is_integer(source) and source >= 0) do
-    case Graph.export(graph, source) do
-      nil -> raise ArgumentError, "command graph has no output #{inspect(source)}"
-      _export -> :ok
-    end
-  end
-
-  defp validate_source!(source, nil, _input_count, _input_index_map)
-       when is_atom(source) or (is_integer(source) and source >= 0) do
-    raise ArgumentError, "output source #{inspect(source)} requires a command graph"
   end
 
   defp validate_source!(source, _graph, _input_count, _input_index_map) do
@@ -914,13 +770,6 @@ defmodule FFix.Command do
 
   defp mapped_filter_export(%Export{} = export, %Graph{} = graph) do
     if filter_export?(graph, export), do: export, else: nil
-  end
-
-  defp mapped_filter_export(source, %Graph{} = graph)
-       when is_atom(source) or (is_integer(source) and source >= 0) do
-    graph
-    |> Graph.export!(source)
-    |> mapped_filter_export(graph)
   end
 
   defp mapped_filter_export(%StreamRef{}, %Graph{}), do: nil
@@ -1027,13 +876,6 @@ defmodule FFix.Command do
     stream
     |> resolve_stream_source!(input_count, input_index_map)
     |> encode_input_ref()
-  end
-
-  defp map_source(source, %Graph{} = graph, render, input_count, input_index_map)
-       when is_atom(source) or (is_integer(source) and source >= 0) do
-    graph
-    |> Graph.export!(source)
-    |> map_source(graph, render, input_count, input_index_map)
   end
 
   defp map_source(%Export{} = export, %Graph{} = graph, render, _input_count, _input_index_map) do
@@ -1173,12 +1015,19 @@ defmodule FFix.Command do
     Enum.flat_map(options, &encode_option/1)
   end
 
-  defp encode_option({key, true}), do: ["-#{encode_option_key(key)}"]
-  defp encode_option({key, nil}), do: ["-#{encode_option_key(key)}"]
+  defp encode_option({key, :flag}), do: ["-#{encode_option_key(key)}"]
 
   defp encode_option({key, value}) do
-    ["-#{encode_option_key(key)}", encode_option_value(value)]
+    ["-#{encode_option_key(key)}", encode_cli_value(value)]
   end
+
+  defp encode_cli_value(true), do: "1"
+  defp encode_cli_value(false), do: "0"
+
+  defp encode_cli_value(values) when is_list(values),
+    do: Enum.map_join(values, "+", &encode_cli_value/1)
+
+  defp encode_cli_value(value), do: encode_option_value(value)
 
   defp encode_option_key(key) when is_atom(key), do: Atom.to_string(key)
   defp encode_option_key(key) when is_binary(key), do: key
@@ -1222,7 +1071,8 @@ defmodule FFix.Command do
     endpoint
   end
 
-  defp validate_cli_options!(options) do
+  @doc false
+  def validate_cli_options!(options) do
     {_special, options} = Options.split!(options, [])
 
     Enum.each(options, fn {key, value} ->
@@ -1244,6 +1094,9 @@ defmodule FFix.Command do
 
     :ok
   end
+
+  defp validate_cli_value!(nil),
+    do: raise(ArgumentError, "nil is not a CLI option value; use :flag for a valueless switch")
 
   defp validate_cli_value!(value) when is_atom(value) or is_number(value), do: :ok
 
@@ -1270,21 +1123,13 @@ defmodule FFix.Command do
   defp encode_output_target(target) when is_binary(target), do: target
 
   defp encode_input_ref(%InputRef{input: input, selector: selector}) do
-    case selector do
-      :input -> to_string(input)
-      selector -> "#{input}:#{encode_stream_selector(selector)}"
+    case InputRef.selector_string(selector) do
+      "" -> to_string(input)
+      suffix -> "#{input}:#{suffix}"
     end
   end
 
-  defp encode_stream_selector(selector) do
-    case selector do
-      :video -> "v"
-      :audio -> "a"
-      {:video, index} -> "v:#{index}"
-      {:audio, index} -> "a:#{index}"
-      {:raw, selector} -> selector
-    end
-  end
+  defp encode_stream_selector(selector), do: InputRef.selector_string(selector)
 
   defp encode_float_option_value(value) do
     FFix.Value.float_to_string(value)

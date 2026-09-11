@@ -14,7 +14,7 @@ defmodule FFix.Command.Output do
   Maps, encoding configuration, muxer configuration, and raw options are rendered
   before the target. Output-stream indexes start at zero for each output.
 
-  `FFix.output/3` and `FFix.Command.output/3` take sources first, followed by a
+  `FFix.output/3` and `new/3` take sources first, followed by a
   target and optional CLI options. Both wrap bare sources in unconfigured
   mappings and accept configured mappings directly.
 
@@ -43,14 +43,17 @@ defmodule FFix.Command.Output do
   rendering. Named helpers defer their metadata value checks, not name checks.
 
   An output with callbacks requires every mapping, named or not, to select one
-  stream of known audio/video media. Broad/raw selectors and unknown filter
-  output media are rejected instead of guessed. Use `FFix.shape/2` for dynamic
-  filter shapes that metadata cannot establish. No media-file probing occurs.
+  stream of known video/audio/subtitle/data/attachment media. Broad/raw selectors
+  and absolute input indexes cannot supply media-relative callback information.
+  Use `FFix.Filter.filter/4` with explicit media for unknown filter outputs.
+  No media-file probing occurs.
   Callback results cannot change mappings or return more callbacks. Input/global
   option callbacks are not supported.
   """
 
+  alias FFix.Command
   alias FFix.Command.Mapping
+  alias FFix.Options
 
   @type target :: String.t() | :stdout | {:pipe, non_neg_integer()} | {:url, String.t()}
   @type option :: {atom() | String.t(), term()}
@@ -63,4 +66,41 @@ defmodule FFix.Command.Output do
         }
 
   defstruct [:target, :muxer, mappings: [], options: []]
+
+  @doc "Builds an ordered output declaration without evaluating option callbacks."
+  @spec new(Command.binding() | [Command.binding()], target(), [option()]) :: t()
+  def new(sources, target, options \\ []) do
+    Command.validate_endpoint!(target, :output)
+    {configuration, raw_options} = Options.split!(options, [:muxer])
+    Command.validate_cli_options!(raw_options)
+    sources = List.wrap(sources)
+
+    if sources == [] do
+      raise ArgumentError, "output requires at least one source"
+    end
+
+    mappings =
+      Enum.map(sources, fn source ->
+        case source do
+          {name, %Mapping{} = mapping} when is_atom(name) and name not in [nil, true, false] ->
+            %{mapping | name: name}
+
+          {name, source} when is_atom(name) and name not in [nil, true, false] ->
+            %{Mapping.new(source) | name: name}
+
+          %Mapping{} = mapping ->
+            mapping
+
+          source ->
+            Mapping.new(source)
+        end
+      end)
+
+    %__MODULE__{
+      target: target,
+      mappings: mappings,
+      muxer: Keyword.get(configuration, :muxer),
+      options: raw_options
+    }
+  end
 end

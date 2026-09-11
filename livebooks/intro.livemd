@@ -7,7 +7,7 @@ Let’s take one pleasant sample video and use it as a small editing workbench.
 We will build up gradually:
 
 * load and preview a source clip
-* build the smallest useful `FFix.command/3`
+* build the smallest useful `FFix.command/2`
 * add filters one at a time
 * add centered title text
 * save a still image
@@ -38,14 +38,15 @@ Mix.install(
 ```
 
 ```elixir
-import FFix
-import FFix.Filter
+alias FFix.Filter
 
 unless System.find_executable("ffmpeg") do
   raise "ffmpeg must be available on PATH to run this notebook"
 end
 
-work_dir = Path.join(System.tmp_dir!(), "ffix-edit-workbench-#{System.unique_integer([:positive])}")
+work_dir =
+  Path.join(System.tmp_dir!(), "ffix-edit-workbench-#{System.unique_integer([:positive])}")
+
 File.mkdir_p!(work_dir)
 
 Kino.Markdown.new("Working in `#{work_dir}`")
@@ -54,8 +55,7 @@ Kino.Markdown.new("Working in `#{work_dir}`")
 ```elixir
 defmodule FFixIntro do
   def run!(command, options \\ []) do
-    # Keep stderr by default. ffmpeg explains most failures there, and FFix can
-    # parse ffmpeg-style log/progress lines from stderr for runner events.
+    # Collect full diagnostics for these short tutorial runs.
     FFix.run!(command, Keyword.merge([stderr: :collect], options))
   end
 
@@ -72,8 +72,7 @@ defmodule FFixIntro do
   end
 
   def graph_card(%FFix.Command{} = command) do
-    # Callback inputs use internal refs until command serialization. Reading the
-    # graph from argv shows the resolved ffmpeg labels, such as [0:v].
+    # Serialization resolves input declaration identities to labels such as [0:v:0].
     command
     |> FFix.to_argv()
     |> filter_complex_arg()
@@ -87,13 +86,30 @@ defmodule FFixIntro do
           [%{event: "start", detail: Enum.join(Enum.take(argv, 4), " "), frame: nil, speed: nil}]
 
         {:progress, progress} ->
-          [%{event: "progress", detail: inspect(progress.status), frame: progress.frame, speed: progress.speed}]
+          [
+            %{
+              event: "progress",
+              detail: inspect(progress.status),
+              frame: progress.frame,
+              speed: progress.speed
+            }
+          ]
 
         {:log, log} ->
           [%{event: "log", detail: "#{log.level}: #{log.message}", frame: nil, speed: nil}]
 
         {:exit, result} ->
-          [%{event: "exit", detail: "status #{inspect(result.exit_status)}", frame: nil, speed: nil}]
+          [
+            %{
+              event: "exit",
+              detail: "status #{inspect(result.exit_status)}",
+              frame: nil,
+              speed: nil
+            }
+          ]
+
+        {:error, error} ->
+          [%{event: "error", detail: Exception.message(error), frame: nil, speed: nil}]
 
         _other ->
           []
@@ -158,44 +174,42 @@ Kino.Layout.grid([
 
 ## 2. First command: trim a tiny preview
 
-The main API shape is:
+Declare the source and output first, then build a command from the output:
 
 ```text
-command(inputs, graph_callback, output_callback)
+source = FFix.input(path, input_options)
+video = FFix.video(source)
+output = FFix.output(video, target, output_options)
+command = FFix.command(output, global: global_options)
 ```
 
-In this first version there is no real filtergraph yet:
+In this first version there is no filtergraph yet:
 
-* `input(source_path, t: "2")` declares an ffmpeg input and asks ffmpeg to read only two seconds
-* the graph callback receives `src`, a command input handle
-* `src[:video]` selects the input video stream
-* `output(:stdout, ...)` writes a tiny MP4 to stdout, so Livebook can render it without creating a file
+* `FFix.input(source_path, t: "2")` declares an ffmpeg input and asks ffmpeg to read only two seconds
+* `FFix.video(source)` selects the first video stream (index 0)
+* `FFix.output(video, :stdout, ...)` writes a tiny MP4 to stdout, so Livebook can render it without creating a file
+* `FFix.command/2` infers inputs from the output's stream dependencies
+
+Configure input options, demuxers, and decoders before selecting streams: selections capture immutable declarations. Reusing a declaration opens it once per command; separate declarations of the same file remain separate inputs. Use separate declarations when you need different decoder or seek settings. Raw CLI switches use `:flag`, while raw booleans emit `1` or `0`.
 
 ```elixir
-preview_cmd =
-  command(
-    # Input options render before `-i`; this becomes roughly `-t 2 -i source.mp4`.
-    input(source_path, t: "2"),
-    fn src ->
-      # Select the first video stream. No filters yet.
-      src[:video]
-    end,
-    fn video ->
-      # MP4 on stdout needs fragmented MP4 flags so it can stream as bytes.
-      output([video], :stdout,
-        f: :mp4,
-        # `movflags` is a flags option; lists serialize as `frag_keyframe+empty_moov`.
-        movflags: [:frag_keyframe, :empty_moov],
-        # Quoted atoms/strings are useful for ffmpeg stream-specific option names.
-        "c:v": :libx264,
-        # yuv420p is the most broadly playable pixel format for browser previews.
-        pix_fmt: :yuv420p,
-        # Disable audio for this tiny byte preview.
-        an: true
-      )
-    end,
-    global: [y: true]
+# Input options render before `-i`; this becomes roughly `-t 2 -i source.mp4`.
+preview_source = FFix.input(source_path, t: "2")
+preview_video = FFix.video(preview_source)
+
+preview_output =
+  FFix.output(preview_video, :stdout,
+    f: :mp4,
+    # MP4 on stdout needs fragmentation; lists serialize as frag_keyframe+empty_moov.
+    movflags: [:frag_keyframe, :empty_moov],
+    # Quoted atoms/strings work for ffmpeg stream-specific option names.
+    "c:v": :libx264,
+    # yuv420p is the most broadly playable pixel format for browser previews.
+    pix_fmt: :yuv420p,
+    an: :flag
   )
+
+preview_cmd = FFix.command(preview_output, global: [y: :flag])
 
 preview = FFixIntro.run!(preview_cmd, stdout: :collect)
 
@@ -217,35 +231,32 @@ Filters compose naturally with the Elixir pipe operator. Here we:
 * output another tiny MP4 directly to Livebook
 
 ```elixir
-normalized_cmd =
-  command(
-    input(source_path),
-    fn src ->
-      src[:video]
-      # `trim` cuts frames, but it keeps the original timestamps.
-      |> trim(duration: "3")
-      # Reset timestamps so the filtered preview starts at t=0.
-      |> setpts(expr: "PTS-STARTPTS")
-      # Normalize frame cadence for predictable downstream outputs.
-      |> fps(fps: 30)
-      # Fill a 16:9 canvas without letterboxing, then crop the overflow.
-      |> scale(w: 1280, h: 720, force_original_aspect_ratio: :increase)
-      |> crop(w: 1280, h: 720)
-    end,
-    fn video ->
-      output([video], :stdout,
-        f: :mp4,
-        # Fragmented MP4 lets ffmpeg write MP4 to a pipe instead of seeking.
-        movflags: [:frag_keyframe, :empty_moov],
-        "c:v": :libx264,
-        pix_fmt: :yuv420p,
-        # Encoder speed/quality tradeoff; useful for quick tutorial runs.
-        preset: :veryfast,
-        an: true
-      )
-    end,
-    global: [y: true]
+source = FFix.input(source_path)
+
+normalized_video =
+  source
+  |> FFix.video()
+  # `trim` cuts frames, but it keeps the original timestamps.
+  |> Filter.trim(duration: "3")
+  # Reset timestamps so the filtered preview starts at t=0.
+  |> Filter.setpts(expr: "PTS-STARTPTS")
+  |> Filter.fps(fps: 30)
+  # Fill a 16:9 canvas without letterboxing, then crop the overflow.
+  |> Filter.scale(w: 1280, h: 720, force_original_aspect_ratio: :increase)
+  |> Filter.crop(w: 1280, h: 720)
+
+normalized_output =
+  FFix.output(normalized_video, :stdout,
+    f: :mp4,
+    movflags: [:frag_keyframe, :empty_moov],
+    "c:v": :libx264,
+    pix_fmt: :yuv420p,
+    # Encoder speed/quality tradeoff; useful for quick tutorial runs.
+    preset: :veryfast,
+    an: :flag
   )
+
+normalized_cmd = FFix.command(normalized_output, global: [y: :flag])
 
 normalized = FFixIntro.run!(normalized_cmd, stdout: :collect)
 
@@ -257,7 +268,7 @@ Kino.Layout.grid([
 
 ## 4. Add centered title text
 
-Now we add a title card. This is where `FFix.expr/1` is useful: ffmpeg expressions such as `(w-tw)/2` should be passed through as ffmpeg expression syntax.
+Now we add a title card. Pass ffmpeg expressions such as `(w-tw)/2` as plain strings. FFix escapes them at the filtergraph serialization boundary.
 
 We also use `enable:` to show the title only during part of the clip.
 
@@ -280,48 +291,41 @@ enable_until = max(duration_seconds - 0.4, 1.5)
 
 titled_path = Path.join(work_dir, "01-titled-video.mp4")
 
-titled_cmd =
-  command(
-    input(source_path),
-    fn src ->
-      video =
-        src[:video]
-        |> trim(duration: duration)
-        |> setpts(expr: "PTS-STARTPTS")
-        |> fps(fps: 30)
-        |> scale(w: 1280, h: 720, force_original_aspect_ratio: :increase)
-        |> crop(w: 1280, h: 720)
-        |> drawtext(
-          text: title,
-          # w/h are frame dimensions; tw/th are rendered text dimensions.
-          x: expr("(w-tw)/2"),
-          y: expr("(h-th)/2"),
-          fontsize: 52,
-          fontcolor: "white",
-          box: true,
-          boxcolor: "black@0.45",
-          boxborderw: 18,
-          # Timeline editing: enable this drawtext filter only while true.
-          enable: expr("between(t,0.4,#{enable_until})")
-        )
-
-      # A quiet placeholder audio track keeps video players happy without adding noise.
-      audio = anullsrc(channel_layout: :stereo, sample_rate: 48_000, duration: duration)
-
-      [video: video, audio: audio]
-    end,
-    fn [video: video, audio: audio] ->
-      output([video, audio], titled_path,
-        "c:v": :libx264,
-        "c:a": :aac,
-        pix_fmt: :yuv420p,
-        preset: :veryfast,
-        # Stop when the generated silent audio or filtered video ends.
-        shortest: true
-      )
-    end,
-    global: [y: true]
+titled_video =
+  source
+  |> FFix.video()
+  |> Filter.trim(duration: duration)
+  |> Filter.setpts(expr: "PTS-STARTPTS")
+  |> Filter.fps(fps: 30)
+  |> Filter.scale(w: 1280, h: 720, force_original_aspect_ratio: :increase)
+  |> Filter.crop(w: 1280, h: 720)
+  |> Filter.drawtext(
+    text: title,
+    # w/h are frame dimensions; tw/th are rendered text dimensions.
+    x: "(w-tw)/2",
+    y: "(h-th)/2",
+    fontsize: 52,
+    fontcolor: "white",
+    box: true,
+    boxcolor: "black@0.45",
+    boxborderw: 18,
+    enable: "between(t,0.4,#{enable_until})"
   )
+
+# A quiet placeholder audio track keeps video players happy without adding noise.
+titled_audio = Filter.anullsrc(channel_layout: :stereo, sample_rate: 48_000, duration: duration)
+
+titled_output =
+  FFix.output([titled_video, titled_audio], titled_path,
+    "c:v": :libx264,
+    "c:a": :aac,
+    pix_fmt: :yuv420p,
+    preset: :veryfast,
+    # Stop when the generated silent audio or filtered video ends.
+    shortest: :flag
+  )
+
+titled_cmd = FFix.command(titled_output, global: [y: :flag])
 
 FFixIntro.run!(titled_cmd)
 
@@ -345,44 +349,44 @@ thumbnail_title_input
 ```elixir
 thumbnail_title = FFixIntro.text(Kino.Input.read(thumbnail_title_input), title)
 
-thumbnail_cmd =
-  command(
-    # `ss` before `-i` asks ffmpeg to seek before decoding, which is fast.
-    input(source_path, ss: "00:00:01"),
-    fn src ->
-      src[:video]
-      |> scale(w: 1280, h: 720, force_original_aspect_ratio: :increase)
-      |> crop(w: 1280, h: 720)
-      |> drawtext(
-        text: thumbnail_title,
-        x: expr("(w-tw)/2"),
-        y: expr("(h-th)/2"),
-        fontsize: 64,
-        fontcolor: "white",
-        box: true,
-        boxcolor: "black@0.5",
-        boxborderw: 24
-      )
-      |> drawtext(
-        text: channel,
-        x: expr("(w-tw)/2"),
-        # Place the channel name just below the centered title.
-        y: expr("(h+th)/2+56"),
-        fontsize: 30,
-        fontcolor: "white"
-      )
-    end,
-    fn image ->
-      output([image], thumbnail_path,
-        # One encoded video frame becomes one JPEG.
-        "frames:v": 1,
-        # Lower q:v is better JPEG quality in ffmpeg's image2 muxer.
-        "q:v": 3,
-        f: :image2
-      )
-    end,
-    global: [y: true]
+# A separate declaration owns the seek; it does not change the other pipelines.
+# `ss` before `-i` asks ffmpeg to seek before decoding, which is fast.
+thumbnail_source = FFix.input(source_path, ss: "00:00:01")
+
+thumbnail_image =
+  thumbnail_source
+  |> FFix.video()
+  |> Filter.scale(w: 1280, h: 720, force_original_aspect_ratio: :increase)
+  |> Filter.crop(w: 1280, h: 720)
+  |> Filter.drawtext(
+    text: thumbnail_title,
+    x: "(w-tw)/2",
+    y: "(h-th)/2",
+    fontsize: 64,
+    fontcolor: "white",
+    box: true,
+    boxcolor: "black@0.5",
+    boxborderw: 24
   )
+  |> Filter.drawtext(
+    text: channel,
+    x: "(w-tw)/2",
+    # Place the channel name just below the centered title.
+    y: "(h+th)/2+56",
+    fontsize: 30,
+    fontcolor: "white"
+  )
+
+thumbnail_output =
+  FFix.output(thumbnail_image, thumbnail_path,
+    # One encoded video frame becomes one JPEG.
+    "frames:v": 1,
+    # Lower q:v is better JPEG quality.
+    "q:v": 3,
+    f: :image2
+  )
+
+thumbnail_cmd = FFix.command(thumbnail_output, global: [y: :flag])
 
 FFixIntro.run!(thumbnail_cmd)
 
@@ -399,45 +403,39 @@ The same source can become a 9:16 phone-friendly clip. The only big difference i
 ```elixir
 phone_path = Path.join(work_dir, "03-phone-friendly.mp4")
 
-phone_cmd =
-  command(
-    input(source_path),
-    fn src ->
-      video =
-        src[:video]
-        |> trim(duration: duration)
-        |> setpts(expr: "PTS-STARTPTS")
-        |> fps(fps: 30)
-        # Vertical phone canvas. `increase` fills the frame; crop chooses the center.
-        |> scale(w: 1080, h: 1920, force_original_aspect_ratio: :increase)
-        |> crop(w: 1080, h: 1920)
-        |> drawtext(
-          text: title,
-          x: expr("(w-tw)/2"),
-          y: expr("(h-th)/2"),
-          fontsize: 72,
-          fontcolor: "white",
-          box: true,
-          boxcolor: "black@0.5",
-          boxborderw: 24,
-          enable: expr("between(t,0.4,#{enable_until})")
-        )
-
-      # Use generated silent audio so the phone-friendly clip has an audio stream but no noise.
-      audio = anullsrc(channel_layout: :stereo, sample_rate: 48_000, duration: duration)
-      [video: video, audio: audio]
-    end,
-    fn [video: video, audio: audio] ->
-      output([video, audio], phone_path,
-        "c:v": :libx264,
-        "c:a": :aac,
-        pix_fmt: :yuv420p,
-        preset: :veryfast,
-        shortest: true
-      )
-    end,
-    global: [y: true]
+phone_video =
+  source
+  |> FFix.video()
+  |> Filter.trim(duration: duration)
+  |> Filter.setpts(expr: "PTS-STARTPTS")
+  |> Filter.fps(fps: 30)
+  # Vertical phone canvas. `increase` fills the frame; crop chooses the center.
+  |> Filter.scale(w: 1080, h: 1920, force_original_aspect_ratio: :increase)
+  |> Filter.crop(w: 1080, h: 1920)
+  |> Filter.drawtext(
+    text: title,
+    x: "(w-tw)/2",
+    y: "(h-th)/2",
+    fontsize: 72,
+    fontcolor: "white",
+    box: true,
+    boxcolor: "black@0.5",
+    boxborderw: 24,
+    enable: "between(t,0.4,#{enable_until})"
   )
+
+phone_audio = Filter.anullsrc(channel_layout: :stereo, sample_rate: 48_000, duration: duration)
+
+phone_output =
+  FFix.output([phone_video, phone_audio], phone_path,
+    "c:v": :libx264,
+    "c:a": :aac,
+    pix_fmt: :yuv420p,
+    preset: :veryfast,
+    shortest: :flag
+  )
+
+phone_cmd = FFix.command(phone_output, global: [y: :flag])
 
 FFixIntro.run!(phone_cmd)
 
@@ -451,14 +449,18 @@ Kino.Layout.grid([
 
 Now we combine the ideas.
 
-`split/2` creates multiple branches from one filtered stream. This command writes three outputs in one ffmpeg run:
+`Filter.split/2` returns a list of branches from one filtered stream. A single-output filter returns one stream reference, and a sink returns a terminal. Each produced pad must be consumed exactly once; use an explicit split for fan-out or a sink for an unused branch. Direct input selections can be reused without a split.
+
+This command writes three outputs in one ffmpeg run:
 
 * 16:9 video
 * 9:16 phone-friendly video
 * review contact sheet
 
 ```elixir
-sheet_layout_input = Kino.Input.select("Review sheet layout", [{"2x2", "2 × 2"}, {"3x2", "3 × 2"}], default: "2x2")
+sheet_layout_input =
+  Kino.Input.select("Review sheet layout", [{"2x2", "2 × 2"}, {"3x2", "3 × 2"}], default: "2x2")
+
 sheet_layout_input
 ```
 
@@ -468,94 +470,87 @@ wide_path = Path.join(work_dir, "04-wide-video.mp4")
 phone_branch_path = Path.join(work_dir, "04-phone-friendly.mp4")
 sheet_path = Path.join(work_dir, "04-review-sheet.jpg")
 
-branch_cmd =
-  command(
-    input(source_path),
-    fn src ->
-      # Normalize once before splitting, so each branch starts from the same clean base.
-      base =
-        src[:video]
-        |> trim(duration: duration)
-        |> setpts(expr: "PTS-STARTPTS")
-        |> fps(fps: 30)
+# Normalize once before splitting, so each branch starts from the same clean base.
+base =
+  source
+  |> FFix.video()
+  |> Filter.trim(duration: duration)
+  |> Filter.setpts(expr: "PTS-STARTPTS")
+  |> Filter.fps(fps: 30)
 
-      # ffmpeg filter outputs generally need explicit fan-out before reuse.
-      # `split` gives us independent branches for independent outputs.
-      [wide, phone, sheet] = split(base, outputs: 3)
+[wide, phone, sheet] = Filter.split(base, outputs: 3)
 
-      wide_video =
-        wide
-        |> scale(w: 1280, h: 720, force_original_aspect_ratio: :increase)
-        |> crop(w: 1280, h: 720)
-        |> drawtext(
-          text: title,
-          x: expr("(w-tw)/2"),
-          y: expr("(h-th)/2"),
-          fontsize: 44,
-          fontcolor: "white",
-          box: true,
-          boxcolor: "black@0.45",
-          boxborderw: 16,
-          enable: expr("between(t,0.4,#{enable_until})")
-        )
-
-      phone_video =
-        phone
-        |> scale(w: 1080, h: 1920, force_original_aspect_ratio: :increase)
-        |> crop(w: 1080, h: 1920)
-        |> drawtext(
-          text: title,
-          x: expr("(w-tw)/2"),
-          y: expr("(h-th)/2"),
-          fontsize: 72,
-          fontcolor: "white",
-          box: true,
-          boxcolor: "black@0.5",
-          boxborderw: 24,
-          enable: expr("between(t,0.4,#{enable_until})")
-        )
-
-      review_sheet =
-        sheet
-        # Sample one frame per second, then tile those frames into a contact sheet.
-        |> fps(fps: 1)
-        |> scale(w: 180, h: -1)
-        |> tile(layout: sheet_layout, margin: 8, padding: 4, color: "white")
-
-      [
-        wide_video: wide_video,
-        phone_video: phone_video,
-        review_sheet: review_sheet,
-        wide_audio: anullsrc(channel_layout: :stereo, sample_rate: 48_000, duration: duration),
-        phone_audio: anullsrc(channel_layout: :stereo, sample_rate: 48_000, duration: duration)
-      ]
-    end,
-    fn outputs ->
-      [
-        output([outputs[:wide_video], outputs[:wide_audio]], wide_path,
-          "c:v": :libx264,
-          "c:a": :aac,
-          pix_fmt: :yuv420p,
-          preset: :veryfast,
-          shortest: true
-        ),
-        output([outputs[:phone_video], outputs[:phone_audio]], phone_branch_path,
-          "c:v": :libx264,
-          "c:a": :aac,
-          pix_fmt: :yuv420p,
-          preset: :veryfast,
-          shortest: true
-        ),
-        output([outputs[:review_sheet]], sheet_path,
-          # The sheet branch is a video stream with one frame; write it as JPEG.
-          "frames:v": 1,
-          "q:v": 3,
-          f: :image2
-        )
-      ]
-    end,
-    global: [y: true]
+wide_video =
+  wide
+  |> Filter.scale(w: 1280, h: 720, force_original_aspect_ratio: :increase)
+  |> Filter.crop(w: 1280, h: 720)
+  |> Filter.drawtext(
+    text: title,
+    x: "(w-tw)/2",
+    y: "(h-th)/2",
+    fontsize: 44,
+    fontcolor: "white",
+    box: true,
+    boxcolor: "black@0.45",
+    boxborderw: 16,
+    enable: "between(t,0.4,#{enable_until})"
   )
+
+phone_branch_video =
+  phone
+  |> Filter.scale(w: 1080, h: 1920, force_original_aspect_ratio: :increase)
+  |> Filter.crop(w: 1080, h: 1920)
+  |> Filter.drawtext(
+    text: title,
+    x: "(w-tw)/2",
+    y: "(h-th)/2",
+    fontsize: 72,
+    fontcolor: "white",
+    box: true,
+    boxcolor: "black@0.5",
+    boxborderw: 24,
+    enable: "between(t,0.4,#{enable_until})"
+  )
+
+review_sheet =
+  sheet
+  # Sample one frame per second, then tile those frames into a contact sheet.
+  |> Filter.fps(fps: 1)
+  |> Filter.scale(w: 180, h: -1)
+  |> Filter.tile(layout: sheet_layout, margin: 8, padding: 4, color: "white")
+
+wide_audio = Filter.anullsrc(channel_layout: :stereo, sample_rate: 48_000, duration: duration)
+
+phone_branch_audio =
+  Filter.anullsrc(channel_layout: :stereo, sample_rate: 48_000, duration: duration)
+
+wide_output =
+  FFix.output([wide_video, wide_audio], wide_path,
+    "c:v": :libx264,
+    "c:a": :aac,
+    pix_fmt: :yuv420p,
+    preset: :veryfast,
+    shortest: :flag
+  )
+
+phone_branch_output =
+  FFix.output([phone_branch_video, phone_branch_audio], phone_branch_path,
+    "c:v": :libx264,
+    "c:a": :aac,
+    pix_fmt: :yuv420p,
+    preset: :veryfast,
+    shortest: :flag
+  )
+
+sheet_output =
+  FFix.output(review_sheet, sheet_path,
+    # The sheet branch is a video stream with one frame; write it as JPEG.
+    "frames:v": 1,
+    "q:v": 3,
+    f: :image2
+  )
+
+branch_cmd = FFix.command([wide_output, phone_branch_output, sheet_output], global: [y: :flag])
 
 FFixIntro.run!(branch_cmd)
 
@@ -571,14 +566,16 @@ Kino.Layout.grid([
 
 `FFix.run!/2` is convenient, but the runner can also stream events.
 
-Here we run the multi-output command again with `progress: true`, then display the important events in a table.
+Here we run the multi-output command again with `progress: true`, then display the important events in a table. The stream is lazy; every enumeration starts a fresh process. Live events are independent of the bounded diagnostics retained in the result. We collect all events only because this is a short clip.
+
+`FFix.run/2` returns operational success/error tuples; `FFix.run!/2` raises `FFix.Runner.Error` for operational failures. Application callbacks and event consumers keep their original exceptions. For Command values, executable selection is `ffmpeg:` first, then `FFMPEG_BIN`, then `ffmpeg` on `PATH`. Raw argv executes literally without executable substitution or extra flags.
 
 ```elixir
 events =
   branch_cmd
   # `progress: true` adds `-progress pipe:2`; ffmpeg emits machine-readable
   # progress lines, and FFix turns them into `{:progress, %Progress{}}` events.
-  |> FFix.stream(progress: true, stderr: :collect)
+  |> FFix.stream(progress: true, stderr: {:tail, 65_536})
   |> Enum.to_list()
 
 Kino.Layout.grid([
@@ -593,7 +590,18 @@ Kino.Layout.grid([
 ffmpeg has wonderful source filters hiding in plain sight. Let’s make a tiny visual bumper from one of them. No input file needed.
 
 ```elixir
-egg_input = Kino.Input.select("Easter egg bumper", [sierpinski: "Sierpinski", mandelbrot: "Mandelbrot", life: "Game of Life", cellauto: "Rule 110"], default: :mandelbrot)
+egg_input =
+  Kino.Input.select(
+    "Easter egg bumper",
+    [
+      sierpinski: "Sierpinski",
+      mandelbrot: "Mandelbrot",
+      life: "Game of Life",
+      cellauto: "Rule 110"
+    ],
+    default: :mandelbrot
+  )
+
 egg_input
 ```
 
@@ -604,52 +612,52 @@ weird_source =
   case Kino.Input.read(egg_input) do
     :sierpinski ->
       # Source filters have no input pads; they synthesize media inside ffmpeg.
-      sierpinski(size: "1280x720", rate: 30, seed: 42, type: :triangle)
+      Filter.sierpinski(size: "1280x720", rate: 30, seed: 42, type: :triangle)
 
     :mandelbrot ->
       # The default easter egg: a generated fractal zoom, still just a video stream.
-      mandelbrot(size: "1280x720", rate: 30, maxiter: 1200, start_scale: "3", end_scale: "0.25")
+      Filter.mandelbrot(
+        size: "1280x720",
+        rate: 30,
+        maxiter: 1200,
+        start_scale: "3",
+        end_scale: "0.25"
+      )
 
     :life ->
-      life(size: "1280x720", rate: 30, random_seed: 42, ratio: "0.22", life_color: "cyan")
+      Filter.life(size: "1280x720", rate: 30, random_seed: 42, ratio: "0.22", life_color: "cyan")
 
     :cellauto ->
-      cellauto(size: "1280x720", rate: 30, rule: 110, random_seed: 42)
+      Filter.cellauto(size: "1280x720", rate: 30, rule: 110, random_seed: 42)
   end
 
-bumper_cmd =
-  command(
-    [],
-    fn [] ->
-      video =
-        weird_source
-        |> drawtext(
-          text: channel,
-          x: expr("(w-tw)/2"),
-          y: expr("(h-th)/2"),
-          fontsize: 56,
-          fontcolor: "white",
-          box: true,
-          boxcolor: "black@0.5",
-          boxborderw: 20
-        )
-
-      # Add silence for container compatibility; the visual source itself has no audio.
-      audio = anullsrc(channel_layout: :stereo, sample_rate: 48_000, duration: "3")
-      [video: video, audio: audio]
-    end,
-    fn [video: video, audio: audio] ->
-      output([video, audio], bumper_path,
-        "c:v": :libx264,
-        "c:a": :aac,
-        pix_fmt: :yuv420p,
-        preset: :veryfast,
-        shortest: true,
-        t: 3
-      )
-    end,
-    global: [y: true]
+bumper_video =
+  weird_source
+  |> Filter.drawtext(
+    text: channel,
+    x: "(w-tw)/2",
+    y: "(h-th)/2",
+    fontsize: 56,
+    fontcolor: "white",
+    box: true,
+    boxcolor: "black@0.5",
+    boxborderw: 20
   )
+
+# Add silence; the visual source itself has no audio.
+bumper_audio = Filter.anullsrc(channel_layout: :stereo, sample_rate: 48_000, duration: "3")
+
+bumper_output =
+  FFix.output([bumper_video, bumper_audio], bumper_path,
+    "c:v": :libx264,
+    "c:a": :aac,
+    pix_fmt: :yuv420p,
+    preset: :veryfast,
+    shortest: :flag,
+    t: 3
+  )
+
+bumper_cmd = FFix.command(bumper_output, global: [y: :flag])
 
 FFixIntro.run!(bumper_cmd)
 
