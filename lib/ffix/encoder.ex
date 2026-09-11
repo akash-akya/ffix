@@ -18,7 +18,8 @@ defmodule FFix.Encoder do
   Strings remain open FFmpeg values. Flag lists are normalized to FFmpeg strings.
   `raw: [{"new_option", "value"}]` bypasses metadata checks for individual options.
 
-  `named/3` accepts dynamic registration names without a metadata schema. `new/2`
+  `encode/3` forwards codec or encoder names and options without a metadata schema.
+  FFmpeg selects the implementation when given a codec name such as `"h264"`. `new/2`
   constructs a standalone configuration for the lower-level command model.
   All component option names are unscoped and have no leading dash. Values may
   also be callbacks receiving the output's named stream information; see
@@ -38,9 +39,9 @@ defmodule FFix.Encoder do
     Command.validate_component!(%__MODULE__{name: name, options: options})
   end
 
-  @doc "Maps a source using a dynamic encoder name and unscoped options, without a metadata schema."
-  @spec named(Command.source(), String.t(), list()) :: Mapping.t()
-  def named(source, name, options \\ []) do
+  @doc "Maps a source using a codec or encoder name and unscoped options, without a metadata schema."
+  @spec encode(Command.source(), String.t(), list()) :: Mapping.t()
+  def encode(source, name, options \\ []) do
     options = Options.normalize!(options, nil, "#{name} encoder")
     Mapping.new(source, new(name, options))
   end

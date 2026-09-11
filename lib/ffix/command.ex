@@ -19,7 +19,7 @@ defmodule FFix.Command do
         FFix.Command.new(
           global: [y: true],
           inputs: [input],
-          outputs: [FFix.Command.output("out.mp4", video, vcodec: :copy)]
+          outputs: [FFix.Command.output(video, "out.mp4", vcodec: :copy)]
         )
 
       FFix.to_argv(command)
@@ -116,7 +116,7 @@ defmodule FFix.Command do
 
       FFix.Command.new(
         inputs: [src],
-        outputs: [FFix.Command.output("out.mp4", src[:video], "c:v": :copy)]
+        outputs: [FFix.Command.output(src[:video], "out.mp4", "c:v": :copy)]
       )
   """
   @spec new(keyword()) :: t()
@@ -233,11 +233,11 @@ defmodule FFix.Command do
   @doc """
   Builds an output declaration from explicit sources.
 
-  This is lower-level than `FFix.output/2`: pass graph exports, graph export names,
-  graph export indexes, or direct input streams explicitly.
+  Pass graph exports, graph export names/indexes, direct input streams, or
+  configured mappings. Sources precede the target, as in `FFix.output/3`.
 
       src = FFix.Command.input("input.mp4")
-      FFix.Command.output("copy.mp4", [src[:video], src[:audio]], c: :copy)
+      FFix.Command.output([src[:video], src[:audio]], "copy.mp4", c: :copy)
 
   Bare sources become unconfigured `FFix.Command.Mapping` values. Pass mappings
   directly to configure each output occurrence independently. Pass `muxer:` to
@@ -248,40 +248,46 @@ defmodule FFix.Command do
   option callbacks receive a map from those names to `t:stream_info/0` values.
   See `FFix.Command.Output` for callback timing and cardinality requirements.
   """
-  @spec output(Output.target(), binding() | [binding()]) :: Output.t()
-  def output(target, sources), do: output(target, sources, [])
+  @spec output(binding() | [binding()], Output.target()) :: Output.t()
+  def output(sources, target), do: output(sources, target, [])
 
   @doc group: "Outputs"
   @doc """
   Builds an output with options, or appends an output to a command.
 
-  Called as `output(target, sources, options)`, it returns an
+  Called as `output(sources, target, options)`, it returns an
   `%FFix.Command.Output{}`:
 
-      FFix.Command.output("copy.mp4", [src[:video], src[:audio]], c: :copy)
+      FFix.Command.output([src[:video], src[:audio]], "copy.mp4", c: :copy)
 
-  Called as `output(command, target, sources)`, it appends an output without
+  Called as `output(command, sources, target)`, it appends an output without
   options and returns the updated command.
   """
-  @spec output(Output.target(), binding() | [binding()], keyword()) :: Output.t()
-  @spec output(t(), Output.target(), binding() | [binding()]) :: t()
-  def output(%__MODULE__{} = command, target, sources), do: output(command, target, sources, [])
+  @spec output(binding() | [binding()], Output.target(), keyword()) :: Output.t()
+  @spec output(t(), binding() | [binding()], Output.target()) :: t()
+  def output(%__MODULE__{} = command, sources, target), do: output(command, sources, target, [])
 
-  def output(target, sources, options) when is_list(options) do
+  def output(sources, target, options) when is_list(options) do
+    sources = List.wrap(sources)
+
+    if sources == [] do
+      raise ArgumentError, "output requires at least one source"
+    end
+
     mappings =
-      Enum.map(List.wrap(sources), fn source ->
+      Enum.map(sources, fn source ->
         case source do
           {name, %Mapping{} = mapping} when is_atom(name) and name not in [nil, true, false] ->
             %{mapping | name: name}
 
           {name, source} when is_atom(name) and name not in [nil, true, false] ->
-            %Mapping{source: source, name: name}
+            %{Mapping.new(source) | name: name}
 
           %Mapping{} = mapping ->
             mapping
 
           source ->
-            %Mapping{source: source}
+            Mapping.new(source)
         end
       end)
 
@@ -293,9 +299,9 @@ defmodule FFix.Command do
     }
   end
 
-  def output(target, sources, options) do
+  def output(sources, target, options) do
     raise ArgumentError,
-          "output options must be a keyword list, got: #{inspect({target, sources, options})}"
+          "output options must be a keyword list, got: #{inspect({sources, target, options})}"
   end
 
   @doc group: "Outputs"
@@ -304,16 +310,16 @@ defmodule FFix.Command do
 
       FFix.Command.new()
       |> FFix.Command.input("input.mp4")
-      |> FFix.Command.output("copy.mp4", 0, c: :copy)
+      |> FFix.Command.output(0, "copy.mp4", c: :copy)
   """
-  @spec output(t(), Output.target(), binding() | [binding()], keyword()) :: t()
-  def output(%__MODULE__{} = command, target, sources, options) when is_list(options) do
-    %{command | outputs: command.outputs ++ [output(target, sources, options)]}
+  @spec output(t(), binding() | [binding()], Output.target(), keyword()) :: t()
+  def output(%__MODULE__{} = command, sources, target, options) when is_list(options) do
+    %{command | outputs: command.outputs ++ [output(sources, target, options)]}
   end
 
-  def output(%__MODULE__{}, target, sources, options) do
+  def output(%__MODULE__{}, sources, target, options) do
     raise ArgumentError,
-          "command output options must be a keyword list, got: #{inspect({target, sources, options})}"
+          "command output options must be a keyword list, got: #{inspect({sources, target, options})}"
   end
 
   @doc group: "Validation"

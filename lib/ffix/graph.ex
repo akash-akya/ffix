@@ -14,7 +14,7 @@ defmodule FFix.Graph do
           src[:video] |> FFix.Filter.scale(w: 1280, h: -1)
         end,
         fn video, src ->
-          FFix.output("out.mp4", video: video, audio: src[:audio])
+          FFix.output([video, src[:audio]], "out.mp4")
         end
       )
 
@@ -102,7 +102,7 @@ defmodule FFix.Graph do
       FFix.Command.new(
         inputs: [FFix.input("input.mp4")],
         graph: graph,
-        outputs: [FFix.Command.output("out.mp4", [graph[:main], audio])]
+        outputs: [FFix.Command.output([graph[:main], audio], "out.mp4")]
       )
   """
   @spec input(input_id(), input_selector()) :: FFix.Stream.t()

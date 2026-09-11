@@ -29,23 +29,20 @@ defmodule FFix.HelpersTest do
         if String.match?(name, ~r/^[a-z][a-z0-9_]*$/) do
           arities =
             case entry.kind do
-              :muxer -> [2]
-              :decoder -> [1, 2, 3]
+              kind when kind in [:muxer, :decoder] -> [2, 3]
               _other -> [1, 2]
             end
 
-          for arity <- arities do
-            assert function_exported?(module, function_name, arity)
-          end
-
-          assert List.keymember?(specs, {function_name, 2}, 0)
-          if entry.kind == :decoder, do: assert(List.keymember?(specs, {function_name, 3}, 0))
+          actual_arities = Keyword.get_values(module.__info__(:functions), function_name)
+          assert actual_arities == arities
+          full_arity = List.last(arities)
+          assert List.keymember?(specs, {function_name, full_arity}, 0)
           type_name = String.to_atom("#{name}_option")
           assert Enum.any?(types, &match?({:type, {^type_name, _definition, []}}, &1))
 
-          assert {{:function, ^function_name, 2}, _annotation, _signature, %{"en" => doc},
-                  _metadata} =
-                   Enum.find(docs, &(elem(&1, 0) == {:function, function_name, 2}))
+          assert {{:function, ^function_name, ^full_arity}, _annotation, _signature,
+                  %{"en" => doc}, %{defaults: 1}} =
+                   Enum.find(docs, &(elem(&1, 0) == {:function, function_name, full_arity}))
 
           assert doc =~ "#{name}: #{entry.description}"
           assert doc =~ "Metadata baseline: FFmpeg #{metadata.version.version}"
@@ -72,8 +69,17 @@ defmodule FFix.HelpersTest do
     assert encoder_type =~ "[String.t() | :"
 
     muxer_type = option_type(FFix.Muxer, :hls_option)
-    assert muxer_type =~ "FFix.Command.binding()"
     assert muxer_type =~ "FFix.Command.option_callback()"
+    assert muxer_type =~ ":output_options"
+
+    for removed <- [":video", ":audio", ":sources"] do
+      refute muxer_type =~ removed
+    end
+
+    {:ok, specs} = Code.Typespec.fetch_specs(FFix.Muxer)
+    {{:hls, 3}, [spec]} = List.keyfind(specs, {:hls, 3}, 0)
+    signature = Code.Typespec.spec_to_quoted(:hls, spec) |> Macro.to_string()
+    assert signature =~ "FFix.Command.binding()"
 
     decoder_type = option_type(FFix.Decoder, :hevc_option)
     assert decoder_type =~ "FFix.Command.av_option()"
@@ -90,7 +96,7 @@ defmodule FFix.HelpersTest do
 
     quoted =
       quote do
-        def named(source, name, options), do: {source, name, options}
+        def encode(source, name, options), do: {source, name, options}
         unquote_splicing(definitions)
       end
 
@@ -125,10 +131,14 @@ defmodule FFix.HelpersTest do
     metadata = fixture_metadata(["fixture_encoder", "3gp", "hyphen-name"], "Fixture")
     assert length(Helpers.definitions(metadata, :encoder)) == 1
 
-    metadata = fixture_metadata(["named"], "Fixture")
+    for name <- ~w(new encode decode mux demux auto build_input build_output) do
+      metadata = fixture_metadata([name], "Fixture")
 
-    assert_raise ArgumentError, "helper name conflicts with an existing function: named", fn ->
-      Helpers.definitions(metadata, :encoder)
+      assert_raise ArgumentError,
+                   "helper name conflicts with an existing function: #{name}",
+                   fn ->
+                     Helpers.definitions(metadata, :encoder)
+                   end
     end
   end
 
@@ -148,7 +158,7 @@ defmodule FFix.HelpersTest do
     quoted =
       quote do
         require FFix.Helpers
-        def named(source, name, options), do: {source, name, options}
+        def encode(source, name, options), do: {source, name, options}
         FFix.Helpers.define(:encoder)
       end
 

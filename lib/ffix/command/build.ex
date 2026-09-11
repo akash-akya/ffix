@@ -9,8 +9,6 @@ defmodule FFix.Command.Build do
   alias FFix.Graph
   alias FFix.Stream
 
-  @role_keys [:video, :audio]
-  @removed_role_keys [:subtitle, :subtitles, :data, :attachment]
   @command_keys [:global, :inputs, :graph, :outputs]
   @callback_command_keys [:global]
 
@@ -60,19 +58,6 @@ defmodule FFix.Command.Build do
       when is_function(graph_fun, 1) and is_function(outputs_fun) and is_list(options) do
     validate_callback_command_options!(options)
     build_command(Keyword.get(options, :global, []), inputs, graph_fun, outputs_fun)
-  end
-
-  @spec output(Output.target(), keyword()) :: Output.t()
-  def output(target, options) when is_list(options) do
-    if Keyword.keyword?(options) do
-      output_from_options!(target, options)
-    else
-      raise ArgumentError, "output/2 expects keyword options with :video, :audio, or :sources"
-    end
-  end
-
-  def output(_target, _source) do
-    raise ArgumentError, "output/2 expects keyword options with :video, :audio, or :sources"
   end
 
   defp validate_command_keys!(options) do
@@ -360,43 +345,5 @@ defmodule FFix.Command.Build do
   defp normalize_output_result!(other) do
     raise ArgumentError,
           "outputs callback must return an output or list of outputs, got: #{inspect(other)}"
-  end
-
-  defp output_from_options!(target, options) do
-    removed_roles = Keyword.keys(options) |> Enum.filter(&(&1 in @removed_role_keys))
-
-    if removed_roles != [] do
-      raise ArgumentError,
-            "unsupported output media roles: #{inspect(removed_roles)}; use :video, :audio, or :sources"
-    end
-
-    role_options = Keyword.take(options, @role_keys)
-    sources = Keyword.get(options, :sources)
-
-    if sources != nil and role_options != [] do
-      raise ArgumentError, "output/2 accepts either media roles or :sources, not both"
-    end
-
-    sources =
-      cond do
-        sources != nil ->
-          sources
-
-        role_options != [] ->
-          @role_keys
-          |> Enum.flat_map(fn key ->
-            case Keyword.get(role_options, key) do
-              nil -> []
-              values when is_list(values) -> values
-              value -> [value]
-            end
-          end)
-
-        true ->
-          raise ArgumentError, "output/2 expects at least one media role or :sources"
-      end
-
-    command_options = Keyword.drop(options, @role_keys ++ [:sources])
-    Command.output(target, sources, command_options)
   end
 end

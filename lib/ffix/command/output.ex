@@ -14,15 +14,15 @@ defmodule FFix.Command.Output do
   Maps, encoding configuration, muxer configuration, and raw options are rendered
   before the target. Output-stream indexes start at zero for each output.
 
-  `FFix.Command.output/3` wraps bare sources in unconfigured mappings and also
-  accepts mapping values directly. The public `FFix.output/2` helper still accepts
-  `video:`, `audio:`, or an explicitly ordered `sources:` list.
+  `FFix.output/3` and `FFix.Command.output/3` take sources first, followed by a
+  target and optional CLI options. Both wrap bare sources in unconfigured
+  mappings and accept configured mappings directly.
 
   ## Named Mappings And Deferred Options
 
-  `sources: [main: video_mapping, sound: audio_mapping]` binds output-local names
-  without changing track order. Unnamed mappings remain supported, including
-  mixed named/unnamed lists. Names are atoms, unique within each output; they are
+  `[main: video_mapping, sound: audio_mapping]` as the sources argument binds
+  output-local names without changing track order. Unnamed mappings remain
+  supported, including mixed named/unnamed lists. Names are atoms, unique within each output; they are
   not graph export labels and are never inferred from Elixir variable names.
 
   Encoder, muxer, and raw output option values can be one-argument callbacks.
@@ -32,8 +32,8 @@ defmodule FFix.Command.Output do
 
   `index` counts all output tracks. `specifier` counts within the media type.
   Unnamed tracks participate in both counts. Both are calculated from the final
-  mapping order and restart for each output. Use `sources:` for explicit ordering;
-  the `video:`/`audio:` roles put video first.
+  mapping order and restart for each output. The source collection's order is
+  preserved, regardless of media type.
 
   Callbacks run once per supplied option per serialization, after graph and
   mapping validation, not during construction or `FFix.Command.validate!/1`.

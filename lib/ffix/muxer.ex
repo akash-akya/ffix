@@ -2,12 +2,11 @@ defmodule FFix.Muxer do
   @moduledoc """
   Format-specific output shortcuts and low-level muxer configuration.
 
-  Named helpers return `FFix.Command.Output` declarations. Use `video:`, `audio:`,
-  or ordered `sources:` bindings as in `FFix.output/2`. Other top-level options
-  configure the muxer. Put raw file-level CLI controls in `output_options:`.
+  Named helpers return `FFix.Command.Output` declarations. Pass sources first,
+  then the target and optional muxer AVOptions. Put raw file-level CLI controls
+  in `output_options:`.
 
-      FFix.Muxer.mp4("out.mp4",
-        video: FFix.Encoder.libx264(video, crf: 18),
+      FFix.Muxer.mp4([FFix.Encoder.libx264(video, crf: 18)], "out.mp4",
         movflags: [:faststart],
         output_options: [t: 10]
       )
@@ -21,11 +20,11 @@ defmodule FFix.Muxer do
   values; flag lists are normalized. `raw: [{"new_option", "value"}]` skips
   metadata checks for particular options, not command-structure validation.
 
-  `named/3` handles dynamic formats without a metadata schema. `new/2` builds a
+  `mux/4` handles dynamic formats without a metadata schema. `new/2` builds a
   standalone muxer configuration; a nil name leaves format selection to FFmpeg.
 
-  Name mappings with `sources: [main: mapping, sound: audio_mapping]`. Option
-  values may be callbacks such as `fn streams -> streams.main.specifier end`.
+  Name mappings with `[main: mapping, sound: audio_mapping]` as the sources argument.
+  Option values may be callbacks such as `fn streams -> streams.main.specifier end`.
   They receive final output-local indexes during serialization, with no special
   treatment of any FFmpeg option name. See `FFix.Command.Output` for the contract.
   """
@@ -44,15 +43,17 @@ defmodule FFix.Muxer do
   end
 
   @doc "Builds an output for a dynamic muxer name; extra CLI controls go in output_options."
-  @spec named(Output.target(), String.t(), list()) :: Output.t()
-  def named(target, name, options), do: build_output(target, name, options, nil)
+  @spec mux(Command.binding() | [Command.binding()], String.t(), Output.target(), list()) ::
+          Output.t()
+  def mux(sources, name, target, options \\ []),
+    do: build_output(sources, name, target, options, nil)
 
-  defp build_output(target, name, options, schema) do
-    {bindings, options} = Options.split!(options, [:video, :audio, :sources, :output_options])
-    output_options = Keyword.get(bindings, :output_options, [])
+  defp build_output(sources, name, target, options, schema) do
+    {controls, options} = Options.split!(options, [:output_options])
+    output_options = Keyword.get(controls, :output_options, [])
     {_special, output_options} = Options.split!(output_options, [])
     muxer_options = Options.normalize!(options, schema, "#{name} muxer")
-    output = FFix.output(target, Keyword.drop(bindings, [:output_options]))
+    output = Command.output(sources, target)
     %{output | muxer: new(name, muxer_options), options: output_options}
   end
 
