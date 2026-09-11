@@ -39,7 +39,7 @@ defmodule FFix.Graph.InvariantsTest do
       producer = Enum.find(Graph.nodes(graph), &(&1.name == "mixed_source"))
       assert producer.outputs == 3
       assert producer.output_media == [:video, :audio, :video]
-      assert graph[:last].ref.output == 2
+      assert hd(graph.exports).ref.output == 2
       assert length(graph.terminals) == 2
       text = FFix.to_filtergraph(graph)
       parsed = Graph.nodes(graph)
@@ -93,15 +93,15 @@ defmodule FFix.Graph.InvariantsTest do
     video = Graph.input(0, :video)
     small = FFix.graph(output: Filter.scale(video, w: 320, h: -2))
     large = FFix.graph(output: Filter.scale(video, w: 640, h: -2))
-    assert small[0].ref == large[0].ref
-    refute small[0] == large[0]
+    assert hd(small.exports).ref == hd(large.exports).ref
+    refute hd(small.exports) == hd(large.exports)
     refute small.id == large.id
 
     command =
       Command.new(
         inputs: [FFix.input("input.mp4")],
         graph: large,
-        outputs: [FFix.output(small[0], "out.mp4")]
+        outputs: [FFix.output(hd(small.exports), "out.mp4")]
       )
 
     assert_raise ArgumentError, ~r/not exported by the command graph/, fn ->
@@ -126,7 +126,7 @@ defmodule FFix.Graph.InvariantsTest do
 
   test "inconsistent plan definitions cannot depend on traversal order" do
     original = Filter.null(Graph.input(0, :video))
-    changed = FFix.shape(original, [:unknown])
+    changed = %{original | plan: %{original.plan | args: [vendor: "changed"]}}
 
     for outputs <- [[original, changed], [changed, original]] do
       assert_raise ArgumentError, ~r/conflicting definitions/, fn ->
@@ -134,23 +134,19 @@ defmodule FFix.Graph.InvariantsTest do
       end
     end
 
-    assert_raise ArgumentError, ~r/complete ordered result/, fn ->
-      FFix.shape(Graph.input(0, :video), [:video, :audio])
-    end
-
-    [_first, second] = Filter.split(Graph.input(0, :video))
-
-    assert_raise ArgumentError, ~r/complete ordered result/, fn ->
-      FFix.shape(second, [:video])
-    end
+    refute function_exported?(FFix, :shape, 2)
   end
 
   test "unresolved output counts cannot be guessed from encountered labels or references" do
-    unresolved = Filter.extractplanes(Graph.input(0, :video), planes: "y+u")
-
-    assert_raise ArgumentError, ~r/unresolved filter output shape/, fn ->
-      FFix.graph(output: unresolved)
+    assert_raise ArgumentError, ~r/explicit.*output|Filter.filter/, fn ->
+      Filter.extractplanes(Graph.input(0, :video), planes: "y+u")
     end
+
+    [luma, chroma] =
+      Filter.filter(Graph.input(0, :video), "extractplanes", [:video, :video], planes: "y+u")
+
+    assert FFix.to_filtergraph(FFix.graph(outputs: [luma, chroma])) =~
+             "extractplanes=planes=y+u[out0][out1]"
 
     assert_raise ArgumentError, ~r/unresolved filter output shape/, fn ->
       Graph.parse!("[0:v]extractplanes=planes=y+u[y][u]")
@@ -201,7 +197,7 @@ defmodule FFix.Graph.InvariantsTest do
 
   test "invalid ordering and pad addresses fail before rendering" do
     graph = FFix.graph(output: Graph.input(0, :video) |> Filter.hflip())
-    export = graph[0]
+    export = hd(graph.exports)
 
     for bad <- [
           %{graph | order: Enum.reverse(graph.order)},

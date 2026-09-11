@@ -1,28 +1,21 @@
 defmodule FFix.Graph.Export do
   @moduledoc """
-  Opaque handle for one stream exported by a graph.
+  Canonical exported-pad handle inside materialized graph data.
 
-  Output callbacks receive graph exports in the first argument:
+  The `graph.exports` field contains these handles for low-level `FFix.Command.new/1`
+  construction with an explicit graph. Graph identity prevents using a foreign
+  handle merely because its local pad address happens to match.
 
-      FFix.command(
-        "input.mp4",
-        fn src -> src[:video] |> FFix.Filter.scale(w: 1280, h: -1) end,
-        fn video ->
-          FFix.output(video, "out.mp4", "c:v": :libx264)
-        end
-      )
-
-  You normally pass exports to `FFix.output/2`; constructing this struct directly
-  is not part of the public API.
+  For ordinary composition, `FFix.Graph.exports/1` and graph Access return
+  filterable `FFix.Graph.StreamRef` values instead.
   """
 
   @type name :: atom() | String.t()
-
   @opaque t :: %__MODULE__{
             graph_id: reference(),
             name: name() | nil,
             ref: term(),
-            media: :video | :audio | :unknown
+            media: FFix.Graph.StreamRef.media()
           }
 
   defstruct [:graph_id, :name, :ref, media: :unknown]

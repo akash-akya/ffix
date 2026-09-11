@@ -6,18 +6,26 @@ defmodule FFix.CommandConfigurationTest do
   alias FFix.{Decoder, Encoder, Filter, Muxer}
 
   test "maps one video twice with independent encoders after copied audio" do
-    input = Command.input("source.mkv")
+    input = FFix.input("source.mkv")
 
     output = %Output{
       target: "qualities.mkv",
       mappings: [
-        %Mapping{source: input[audio: 0], encoding: :copy},
+        %Mapping{source: FFix.audio(input, 0), encoding: :copy},
         %Mapping{
-          source: input[video: 0],
+          source:
+            FFix.video(
+              input,
+              0
+            ),
           encoding: %Encoder{name: "libx264", options: [{"crf", 18}]}
         },
         %Mapping{
-          source: input[video: 0],
+          source:
+            FFix.video(
+              input,
+              0
+            ),
           encoding: %Encoder{name: "libx264", options: [{"crf", 28}]}
         }
       ],
@@ -55,25 +63,32 @@ defmodule FFix.CommandConfigurationTest do
            ]
   end
 
-  test "decoder updates preserve references and stay with reordered input declarations" do
-    first = Command.input("same.mkv", ss: 1)
-    first_video = first[video: 0]
-    second = Command.input("same.mkv")
+  test "configured decoder references stay with reordered input declarations" do
+    first = FFix.input("same.mkv", ss: 1)
+    second = FFix.input("same.mkv")
 
     first = %{
       first
       | decoders: %{{:video, 0} => %Decoder{name: "h264", options: [{"threads", 2}]}}
     }
 
-    second = %{
-      second
-      | decoders: %{{:video, 0} => %Decoder{options: [{"skip_frame", "nokey"}]}}
-    }
+    second = %{second | decoders: %{{:video, 0} => %Decoder{options: [{"skip_frame", "nokey"}]}}}
 
     command =
       Command.new(
         inputs: [second, first],
-        outputs: [Command.output([first_video, second[video: 0]], "out.mkv")]
+        outputs: [
+          FFix.output(
+            [
+              FFix.video(first),
+              FFix.video(
+                second,
+                0
+              )
+            ],
+            "out.mkv"
+          )
+        ]
       )
 
     assert Command.to_argv(command) == [
@@ -99,7 +114,7 @@ defmodule FFix.CommandConfigurationTest do
   end
 
   test "decoder bindings serialize deterministically with local media indexes" do
-    input = Command.input("recording.mkv")
+    input = FFix.input("recording.mkv")
 
     input = %{
       input
@@ -112,7 +127,15 @@ defmodule FFix.CommandConfigurationTest do
 
     command = %Command{
       inputs: [input],
-      outputs: [Command.output(input[:input], "out.mkv")]
+      outputs: [
+        FFix.output(
+          FFix.select(
+            input,
+            :all
+          ),
+          "out.mkv"
+        )
+      ]
     }
 
     assert Command.to_argv(command) == [
@@ -136,14 +159,18 @@ defmodule FFix.CommandConfigurationTest do
   end
 
   test "automatic selection emits only supplied AVOptions and keeps booleans valued" do
-    input = Command.input("source.mkv")
+    input = FFix.input("source.mkv")
     input = %{input | decoders: %{{:video, 0} => %Decoder{options: [threads: 2]}}}
 
     output = %Output{
       target: "out.mp4",
       mappings: [
         %Mapping{
-          source: input[video: 0],
+          source:
+            FFix.video(
+              input,
+              0
+            ),
           encoding: %Encoder{
             options: [
               preset: :slow,
@@ -156,10 +183,10 @@ defmodule FFix.CommandConfigurationTest do
         }
       ],
       muxer: %Muxer{options: [empty_hdlr_name: true, movflags: "faststart+use_metadata_tags"]},
-      options: [shortest: true]
+      options: [shortest: :flag]
     }
 
-    command = %Command{global_options: [y: true], inputs: [input], outputs: [output]}
+    command = %Command{global_options: [y: :flag], inputs: [input], outputs: [output]}
 
     assert Command.to_argv(command) == [
              "ffmpeg",
@@ -190,12 +217,12 @@ defmodule FFix.CommandConfigurationTest do
   end
 
   test "empty component configurations do not emit invented defaults" do
-    input = Command.input("source.mkv")
+    input = FFix.input("source.mkv")
     input = %{input | decoders: %{{:video, 0} => %Decoder{}}}
 
     output = %Output{
       target: "out.mp4",
-      mappings: [%Mapping{source: input[video: 0], encoding: %Encoder{}}],
+      mappings: [%Mapping{source: FFix.video(input, 0), encoding: %Encoder{}}],
       muxer: %Muxer{}
     }
 
@@ -204,12 +231,12 @@ defmodule FFix.CommandConfigurationTest do
   end
 
   test "configuration names are literal values, not live discovery requests" do
-    input = Command.input("source.mkv")
+    input = FFix.input("source.mkv")
 
     output = %Output{
       target: "out.file",
       mappings: [
-        %Mapping{source: input[video: 0], encoding: %Encoder{name: "not_installed;encoder"}}
+        %Mapping{source: FFix.video(input, 0), encoding: %Encoder{name: "not_installed;encoder"}}
       ],
       muxer: %Muxer{name: "not_installed_muxer"}
     }
@@ -231,10 +258,10 @@ defmodule FFix.CommandConfigurationTest do
   end
 
   test "reordering mappings and reusing encoders resets indexes for each output" do
-    input = Command.input("source.mkv")
+    input = FFix.input("source.mkv")
     encoder = %Encoder{name: "libx264", options: [crf: 18]}
-    video = %Mapping{source: input[video: 0], encoding: encoder}
-    audio = %Mapping{source: input[audio: 0], encoding: :copy}
+    video = %Mapping{source: FFix.video(input, 0), encoding: encoder}
+    audio = %Mapping{source: FFix.audio(input, 0), encoding: :copy}
 
     first = %Output{
       target: "first.mp4",
@@ -285,31 +312,23 @@ defmodule FFix.CommandConfigurationTest do
            ]
   end
 
-  test "callbacks retain input configuration and accept configured graph exports" do
-    input = Command.input("source.mkv")
+  test "prebuilt outputs retain input configuration and accept configured graph exports" do
+    input = FFix.input("source.mkv")
     input = %{input | decoders: %{{:video, 0} => %Decoder{name: "h264"}}}
+    graph = FFix.graph(outputs: [video: Filter.scale(FFix.video(input), w: 320, h: -1)])
 
     command =
       FFix.command(
-        [source: input],
-        fn inputs ->
-          %{
-            video: Filter.scale(inputs[:source][video: 0], w: 320, h: -1),
-            audio: inputs[:source][audio: 0]
-          }
-        end,
-        fn exports, inputs ->
-          assert inputs[:source].decoders == input.decoders
-
-          FFix.output(
-            [
-              %Mapping{source: exports.video, encoding: %Encoder{name: "libx264"}},
-              %Mapping{source: exports.audio, encoding: :copy}
-            ],
-            "out.mkv"
-          )
-        end
+        FFix.output(
+          [
+            %Mapping{source: graph[:video], encoding: %Encoder{name: "libx264"}},
+            %Mapping{source: FFix.audio(input), encoding: :copy}
+          ],
+          "out.mkv"
+        )
       )
+
+    assert hd(command.inputs).decoders == input.decoders
 
     assert Command.to_argv(command) == [
              "ffmpeg",
@@ -318,9 +337,9 @@ defmodule FFix.CommandConfigurationTest do
              "-i",
              "source.mkv",
              "-filter_complex",
-             "[0:v:0]scale=w=320:h=-1[video];",
+             "[0:v:0]scale=w=320:h=-1[out0];",
              "-map",
-             "[video]",
+             "[out0]",
              "-map",
              "0:a:0",
              "-c:0",
@@ -332,8 +351,8 @@ defmodule FFix.CommandConfigurationTest do
   end
 
   test "unconfigured broad mappings retain raw codec options with a structured muxer" do
-    input = Command.input("source.mkv")
-    output = Command.output(input[:input], "out.mkv", c: :copy)
+    input = FFix.input("source.mkv")
+    output = FFix.output(FFix.select(input, :all), "out.mkv", c: :copy)
     output = %{output | muxer: %Muxer{name: "matroska"}}
     command = %Command{inputs: [input], outputs: [output]}
 
@@ -352,14 +371,14 @@ defmodule FFix.CommandConfigurationTest do
   end
 
   test "configured outputs reject broad or raw selectors even in unconfigured mappings" do
-    input = Command.input("source.mkv")
+    input = FFix.input("source.mkv")
 
-    for selector <- [:input, :video, :audio, {:raw, "a:0?"}, {:raw, "v:0"}] do
+    for selector <- [:all, video: :all, audio: :all, raw: "a:0?", raw: "v:0"] do
       output = %Output{
         target: "out.mkv",
         mappings: [
-          %Mapping{source: input[video: 0], encoding: %Encoder{name: "libx264"}},
-          %Mapping{source: input[selector]}
+          %Mapping{source: FFix.video(input, 0), encoding: %Encoder{name: "libx264"}},
+          %Mapping{source: FFix.select(input, selector)}
         ]
       }
 
@@ -372,14 +391,19 @@ defmodule FFix.CommandConfigurationTest do
   end
 
   test "a graph export of a broad input is not mistaken for one filtered stream" do
-    input = Command.input("source.mkv")
-    graph = FFix.graph(outputs: [audio: input[:audio]])
-    mapping = %Mapping{source: graph[:audio], encoding: :copy}
+    input = FFix.input("source.mkv")
+    graph = FFix.graph(outputs: [audio: FFix.select(input, {:audio, :all})])
+    mapping = %Mapping{source: hd(graph.exports), encoding: :copy}
 
     command = %Command{
       inputs: [input],
       graph: graph,
-      outputs: [Command.output(mapping, "out.mka")]
+      outputs: [
+        FFix.output(
+          mapping,
+          "out.mka"
+        )
+      ]
     }
 
     assert_raise ArgumentError, ~r/every output mapping to select one stream/, fn ->
@@ -387,15 +411,20 @@ defmodule FFix.CommandConfigurationTest do
     end
   end
 
-  test "copy rejects actual filter outputs including export shorthands" do
-    input = Command.input("source.mkv")
-    graph = FFix.graph(outputs: [video: Filter.scale(input[video: 0], w: 320, h: -1)])
+  test "copy rejects canonical filter exports" do
+    input = FFix.input("source.mkv")
+    graph = FFix.graph(outputs: [video: Filter.scale(FFix.video(input, 0), w: 320, h: -1)])
 
-    for source <- [graph[:video], :video, 0] do
+    for source <- graph.exports do
       command = %Command{
         inputs: [input],
         graph: graph,
-        outputs: [Command.output(%Mapping{source: source, encoding: :copy}, "out.mkv")]
+        outputs: [
+          FFix.output(
+            %Mapping{source: source, encoding: :copy},
+            "out.mkv"
+          )
+        ]
       }
 
       assert_raise ArgumentError, "cannot copy a filtered source; use an encoder", fn ->
@@ -405,16 +434,13 @@ defmodule FFix.CommandConfigurationTest do
   end
 
   test "structured decoding requires indexed selectors and decoder values" do
-    input = Command.input("source.mkv")
-    output = Command.output(input[video: 0], "out.mkv")
+    input = FFix.input("source.mkv")
+    output = FFix.output(FFix.video(input, 0), "out.mkv")
 
-    for selector <- [:video, :input, {:raw, "v:0"}, {:audio, -1}, {:video, 1.5}] do
+    for selector <- [:video, :input, raw: "v:0", audio: -1, video: 1.5] do
       configured = %{input | decoders: %{selector => %Decoder{name: "h264"}}}
       command = %Command{inputs: [configured], outputs: [output]}
-
-      assert_raise ArgumentError, ~r/decoder selector must be/, fn ->
-        Command.to_argv(command)
-      end
+      assert_raise ArgumentError, ~r/decoder selector must be/, fn -> Command.to_argv(command) end
     end
 
     configured = %{input | decoders: %{{:video, 0} => %Encoder{name: "libx264"}}}
@@ -426,12 +452,12 @@ defmodule FFix.CommandConfigurationTest do
   end
 
   test "raw codec selections and matching AVOptions cannot override structured encoding" do
-    input = Command.input("source.mkv")
+    input = FFix.input("source.mkv")
     encoder = %Encoder{name: "libx264", options: [crf: 18]}
-    mapping = %Mapping{source: input[video: 0], encoding: encoder}
+    mapping = %Mapping{source: FFix.video(input, 0), encoding: encoder}
 
     for option <- [{"c:v", "copy"}, {:vcodec, "copy"}, {"codec:0", "copy"}, {"crf:0", 28}] do
-      output = Command.output(mapping, "out.mkv", [option])
+      output = FFix.output(mapping, "out.mkv", [option])
       command = %Command{inputs: [input], outputs: [output]}
 
       assert_raise ArgumentError, ~r/cannot be combined with structured encoding/, fn ->
@@ -441,12 +467,12 @@ defmodule FFix.CommandConfigurationTest do
   end
 
   test "raw bitrate aliases cannot override structured encoding" do
-    input = Command.input("source.mkv")
+    input = FFix.input("source.mkv")
     encoder = %Encoder{name: "aac", options: [b: "128k"]}
-    mapping = %Mapping{source: input[audio: 0], encoding: encoder}
+    mapping = %Mapping{source: FFix.audio(input, 0), encoding: encoder}
 
     for name <- ["ab", "vb"] do
-      output = Command.output(mapping, "out.mkv", [{name, "64k"}])
+      output = FFix.output(mapping, "out.mkv", [{name, "64k"}])
       command = %Command{inputs: [input], outputs: [output]}
 
       assert_raise ArgumentError, ~r/cannot be combined with structured encoding/, fn ->
@@ -457,9 +483,9 @@ defmodule FFix.CommandConfigurationTest do
 
   test "raw input codec options cannot override structured decoding" do
     for option <- [{"c:v", "hevc"}, {"threads:v:0", 8}] do
-      input = Command.input("source.mkv", [option])
+      input = FFix.input("source.mkv", [option])
       input = %{input | decoders: %{{:video, 0} => %Decoder{options: [threads: 2]}}}
-      output = Command.output(input[video: 0], "out.mkv")
+      output = FFix.output(FFix.video(input, 0), "out.mkv")
       command = %Command{inputs: [input], outputs: [output]}
 
       assert_raise ArgumentError, ~r/cannot be combined with structured decoding/, fn ->
@@ -469,12 +495,12 @@ defmodule FFix.CommandConfigurationTest do
   end
 
   test "raw format selections and matching options cannot override a structured muxer" do
-    input = Command.input("source.mkv")
+    input = FFix.input("source.mkv")
 
-    for option <- [{:f, :matroska}, {:movflags, "frag_keyframe"}] do
+    for option <- [f: :matroska, movflags: "frag_keyframe"] do
       output = %Output{
         target: "out.mp4",
-        mappings: [%Mapping{source: input[video: 0]}],
+        mappings: [%Mapping{source: FFix.video(input, 0)}],
         muxer: %Muxer{name: "mp4", options: [movflags: "faststart"]},
         options: [option]
       }
@@ -488,14 +514,11 @@ defmodule FFix.CommandConfigurationTest do
   end
 
   test "raw mapping changes cannot invalidate generated output-stream indexes" do
-    input = Command.input("source.mkv")
-    mapping = %Mapping{source: input[video: 0], encoding: :copy}
+    input = FFix.input("source.mkv")
+    mapping = %Mapping{source: FFix.video(input, 0), encoding: :copy}
 
-    for option <- [{:map, "0:a"}, {:vn, true}, {:an, true}, {:attach, "cover.jpg"}] do
-      command = %Command{
-        inputs: [input],
-        outputs: [Command.output(mapping, "out.mkv", [option])]
-      }
+    for option <- [map: "0:a", vn: :flag, an: :flag, attach: "cover.jpg"] do
+      command = %Command{inputs: [input], outputs: [FFix.output(mapping, "out.mkv", [option])]}
 
       assert_raise ArgumentError, ~r/cannot be combined with structured encoding/, fn ->
         Command.to_argv(command)
@@ -504,8 +527,8 @@ defmodule FFix.CommandConfigurationTest do
   end
 
   test "raw extra inputs and filtergraphs cannot shift configured mapping indexes" do
-    input = Command.input("source.mkv")
-    output = Command.output(%Mapping{source: input[video: 0], encoding: :copy}, "out.mkv")
+    input = FFix.input("source.mkv")
+    output = FFix.output(%Mapping{source: FFix.video(input, 0), encoding: :copy}, "out.mkv")
 
     for options <- [[i: "other.mkv"], [filter_complex: "color"]] do
       global_command = %Command{global_options: options, inputs: [input], outputs: [output]}
@@ -520,32 +543,31 @@ defmodule FFix.CommandConfigurationTest do
   end
 
   test "component options reject pre-scoped keys, CLI controls, and ambiguous values" do
-    input = Command.input("source.mkv")
+    input = FFix.input("source.mkv")
 
     for options <- [
           [{"crf:v:0", 18}],
           [{"-crf", 18}],
           [{"", 18}],
-          [{:c, "copy"}],
-          [{:map, "0:a"}],
-          [{:crf, nil}],
-          [{:flags, [:fast]}],
-          [{:crf, %{value: 18}}],
-          [12],
+          [c: "copy"],
+          [map: "0:a"],
+          [crf: nil],
+          [flags: [:fast]],
+          [crf: %{value: 18}],
+          ~c"\f",
           %{crf: 18}
         ] do
       encoder = %Encoder{name: "libx264", options: options}
-      output = Command.output(%Mapping{source: input[video: 0], encoding: encoder}, "out.mkv")
+      output = FFix.output(%Mapping{source: FFix.video(input, 0), encoding: encoder}, "out.mkv")
       command = %Command{inputs: [input], outputs: [output]}
-
       assert_raise ArgumentError, fn -> Command.to_argv(command) end
     end
   end
 
   test "copy cannot be disguised as an encoder" do
-    input = Command.input("source.mkv")
-    mapping = %Mapping{source: input[video: 0], encoding: %Encoder{name: "copy"}}
-    command = %Command{inputs: [input], outputs: [Command.output(mapping, "out.mkv")]}
+    input = FFix.input("source.mkv")
+    mapping = %Mapping{source: FFix.video(input, 0), encoding: %Encoder{name: "copy"}}
+    command = %Command{inputs: [input], outputs: [FFix.output(mapping, "out.mkv")]}
 
     assert_raise ArgumentError, "copy is a mapping mode; use encoding: :copy", fn ->
       Command.to_argv(command)

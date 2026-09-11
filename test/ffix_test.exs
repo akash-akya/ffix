@@ -8,7 +8,7 @@ defmodule FFTest do
     video =
       FFix.Graph.input(0, :video)
       |> Filter.scale(w: 1280, h: -1)
-      |> Filter.drawtext(text: "Hello", x: FFix.expr("w-tw-20"), y: 20)
+      |> Filter.drawtext(text: "Hello", x: "w-tw-20", y: 20)
 
     graph = FFix.graph(output: video)
 

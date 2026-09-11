@@ -36,11 +36,10 @@ defmodule FFix.Filter.BuilderTest do
     assert audio.media == :audio
   end
 
-  test "shape/2 reshapes ambiguous filter outputs" do
+  test "ebur128 infers video then audio output media" do
     outputs =
       FFix.Graph.input(0, :audio)
       |> Filter.ebur128(video: true)
-      |> FFix.shape([:video, :audio])
 
     assert [video, audio] = outputs
     assert audio.media == :audio
@@ -112,7 +111,7 @@ defmodule FFix.Filter.BuilderTest do
 
     graph =
       video
-      |> Filter.drawtext(text: "hi", x: 0, y: 0, enable: FFix.expr("between(t,10,20)"))
+      |> Filter.drawtext(text: "hi", x: 0, y: 0, enable: "between(t,10,20)")
       |> then(&FFix.graph(output: &1))
 
     assert FFix.to_filtergraph(graph) ==

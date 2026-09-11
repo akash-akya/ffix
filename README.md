@@ -28,23 +28,22 @@ the complete 551-filter catalog of the FFmpeg 7.1.5 baseline:
 The generated docs include filter descriptions and known options. `FFix.Filter`
 is usually the best place to look up option names while building a pipeline.
 
-Examples below assume `use FFix` inside your module. If you prefer explicit
-names, use calls such as `FFix.command/3`, `FFix.output/2`, and
-`FFix.Filter.crop/2`.
+Examples use qualified calls and aliases:
+
+```elixir
+alias FFix.{Decoder, Demuxer, Encoder, Filter, Graph, Muxer}
+```
+
+Declare inputs, select streams, apply filters, and declare outputs. Then pass
+those outputs to `FFix.command/2`; it collects their input dependencies.
 
 ## Crop A Video
 
 ```elixir
-cmd =
-  command(
-    "input.mp4",
-    fn src ->
-      src[:video] |> crop(w: 720, h: 720)
-    end,
-    fn cropped, src ->
-      output([cropped, src[:audio]], "square.mp4")
-    end
-  )
+source = FFix.input("input.mp4")
+cropped = source |> FFix.video() |> Filter.crop(w: 720, h: 720)
+output = FFix.output([cropped, FFix.audio(source)], "square.mp4")
+cmd = FFix.command(output)
 
 FFix.to_argv(cmd)
 ```
@@ -52,16 +51,10 @@ FFix.to_argv(cmd)
 ## Pipe An Image
 
 ```elixir
-cmd =
-  command(
-    input(:stdin, f: :image2pipe),
-    fn image ->
-      image[:video] |> scale(w: 640, h: -1)
-    end,
-    fn scaled ->
-      output([scaled], :stdout, f: :image2pipe, vcodec: :png)
-    end
-  )
+image = FFix.input(:stdin, f: :image2pipe)
+scaled = image |> FFix.video() |> Filter.scale(w: 640, h: -1)
+output = FFix.output(scaled, :stdout, f: :image2pipe, vcodec: :png)
+cmd = FFix.command(output)
 
 result =
   FFix.run!(cmd,
@@ -75,23 +68,18 @@ File.write!("small.png", result.stdout)
 ## Vertical Short
 
 ```elixir
-command(
-  "input.mp4",
-  fn src ->
-    src[:video]
-    |> scale(w: 1080, h: 1920, force_original_aspect_ratio: :increase)
-    |> crop(w: 1080, h: 1920)
-    |> fps(fps: 30)
-    |> drawtext(
-      text: "Launch Day",
-      x: expr("(w-tw)/2"),
-      y: expr("(h-th)/2")
-    )
-  end,
-  fn short, src ->
-    output([short, src[:audio]], "short.mp4")
-  end
-)
+source = FFix.input("input.mp4")
+
+short =
+  source
+  |> FFix.video()
+  |> Filter.scale(w: 1080, h: 1920, force_original_aspect_ratio: :increase)
+  |> Filter.crop(w: 1080, h: 1920)
+  |> Filter.fps(fps: 30)
+  |> Filter.drawtext(text: "Launch Day", x: "(w-tw)/2", y: "(h-th)/2")
+
+output = FFix.output([short, FFix.audio(source)], "short.mp4")
+FFix.command(output)
 ```
 
 ## Generic Filters
@@ -112,27 +100,29 @@ Generic calls never consult metadata, even for known names. Output media declare
 pad count and order; it does not emit FFmpeg options or infer their defaults.
 Use `[]` inputs for source filters and `[]` output media for sinks. One output
 returns a reference, multiple outputs return a list, and sinks return a terminal.
-Values may be scalars or `FFix.expr/1` expressions; use strings for compound syntax
-and repeated `:pos` pairs for positional arguments. Escaping happens on serialization.
+Use plain strings for expressions and compound syntax, and repeated `:pos` pairs
+for positional arguments. Escaping happens at the serialization boundary.
+Named helpers raise when their output shape cannot be resolved; use the generic
+filter with explicit ordered media in that case. For example,
+`Filter.ebur128(audio, video: true)` returns `[video, audio]`, while
+`Filter.ebur128(audio, video: false)` returns one audio reference.
 `Graph.parse!/1` still needs known-filter metadata; text does not retain declared
 output media for unknown filters.
 
 Graph values live under `FFix.Graph`: `StreamRef` identifies an input selection or
-filter output, `Terminal` ends a branch, and `Expr` holds an expression. The helpers
-construct these values for you. Output `Mapping` values remain under `FFix.Command`
-and describe how an output uses a reference, including its encoding.
+filter output, and `Terminal` ends a branch. The helpers construct these values
+for you. Output `Mapping` values remain under `FFix.Command` and describe how an
+output uses a reference, including its encoding.
 
 ## Run Or Inspect
 
 Command-level options are the final argument:
 
 ```elixir
-command(
-  "input.mp4",
-  fn src -> src[:video] |> scale(w: 1280, h: -1) end,
-  fn video, src -> output([video, src[:audio]], "scaled.mp4") end,
-  global: [y: true]
-)
+source = FFix.input("input.mp4")
+video = source |> FFix.video() |> Filter.scale(w: 1280, h: -1)
+output = FFix.output([video, FFix.audio(source)], "scaled.mp4")
+cmd = FFix.command(output, global: [y: :flag])
 ```
 
 ```elixir
@@ -142,7 +132,14 @@ FFix.run(cmd)
 ```
 
 `FFix.to_argv/1` is the canonical boundary. `FFix.to_shell_string/1` is for
-logs and debugging.
+logs and debugging. Raw CLI switches use `:flag`; `true` and `false` emit `1` and `0`,
+not valueless switches. Filter and component booleans keep their usual meaning.
+
+`FFix.run/2` returns `{:ok, result}` or `{:error, error}` for operational failures;
+`FFix.run!/2` raises `FFix.Runner.Error` for those failures. Application callback
+exceptions propagate unchanged. `FFix.stream/2` is lazy: each enumeration starts
+a fresh execution. Live events are separate from bounded retained diagnostics;
+collecting all events yourself can still use unbounded memory.
 
 ## Codec And Format Shortcuts
 
@@ -155,35 +152,36 @@ source =
   Demuxer.mov("input.mp4")
   |> Decoder.h264({:video, 0}, threads: 2)
 
-cmd =
-  FFix.command(source, fn source ->
-    scaled = FFix.Filter.scale(FFix.video(source), w: 1280, h: -2)
+scaled = Filter.scale(FFix.video(source), w: 1280, h: -2)
 
-    Muxer.mp4(
-      [Encoder.libx264(scaled, crf: 18, preset: "slow"), FFix.stream_copy(FFix.audio(source))],
-      "main.mp4",
-      movflags: [:faststart],
-      output_options: [t: 10]
-    )
-  end)
+output =
+  Muxer.mp4(
+    [Encoder.libx264(scaled, crf: 18, preset: "slow"), FFix.stream_copy(FFix.audio(source))],
+    "main.mp4",
+    movflags: [:faststart],
+    output_options: [t: 10]
+  )
+
+cmd = FFix.command(output)
 
 FFix.to_argv(cmd)
 ```
 
 This example assumes H.264 video and copy-compatible audio. Usually you can
-omit explicit demuxer/decoder selection and pass `"input.mp4"` directly.
+omit explicit demuxer/decoder selection and use `FFix.input("input.mp4")`.
 
-`command/2` receives normalized inputs and collects the filter plans attached to
-its returned outputs. It neither runs FFmpeg nor inserts implicit splits. Keep
-`command/3` for separate graph/output callbacks, or `Command.new/1` and
-`FFix.graph/1` for explicit graph settings, terminal sinks, and reusable exports.
-The one-callback form accepts `global: [...]` as a third argument.
+`FFix.command(output_or_outputs, options \\ [])` collects filter plans and infers
+inputs by declaration identity, not filename. It neither runs FFmpeg nor inserts
+implicit splits. Its options are `global:`, an explicit ordered `inputs:` list,
+`terminals:` for sink branches, and `settings:` for graph settings. Use `inputs:`
+when positional graph references, metadata-only inputs, or a required input
+order make inference unsuitable.
 
 | Helper | Returns |
 | --- | --- |
-| `video(input, index \\ 0)`, `audio(input, index \\ 0)` | One input stream reference |
+| `FFix.video(input, index \\ 0)`, `FFix.audio(input, index \\ 0)`, `FFix.subtitle(input, index \\ 0)` | One input stream reference |
 | `Encoder.libx264(stream, options)` | One configured output mapping |
-| `stream_copy(stream)` | One packet-copy mapping, not the `copy` video filter |
+| `FFix.stream_copy(stream)` | One packet-copy mapping, not the `copy` video filter |
 | `Muxer.mp4(sources, target, options)` | An output declaration |
 | `Demuxer.mov(source, options)` | An input declaration |
 | `Decoder.h264(input, selector, options)` | An updated input declaration |
@@ -194,9 +192,7 @@ require an indexed selector. Generic operations are `Encoder.encode/3`,
 `Decoder.decode/4`, `Muxer.mux/4`, and `Demuxer.demux/3`; shortcuts fix only the
 codec or format argument.
 
-`use FFix` imports the selectors, `stream_copy`, and command/input/output helpers
-alongside the existing filters. Encoder, decoder, and format helpers remain
-module-qualified to avoid name collisions.
+Keep component and filter calls qualified with aliases to avoid name collisions.
 
 ### Compose Ordinary Functions
 
@@ -207,7 +203,9 @@ end
 ```
 
 ```elixir
-FFix.command("input.mp4", fn source ->
+source = FFix.input("input.mp4")
+
+output =
   Muxer.matroska(
     [
       FFix.stream_copy(FFix.audio(source)),
@@ -216,23 +214,54 @@ FFix.command("input.mp4", fn source ->
     ],
     "qualities.mkv"
   )
-end)
+
+FFix.command(output)
 ```
 
 The audio becomes output stream 0, and the two independent video encodes become
 streams 1 and 2. Encoder options receive those indexes automatically. Indexes
 restart for each output. Reusing a mapping does not share encoded packets.
 
-Use `video/1`, `audio/1`, or explicit indexed access for configured mappings.
-Broad selectors such as `source[:audio]` can select several streams and retain
+Use `FFix.video/2`, `FFix.audio/2`, or `FFix.subtitle/2` for indexed selections
+(default index 0). `FFix.select/2` accepts `:all`, `{media, :all}`, `{media, index}`,
+`{:index, n}`, and `{:raw, "s?"}`. Media can be `:video`, `:audio`, `:subtitle`,
+`:data`, or `:attachment`. Broad selectors such as
+`FFix.select(source, {:audio, :all})` can select several streams and retain
 that meaning. If an output contains configured encoding, all its mappings must
 select individual streams. Actual filtered outputs cannot use stream copy and
 must be mapped exactly once; use `split` or `asplit` for multiple consumers.
 
-Configure inputs before passing them into a command, for example
-`Decoder.aac(input, {:audio, 0}, threads: 2)`. Updating an input preserves its
-identity, but does not mutate an input already held by an existing command.
-Independent decoding of the same track requires separate input declarations.
+Configure inputs and decoders before selecting streams, for example
+`Decoder.aac(input, {:audio, 0}, threads: 2)`. Selections capture immutable input
+snapshots. Updating an input preserves its identity but cannot update existing
+selections; combining conflicting snapshots raises. Independent decoder or seek
+configurations for the same file require separate input declarations. Within one
+input, use either absolute `{:index, n}` or media-relative `{media, n}` decoder
+selectors, not both: their targets can overlap without media probing.
+
+### Reuse Graph Data
+
+```elixir
+port = Graph.input(:picture, :video)
+template = FFix.graph(outputs: [preview: Filter.scale(port, w: 320, h: -2)])
+source = FFix.input("input.mp4")
+instance = Graph.bind(template, picture: FFix.video(source))
+flipped = Filter.hflip(instance[:preview])
+output = FFix.output(flipped, "preview.mp4")
+FFix.command(output)
+```
+
+Each binding gives the template's filters fresh identities. Graph Access is
+read-only and returns filterable `StreamRef` values; the internal `graph.exports`
+field contains canonical handles for low-level use. Parsed graphs can bind input
+declarations too: `Graph.bind(Graph.parse!("[0:v]hflip[preview]"), %{0 => source})`.
+
+An instance retains every node, output pad, terminal branch, and setting, even
+when you select only one export. Consume all produced outputs or connect unused
+ones to explicit sinks; final serialization rejects unused pads. No split is
+inserted automatically. Direct input selections can be reused, but sharing a
+filtered pad still requires `Filter.split/2` or `Filter.asplit/2`. For sink-only
+instances, pass `terminals: Graph.terminals(instance)` to `FFix.command/2`.
 
 ### Options And Escape Hatches
 
@@ -258,9 +287,9 @@ Decoder.decode(input, "vendor_decoder", {:video, 0}, [{"vendor_option", "value"}
 ```
 
 `Encoder.encode/3` forwards the supplied name without choosing an implementation.
-For `"h264"`, FFmpeg selects the encoder; implementation-specific options depend
-on that choice. `Encoder.libx264/2` fixes the implementation and adds recorded
-option validation.
+`"h264"` is a literal FFmpeg codec request, not an FFix alias for `"libx264"`;
+implementation-specific options depend on FFmpeg's selection. `Encoder.libx264/2`
+fixes the implementation and adds recorded option validation.
 
 `raw:` bypasses metadata checks, not structural safety checks. Duplicated options,
 pre-scoped component keys, and conflicting raw codec/format selections are
@@ -268,13 +297,20 @@ rejected. Use `output_options:` for raw output CLI controls on muxer shortcuts,
 and `input_options:` for raw input controls on demuxer shortcuts. Those options
 are not muxer/demuxer AVOptions.
 
-The generic `input(source, options)` and `output(sources, target, options)` support
-automatic format selection and raw CLI options; options default to `[]`. They
+The generic `FFix.input(source, options)` and
+`FFix.output(sources, target, options)` support automatic format selection and raw
+CLI options; options default to `[]`. They
 also accept independent configurations via `demuxer:`/`decoders:` and `muxer:`
 respectively. The four configuration modules
 provide `new/2` constructors for this lower layer; `name: nil` leaves selection
 to FFmpeg. Outputs store ordered `Mapping` values in `mappings`, not `sources`;
 existing source-taking output helpers wrap bare references automatically.
+`FFix.Command.Input.new/2` and `FFix.Command.Output.new/3` also construct these
+declarations. Low-level `Command.add_input/2` and `Command.add_output/2` append
+existing structs; they do not construct declarations. `Command.new/1` requires
+explicit inputs and a graph with canonical `graph.exports` handles, or direct
+input selections. It does not infer dependencies or collect graph reference
+contexts, and it still checks captured input snapshots.
 
 ### Named Streams In Option Callbacks
 
@@ -283,21 +319,22 @@ callbacks receive a plain map of their **final output positions**, so reordering
 mappings does not leave stale indexes inside strings:
 
 ```elixir
-FFix.command("input.mp4", fn source ->
-  [high, low] = FFix.Filter.split(FFix.video(source), outputs: 2)
+source = FFix.input("input.mp4")
+[high, low] = Filter.split(FFix.video(source), outputs: 2)
 
-  video_720 =
-    high
-    |> FFix.Filter.scale(w: -2, h: 720)
-    |> Encoder.libx264(b: "800k", maxrate: "800k", bufsize: "1600k")
+video_720 =
+  high
+  |> Filter.scale(w: -2, h: 720)
+  |> Encoder.libx264(b: "800k", maxrate: "800k", bufsize: "1600k")
 
-  video_360 =
-    low
-    |> FFix.Filter.scale(w: -2, h: 360)
-    |> Encoder.libx264(b: "400k", maxrate: "400k", bufsize: "800k", g: 12)
+video_360 =
+  low
+  |> Filter.scale(w: -2, h: 360)
+  |> Encoder.libx264(b: "400k", maxrate: "400k", bufsize: "800k", g: 12)
 
-  audio_track = Encoder.aac(FFix.audio(source), b: "64k")
+audio_track = Encoder.aac(FFix.audio(source), b: "64k")
 
+output =
   Muxer.hls(
     [v720: video_720, v360: video_360, aud: audio_track],
     "out/%v.m3u8",
@@ -308,7 +345,8 @@ FFix.command("input.mp4", fn source ->
         "#{streams.aud.specifier},agroup:a,name:audio,default:yes"
     end
   )
-end)
+
+cmd = FFix.command(output)
 ```
 
 Create the output directory before executing this command. The example preserves
@@ -342,11 +380,11 @@ or structurally validating a command. Keep them pure: printing and executing a
 command can each call them. A missing name raises `KeyError`; callback exceptions
 are not hidden. A callback cannot return another callback or change mappings.
 
-An output using callbacks must select one known audio/video stream per mapping,
+An output using callbacks must select one stream with known media per mapping,
 including unnamed ones. Broad/raw selectors and unknown filter output media are
-rejected rather than guessed; use `FFix.shape/2` for dynamic filter shapes when
-needed. This does not probe media files. Input and global options do not receive
-output-stream callbacks.
+rejected rather than guessed; use `Filter.filter/4` with explicit ordered media
+when a named filter's shape cannot be resolved. This does not probe media files.
+Input and global options do not receive output-stream callbacks.
 
 ### Refresh Helper Metadata
 
@@ -397,8 +435,10 @@ for compiling the library or constructing graphs and commands. The recorded
 baseline fixes the helper API independently of the installed executable;
 registration in it does not guarantee local availability or hardware usability.
 
-Set `FFMPEG_BIN=/path/to/ffmpeg` for execution/discovery when the executable is
-not on `PATH`, or pass `--ffmpeg /path/to/ffmpeg` to the refresh task.
+For Command execution, pass `ffmpeg: "/path/to/ffmpeg"`; otherwise the runner
+uses `FFMPEG_BIN`, then `ffmpeg` on `PATH`. Raw argv executes literally, without
+executable substitution or added flags. Discovery also accepts `ffmpeg:` and
+`FFMPEG_BIN`; the refresh task accepts `--ffmpeg /path/to/ffmpeg`.
 
 ## Download FFmpeg For Development
 

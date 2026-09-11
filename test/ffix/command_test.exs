@@ -1,53 +1,48 @@
 defmodule FFix.CommandTest do
   use ExUnit.Case, async: true
 
-  alias FFix.Command
-  alias FFix.Filter
+  alias FFix.{Command, Filter, Graph}
 
   test "graphs support access by named and positional outputs" do
-    video = FFix.Graph.input(0, :video)
-    [master, preview] = Filter.split(video, outputs: 2)
+    [master, preview] = Filter.split(Graph.input(0, :video), outputs: 2)
     graph = FFix.graph(outputs: [master: master, preview: preview])
 
-    assert graph[:master] == FFix.Graph.export!(graph, :master)
+    assert graph[:master] == Graph.export!(graph, :master)
     assert graph[0] == graph[:master]
     assert graph[1] == graph[:preview]
     assert graph[:missing] == nil
     assert graph[2] == nil
   end
 
-  test "builds argv with inline graph output shorthands" do
-    audio = FFix.Graph.input(0, :audio)
+  test "builds argv with named graph outputs and direct audio" do
+    source = FFix.input("input.mp4")
+    picture = FFix.video(source)
 
-    command =
-      FFix.command(
-        inputs: [src: Command.input("input.mp4")],
-        graph:
-          FFix.graph(
-            outputs: [
-              master:
-                FFix.Graph.input(0, :video)
-                |> Filter.scale(w: 1280, h: -1),
-              preview:
-                FFix.Graph.input(0, :video)
-                |> Filter.scale(w: 320, h: -1)
-                |> Filter.fps(fps: 1)
-            ]
-          ),
+    graph =
+      FFix.graph(
         outputs: [
-          Command.output([:master, audio], "master.mp4", vcodec: :libx264, acodec: :aac),
-          Command.output(1, "thumb-%03d.jpg", f: :image2, vsync: 0)
+          master: Filter.scale(picture, w: 1280, h: -1),
+          preview: picture |> Filter.scale(w: 320, h: -1) |> Filter.fps(fps: 1)
         ]
       )
+
+    command =
+      FFix.command([
+        FFix.output([graph[:master], FFix.select(source, {:audio, :all})], "master.mp4",
+          vcodec: :libx264,
+          acodec: :aac
+        ),
+        FFix.output(graph[:preview], "thumb-%03d.jpg", f: :image2, vsync: 0)
+      ])
 
     assert FFix.to_argv(command) == [
              "ffmpeg",
              "-i",
              "input.mp4",
              "-filter_complex",
-             "[0:v]scale=w=1280:h=-1[master];\n[0:v]scale=w=320:h=-1[scale_1_0];\n[scale_1_0]fps=fps=1[preview];",
+             "[0:v:0]scale=w=1280:h=-1[out0];\n[0:v:0]scale=w=320:h=-1[scale_1_0];\n[scale_1_0]fps=fps=1[out2];",
              "-map",
-             "[master]",
+             "[out0]",
              "-map",
              "0:a",
              "-vcodec",
@@ -56,7 +51,7 @@ defmodule FFix.CommandTest do
              "aac",
              "master.mp4",
              "-map",
-             "[preview]",
+             "[out2]",
              "-f",
              "image2",
              "-vsync",
@@ -65,45 +60,23 @@ defmodule FFix.CommandTest do
            ]
   end
 
-  test "rejects graph output shorthands without a command graph" do
-    command = FFix.command(outputs: [Command.output(:preview, "out.mp4")])
-
-    assert_raise ArgumentError, "output source :preview requires a command graph", fn ->
-      FFix.to_argv(command)
+  test "removed graph output shorthands require explicit references" do
+    for shorthand <- [:preview, 0, 1] do
+      assert_raise ArgumentError, fn -> FFix.output(shorthand, "out.mp4") end
     end
   end
 
-  test "rejects missing inline graph output shorthands" do
-    command =
-      FFix.command(
-        inputs: [src: Command.input("input.mp4")],
-        graph: FFix.graph(outputs: [video: FFix.Graph.input(0, :video)]),
-        outputs: [Command.output(:preview, "out.mp4")]
-      )
-
-    assert_raise ArgumentError, "command graph has no output :preview", fn ->
-      FFix.to_argv(command)
-    end
-  end
-
-  test "builds argv with named command inputs" do
-    src = Command.input("input.mp4")
-    logo = Command.input("logo.png")
+  test "builds argv with independently declared inputs" do
+    source = FFix.input("input.mp4")
+    logo = FFix.input("logo.png")
+    picture = Filter.overlay(FFix.video(source), FFix.video(logo), x: 20, y: 20)
 
     command =
       FFix.command(
-        inputs: [src: src, logo: logo],
-        graph:
-          FFix.graph(
-            outputs: [
-              video:
-                src[:video]
-                |> Filter.overlay(logo[:video], x: 20, y: 20)
-            ]
-          ),
-        outputs: [
-          Command.output([:video, src[:audio]], "out.mp4", vcodec: :libx264, acodec: :aac)
-        ]
+        FFix.output([video: picture, audio: FFix.audio(source)], "out.mp4",
+          vcodec: :libx264,
+          acodec: :aac
+        )
       )
 
     assert FFix.to_argv(command) == [
@@ -113,11 +86,11 @@ defmodule FFix.CommandTest do
              "-i",
              "logo.png",
              "-filter_complex",
-             "[0:v][1:v]overlay=x=20:y=20[video];",
+             "[0:v:0][1:v:0]overlay=x=20:y=20[out0];",
              "-map",
-             "[video]",
+             "[out0]",
              "-map",
-             "0:a",
+             "0:a:0",
              "-vcodec",
              "libx264",
              "-acodec",
@@ -126,127 +99,70 @@ defmodule FFix.CommandTest do
            ]
   end
 
-  test "input access supports indexed tracks" do
-    src = Command.input("input.mp4")
+  test "selectors support indexed tracks, broad media, and whole-input maps" do
+    source = FFix.input("input.mp4")
 
-    command =
-      FFix.command(
-        inputs: [src: src],
-        outputs: [Command.output(src[audio: 1], "out.mka", acodec: :copy)]
-      )
+    for {selection, expected} <- [
+          {FFix.audio(source, 1), "0:a:1"},
+          {FFix.video(source), "0:v:0"},
+          {FFix.select(source, {:video, :all}), "0:v"},
+          {FFix.select(source, :all), "0"}
+        ] do
+      command = FFix.command(FFix.output(selection, "out.mkv", c: :copy))
 
-    assert FFix.to_argv(command) == [
-             "ffmpeg",
-             "-i",
-             "input.mp4",
-             "-map",
-             "0:a:1",
-             "-acodec",
-             "copy",
-             "out.mka"
-           ]
-  end
-
-  test "input access accepts command input declarations" do
-    src = Command.input("input.mp4")
-
-    command =
-      FFix.command(
-        inputs: [src: src],
-        outputs: [
-          Command.output(src[audio: 1], "out.mka", acodec: :copy)
-        ]
-      )
-
-    assert FFix.to_argv(command) == [
-             "ffmpeg",
-             "-i",
-             "input.mp4",
-             "-map",
-             "0:a:1",
-             "-acodec",
-             "copy",
-             "out.mka"
-           ]
-  end
-
-  test "supports access on command inputs" do
-    src = Command.input("input.mp4")
-
-    command =
-      FFix.command(
-        inputs: [src: src],
-        outputs: [Command.output(src[:video], "out.mp4", vcodec: :copy)]
-      )
-
-    assert FFix.to_argv(command) == [
-             "ffmpeg",
-             "-i",
-             "input.mp4",
-             "-map",
-             "0:v",
-             "-vcodec",
-             "copy",
-             "out.mp4"
-           ]
-  end
-
-  test "supports whole-input maps" do
-    src = Command.input("input.mp4")
-
-    command =
-      FFix.command(
-        inputs: [src: src],
-        outputs: [Command.output(src[:input], "out.mkv", c: :copy)]
-      )
-
-    assert FFix.to_argv(command) == [
-             "ffmpeg",
-             "-i",
-             "input.mp4",
-             "-map",
-             "0",
-             "-c",
-             "copy",
-             "out.mkv"
-           ]
-  end
-
-  test "rejects duplicate command input names" do
-    assert_raise ArgumentError, "duplicate command input names: [:src]", fn ->
-      FFix.command(
-        inputs: [
-          src: Command.input("a.mp4"),
-          src: Command.input("b.mp4")
-        ],
-        outputs: [Command.output(FFix.Graph.input(0, :video), "out.mp4", vcodec: :copy)]
-      )
-      |> FFix.to_argv()
+      assert FFix.to_argv(command) == [
+               "ffmpeg",
+               "-i",
+               "input.mp4",
+               "-map",
+               expected,
+               "-c",
+               "copy",
+               "out.mkv"
+             ]
     end
+
+    refute function_exported?(FFix.Command.Input, :fetch, 2)
+  end
+
+  test "explicit input ordering uses declarations rather than named input bindings" do
+    source = FFix.input("a.mp4")
+    other = FFix.input("b.mp4")
+    output = FFix.output(FFix.video(source), "out.mp4")
+    assert_raise ArgumentError, fn -> FFix.command(output, inputs: [src: source, src: other]) end
   end
 
   test "rejects input labels" do
-    assert_raise ArgumentError,
-                 "input labels are not supported; name inputs in command inputs instead",
-                 fn ->
-                   Command.input("input.mp4", label: :src)
-                 end
+    assert_raise ArgumentError, ~r/input labels are not supported/, fn ->
+      FFix.input("input.mp4", label: :src)
+    end
   end
 
-  test "command/3 preserves list input shape" do
-    command =
-      FFix.command(
-        ["input.mp4", "music.mp3"],
-        fn [src, _music] ->
-          src[:video] |> Filter.scale(w: 320, h: -1)
-        end,
-        fn scaled, [_src, music] ->
-          FFix.output([scaled, music[:audio]], "out.mp4",
-            vcodec: :libx264,
-            acodec: :aac
-          )
-        end
-      )
+  test "callback command arities and constructor append overloads are removed" do
+    assert Keyword.get_values(FFix.__info__(:functions), :command) == [1, 2]
+    refute Keyword.has_key?(FFix.__info__(:macros), :__using__)
+    refute Keyword.has_key?(Command.__info__(:functions), :input)
+    refute Keyword.has_key?(Command.__info__(:functions), :output)
+    source = FFix.input("input.mp4")
+
+    assert_raise ArgumentError, fn ->
+      FFix.command(source, fn _source -> flunk("must not run") end)
+    end
+
+    assert_raise ArgumentError, fn -> FFix.command(inputs: [source], outputs: []) end
+  end
+
+  test "ordinary functions can compose ordered list and map values" do
+    source = FFix.input("input.mp4")
+    music = FFix.input("music.mp3")
+
+    scale = fn %{source: source} ->
+      %{preview: Filter.scale(FFix.video(source), w: 320, h: -1)}
+    end
+
+    %{preview: preview} = scale.(%{source: source})
+    streams = [preview: preview, music: FFix.audio(music)]
+    command = FFix.command(FFix.output(streams, "out.mp4", vcodec: :libx264, acodec: :aac))
 
     assert FFix.to_argv(command) == [
              "ffmpeg",
@@ -255,11 +171,11 @@ defmodule FFix.CommandTest do
              "-i",
              "music.mp3",
              "-filter_complex",
-             "[0:v]scale=w=320:h=-1[out0];",
+             "[0:v:0]scale=w=320:h=-1[out0];",
              "-map",
              "[out0]",
              "-map",
-             "1:a",
+             "1:a:0",
              "-vcodec",
              "libx264",
              "-acodec",
@@ -268,43 +184,14 @@ defmodule FFix.CommandTest do
            ]
   end
 
-  test "command/3 preserves keyword input shape" do
-    command =
-      FFix.command(
-        [src: "input.mp4"],
-        fn inputs ->
-          inputs[:src][:video]
-        end,
-        fn video, inputs ->
-          FFix.output([video, inputs[:src][:audio]], "out.mp4", vcodec: :copy)
-        end
-      )
+  test "builds argv with global and input options including unused explicit inputs" do
+    source = FFix.input("input.mp4", ss: "00:00:03", stream_loop: -1)
+    logo = FFix.input("logo.png", loop: 1, framerate: 1)
 
-    assert FFix.to_argv(command) == [
-             "ffmpeg",
-             "-i",
-             "input.mp4",
-             "-map",
-             "0:v",
-             "-map",
-             "0:a",
-             "-vcodec",
-             "copy",
-             "out.mp4"
-           ]
-  end
-
-  test "command/4 accepts command options at the end" do
     command =
-      FFix.command(
-        "input.mp4",
-        fn src ->
-          src[:video]
-        end,
-        fn video ->
-          FFix.output([video], "out.mp4", vcodec: :copy)
-        end,
-        global: [y: true, loglevel: :error]
+      FFix.command(FFix.output(FFix.video(source), "out.mp4", vcodec: :copy),
+        inputs: [source, logo],
+        global: [y: :flag, loglevel: :error]
       )
 
     assert FFix.to_argv(command) == [
@@ -312,129 +199,6 @@ defmodule FFix.CommandTest do
              "-y",
              "-loglevel",
              "error",
-             "-i",
-             "input.mp4",
-             "-map",
-             "0:v",
-             "-vcodec",
-             "copy",
-             "out.mp4"
-           ]
-  end
-
-  test "command/4 rejects old command shape keys in options" do
-    error =
-      assert_raise ArgumentError, fn ->
-        FFix.command(
-          "input.mp4",
-          fn src -> src[:video] end,
-          fn video -> FFix.output([video], "out.mp4", vcodec: :copy) end,
-          inputs: [],
-          graph: nil,
-          outputs: []
-        )
-      end
-
-    assert Exception.message(error) ==
-             "command/4 options only support :global; pass inputs, graph, and outputs as positional arguments, got: [:inputs, :graph, :outputs]"
-  end
-
-  test "command/3 preserves graph list shape" do
-    command =
-      FFix.command(
-        "input.mp4",
-        fn src ->
-          [
-            src[:video] |> Filter.scale(w: 320, h: -1),
-            src[:audio]
-          ]
-        end,
-        fn [video, audio] ->
-          FFix.output([video, audio], "out.mkv",
-            vcodec: :libx264,
-            acodec: :aac
-          )
-        end
-      )
-
-    assert FFix.to_argv(command) == [
-             "ffmpeg",
-             "-i",
-             "input.mp4",
-             "-filter_complex",
-             "[0:v]scale=w=320:h=-1[out0];",
-             "-map",
-             "[out0]",
-             "-map",
-             "0:a",
-             "-vcodec",
-             "libx264",
-             "-acodec",
-             "aac",
-             "out.mkv"
-           ]
-  end
-
-  test "command/3 preserves map input and graph shapes" do
-    command =
-      FFix.command(
-        %{src: "input.mp4"},
-        fn %{src: src} ->
-          %{preview: src[:video] |> Filter.scale(w: 320, h: -1)}
-        end,
-        fn %{preview: preview}, %{src: src} ->
-          FFix.output([preview, src[:audio]], "preview.mp4",
-            vcodec: :libx264,
-            acodec: :aac
-          )
-        end
-      )
-
-    assert FFix.to_argv(command) == [
-             "ffmpeg",
-             "-i",
-             "input.mp4",
-             "-filter_complex",
-             "[0:v]scale=w=320:h=-1[preview];",
-             "-map",
-             "[preview]",
-             "-map",
-             "0:a",
-             "-vcodec",
-             "libx264",
-             "-acodec",
-             "aac",
-             "preview.mp4"
-           ]
-  end
-
-  test "rejects missing named graph inputs" do
-    command =
-      FFix.command(
-        inputs: [src: Command.input("input.mp4")],
-        graph: FFix.graph(outputs: [video: FFix.Graph.input(:missing, :video)]),
-        outputs: [Command.output(:video, "out.mp4")]
-      )
-
-    assert_raise ArgumentError, ~s(input "missing" is not declared in the command), fn ->
-      FFix.to_argv(command)
-    end
-  end
-
-  test "builds argv with input options" do
-    command =
-      FFix.command(
-        global: [y: true],
-        inputs: [
-          src: Command.input("input.mp4", ss: "00:00:03", stream_loop: -1),
-          logo: Command.input("logo.png", loop: 1, framerate: 1)
-        ],
-        outputs: [Command.output(FFix.Graph.input(0, :video), "out.mp4", vcodec: :copy)]
-      )
-
-    assert FFix.to_argv(command) == [
-             "ffmpeg",
-             "-y",
              "-ss",
              "00:00:03",
              "-stream_loop",
@@ -448,7 +212,7 @@ defmodule FFix.CommandTest do
              "-i",
              "logo.png",
              "-map",
-             "0:v",
+             "0:v:0",
              "-vcodec",
              "copy",
              "out.mp4"
@@ -457,19 +221,17 @@ defmodule FFix.CommandTest do
 
   test "encodes float command options as plain decimal strings" do
     command =
-      FFix.command(
-        inputs: [src: Command.input("input.mp4")],
-        outputs: [
-          Command.output(FFix.Graph.input(0, :video), "out.mp4", t: 0.25, vcodec: :copy)
-        ]
-      )
+      FFix.input("input.mp4")
+      |> FFix.video()
+      |> FFix.output("out.mp4", t: 0.25, vcodec: :copy)
+      |> FFix.command()
 
     assert FFix.to_argv(command) == [
              "ffmpeg",
              "-i",
              "input.mp4",
              "-map",
-             "0:v",
+             "0:v:0",
              "-t",
              "0.25",
              "-vcodec",
@@ -478,23 +240,24 @@ defmodule FFix.CommandTest do
            ]
   end
 
-  test "builds argv from command, input, and output constructors" do
+  test "builds argv from explicit command, input, and output constructors" do
+    source = FFix.input("input.mp4")
+
     video =
-      FFix.Graph.input(0, :video)
+      FFix.video(source)
       |> Filter.scale(w: 1280, h: -1)
-      |> Filter.drawtext(text: "Hello", x: FFix.expr("w-tw-20"), y: 20)
+      |> Filter.drawtext(text: "Hello", x: "w-tw-20", y: 20)
 
     graph = FFix.graph(outputs: [video: video])
-    audio = FFix.Graph.input(0, :audio)
 
     command =
-      FFix.command(
-        global: [y: true, loglevel: :error],
-        inputs: [src: Command.input("input.mp4")],
-        graph: graph,
-        outputs: [
-          Command.output([graph[:video], audio], "out.mp4", vcodec: :libx264, acodec: :copy)
-        ]
+      Command.new(global: [y: :flag, loglevel: :error], graph: graph)
+      |> Command.add_input(source)
+      |> Command.add_output(
+        FFix.output([hd(graph.exports), FFix.audio(source)], "out.mp4",
+          vcodec: :libx264,
+          acodec: :copy
+        )
       )
 
     assert FFix.to_argv(command) == [
@@ -505,11 +268,11 @@ defmodule FFix.CommandTest do
              "-i",
              "input.mp4",
              "-filter_complex",
-             "[0:v]scale=w=1280:h=-1[scale_0];\n[scale_0]drawtext=text=Hello:x=w-tw-20:y=20[video];",
+             "[0:v:0]scale=w=1280:h=-1[scale_0];\n[scale_0]drawtext=text=Hello:x=w-tw-20:y=20[video];",
              "-map",
              "[video]",
              "-map",
-             "0:a",
+             "0:a:0",
              "-vcodec",
              "libx264",
              "-acodec",
@@ -519,20 +282,16 @@ defmodule FFix.CommandTest do
   end
 
   test "maps graph exports backed by inputs as input stream refs" do
-    graph = FFix.graph(outputs: [raw: FFix.Graph.input(0, :video)])
-
-    command =
-      FFix.command()
-      |> Command.input("input.mp4")
-      |> Command.graph(graph)
-      |> Command.output(graph[:raw], "out.mp4", vcodec: :copy)
+    source = FFix.input("input.mp4")
+    graph = FFix.graph(outputs: [raw: FFix.video(source)])
+    command = FFix.command(FFix.output(graph[:raw], "out.mp4", vcodec: :copy))
 
     assert FFix.to_argv(command) == [
              "ffmpeg",
              "-i",
              "input.mp4",
              "-map",
-             "0:v",
+             "0:v:0",
              "-vcodec",
              "copy",
              "out.mp4"
@@ -540,77 +299,63 @@ defmodule FFix.CommandTest do
   end
 
   test "renders a shell-safe command string for debugging" do
+    source = FFix.input("input file.mp4")
+
     video =
-      FFix.Graph.input(0, :video)
+      FFix.video(source)
       |> Filter.scale(w: 1280, h: -1)
-      |> Filter.drawtext(text: "hello world", x: FFix.expr("w-tw-20"), y: 20)
+      |> Filter.drawtext(text: "hello world", x: "w-tw-20", y: 20)
 
-    graph = FFix.graph(outputs: [video: video])
-
-    command =
-      FFix.command()
-      |> Command.input("input file.mp4")
-      |> Command.graph(graph)
-      |> Command.output(graph[:video], "out file.mp4", vcodec: :libx264)
-
+    command = FFix.command(FFix.output(video, "out file.mp4", vcodec: :libx264))
     shell = FFix.to_shell_string(command)
-
     assert shell =~ "ffmpeg"
     assert shell =~ "-i 'input file.mp4'"
     assert shell =~ "-filter_complex '"
     assert shell =~ "'out file.mp4'"
   end
 
-  test "rejects input refs that do not exist in the command" do
-    graph = FFix.graph(outputs: [video: FFix.Graph.input(1, :video)])
-
-    command =
-      FFix.command()
-      |> Command.input("input.mp4")
-      |> Command.graph(graph)
-      |> Command.output(graph[:video], "out.mp4", vcodec: :libx264)
-
-    assert_raise ArgumentError, "input 1 is not declared in the command", fn ->
-      FFix.to_argv(command)
+  test "rejects undeclared positional and named input refs" do
+    for missing <- [1, :missing] do
+      assert_raise ArgumentError, ~r/not declared|unbound/, fn ->
+        FFix.command(FFix.output(Graph.input(missing, :video), "out.mp4"),
+          inputs: [FFix.input("input.mp4")]
+        )
+      end
     end
   end
 
-  test "builds argv for multiple outputs from one graph" do
-    video = FFix.Graph.input(0, :video)
-    [master, preview] = Filter.split(video, outputs: 2)
-
-    preview =
-      preview
-      |> Filter.fps(fps: 1)
-      |> Filter.scale(w: 320, h: -1)
-
+  test "builds argv for multiple outputs from one split graph" do
+    source = FFix.input("input.mp4")
+    [master, preview] = Filter.split(FFix.video(source), outputs: 2)
+    preview = preview |> Filter.fps(fps: 1) |> Filter.scale(w: 320, h: -1)
     graph = FFix.graph(outputs: [master: master, preview: preview])
-    audio = FFix.Graph.input(0, :audio)
 
     command =
-      FFix.command()
-      |> Command.input("input.mp4")
-      |> Command.graph(graph)
-      |> Command.output([graph[:master], audio], "master.mp4", vcodec: :libx264, acodec: :aac)
-      |> Command.output(graph[:preview], "thumb-%03d.jpg", f: :image2, vsync: 0)
+      FFix.command([
+        FFix.output([graph[:master], FFix.audio(source)], "master.mp4",
+          vcodec: :libx264,
+          acodec: :aac
+        ),
+        FFix.output(graph[:preview], "thumb-%03d.jpg", f: :image2, vsync: 0)
+      ])
 
     assert FFix.to_argv(command) == [
              "ffmpeg",
              "-i",
              "input.mp4",
              "-filter_complex",
-             "[0:v]split=outputs=2[master][split_1];\n[split_1]fps=fps=1[fps_0];\n[fps_0]scale=w=320:h=-1[preview];",
+             "[0:v:0]split=outputs=2[out0][split_1];\n[split_1]fps=fps=1[fps_0];\n[fps_0]scale=w=320:h=-1[out2];",
              "-map",
-             "[master]",
+             "[out0]",
              "-map",
-             "0:a",
+             "0:a:0",
              "-vcodec",
              "libx264",
              "-acodec",
              "aac",
              "master.mp4",
              "-map",
-             "[preview]",
+             "[out2]",
              "-f",
              "image2",
              "-vsync",
@@ -619,45 +364,21 @@ defmodule FFix.CommandTest do
            ]
   end
 
-  test "rejects duplicated mappings for filter graph outputs" do
-    graph =
-      FFix.graph(outputs: [video: FFix.Graph.input(0, :video) |> Filter.scale(w: 320, h: -1)])
+  test "rejects duplicate consumers and unused outputs in a selected graph context" do
+    source = FFix.input("input.mp4")
+    video = Filter.scale(FFix.video(source), w: 320, h: -1)
 
-    command =
-      FFix.command(
-        inputs: [src: Command.input("input.mp4")],
-        graph: graph,
-        outputs: [
-          Command.output(:video, "a.mp4", vcodec: :libx264),
-          Command.output(:video, "b.mp4", vcodec: :libx264)
-        ]
-      )
+    assert_raise ArgumentError, ~r/used 2 times|mapped 2 times/, fn ->
+      FFix.command([FFix.output(video, "a.mp4"), FFix.output(video, "b.mp4")])
+    end
 
-    assert_raise ArgumentError,
-                 "graph output :video is mapped 2 times; complex filter outputs must be mapped exactly once",
-                 fn ->
-                   FFix.to_argv(command)
-                 end
-  end
-
-  test "rejects unmapped filter graph outputs" do
     graph =
       FFix.graph(
-        outputs: [
-          master: FFix.Graph.input(0, :video) |> Filter.scale(w: 1280, h: -1),
-          preview: FFix.Graph.input(0, :video) |> Filter.scale(w: 320, h: -1)
-        ]
+        outputs: [master: video, preview: Filter.scale(FFix.video(source), w: 160, h: -1)]
       )
 
-    command =
-      FFix.command(
-        inputs: [src: Command.input("input.mp4")],
-        graph: graph,
-        outputs: [Command.output(:master, "out.mp4", vcodec: :libx264)]
-      )
-
-    assert_raise ArgumentError, "graph output :preview must be mapped exactly once", fn ->
-      FFix.to_argv(command)
+    assert_raise ArgumentError, ~r/unconnected filter output|must be mapped exactly once/, fn ->
+      FFix.command(FFix.output(graph[:master], "out.mp4"))
     end
   end
 end

@@ -85,9 +85,8 @@ defmodule FFix.Filter.Helpers do
       [_single] ->
         quote(do: FFix.Graph.StreamRef.t())
 
-      many ->
-        streams = Enum.map(many, fn _pad -> quote(do: FFix.Graph.StreamRef.t()) end)
-        quote(do: {unquote_splicing(streams)})
+      _many ->
+        quote(do: [FFix.Graph.StreamRef.t()])
     end
   end
 
@@ -152,7 +151,6 @@ defmodule FFix.Filter.Helpers do
 
   @spec build_options_typespec(map()) :: Macro.t()
   def build_options_typespec(options) do
-    # Optionless filters already accept arbitrary keywords in the builder.
     case map_size(options) do
       0 ->
         quote(do: keyword())
@@ -174,7 +172,7 @@ defmodule FFix.Filter.Helpers do
   defp value_typespec(type) do
     # Filter Value normalization deliberately accepts scalar conveniences and
     # arbitrary symbols, unlike command-option validation against constants.
-    scalar = quote(do: String.t() | atom() | number() | FFix.Graph.Expr.t())
+    scalar = quote(do: String.t() | atom() | number())
 
     case type do
       {:array, inner} ->

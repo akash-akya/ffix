@@ -5,361 +5,196 @@ defmodule FFix.Command.Build do
   alias FFix.Command.Input
   alias FFix.Command.Mapping
   alias FFix.Command.Output
-  alias FFix.Graph
   alias FFix.Graph.Builder
+  alias FFix.Graph.Export
   alias FFix.Graph.StreamRef
 
-  @command_keys [:global, :inputs, :graph, :outputs]
-  @callback_command_keys [:global]
+  @command_keys [:global, :inputs, :terminals, :settings]
 
-  @spec command(keyword()) :: Command.t()
-  def command(options) when is_list(options) do
-    validate_command_keys!(options)
+  @spec command(Output.t() | [Output.t()], keyword()) :: Command.t()
+  def command(output_or_outputs, options \\ []) do
+    validate_options!(options)
+    outputs = normalize_outputs!(output_or_outputs)
+    streams = mapped_streams!(outputs)
 
-    build_command(
-      Keyword.get(options, :global, []),
-      Keyword.get(options, :inputs, []),
-      Keyword.get(options, :graph),
-      Keyword.get(options, :outputs, [])
-    )
-  end
+    candidate =
+      Builder.graph(
+        outputs: streams,
+        terminals: Keyword.get(options, :terminals, []),
+        settings: Keyword.get(options, :settings, [])
+      )
 
-  @spec command(term(), (term() -> Output.t() | [Output.t()])) :: Command.t()
-  def command(inputs, outputs_fun), do: command(inputs, outputs_fun, [])
+    input_refs =
+      candidate.order
+      |> Enum.map(&Map.fetch!(candidate.nodes, &1))
+      |> Enum.filter(&(&1.kind == :input))
+      |> Enum.map(& &1.input_ref)
 
-  @spec command(term(), function(), function() | keyword()) :: Command.t()
-  def command(inputs, outputs_fun, options)
-      when is_function(outputs_fun, 1) and is_list(options) do
-    validate_callback_command_options!(options)
-    {command_inputs, input_value} = normalize_input_shape!(inputs)
-    outputs = normalize_output_result!(outputs_fun.(input_value))
-    {graph, outputs} = export_output_sources(outputs)
+    captured_inputs =
+      input_refs
+      |> Enum.map(& &1.declaration)
+      |> Enum.reject(&is_nil/1)
+      |> unique_inputs!()
+
+    inputs = resolve_inputs!(captured_inputs, input_refs, options)
+    filters? = Enum.any?(candidate.nodes, fn {_id, node} -> node.kind == :filter end)
+
+    {graph, outputs} =
+      if filters? do
+        {candidate, lower_outputs(outputs, candidate.exports)}
+      else
+        if candidate.settings != [] do
+          raise ArgumentError,
+                "graph settings require filter nodes; cannot discard settings from a direct mapping command"
+        end
+
+        {nil, direct_outputs(outputs)}
+      end
 
     Command.new(
       global: Keyword.get(options, :global, []),
-      inputs: command_inputs,
+      inputs: inputs,
       graph: graph,
       outputs: outputs
     )
+    |> Command.validate!()
   end
 
-  def command(inputs, graph_fun, outputs_fun)
-      when is_function(graph_fun, 1) and is_function(outputs_fun) do
-    build_command([], inputs, graph_fun, outputs_fun)
-  end
-
-  @spec command(
-          Input.source() | Input.t() | [Input.source() | Input.t()] | keyword() | map(),
-          function(),
-          function(),
-          keyword()
-        ) :: Command.t()
-  def command(inputs, graph_fun, outputs_fun, options)
-      when is_function(graph_fun, 1) and is_function(outputs_fun) and is_list(options) do
-    validate_callback_command_options!(options)
-    build_command(Keyword.get(options, :global, []), inputs, graph_fun, outputs_fun)
-  end
-
-  defp validate_command_keys!(options) do
-    unless Keyword.keyword?(options),
-      do: raise(ArgumentError, "command options must be a keyword list")
-
-    keys = Keyword.keys(options)
-
-    if length(keys) != length(Enum.uniq(keys)),
-      do: raise(ArgumentError, "duplicate command option")
-
-    unknown = keys -- @command_keys
-
-    if unknown != [] do
-      raise ArgumentError, "unknown command keys: #{inspect(unknown)}"
-    end
-  end
-
-  defp validate_callback_command_options!(options) do
+  defp validate_options!(options) do
     unless Keyword.keyword?(options) do
       raise ArgumentError, "command options must be a keyword list"
     end
 
     keys = Keyword.keys(options)
 
-    if length(keys) != length(Enum.uniq(keys)),
-      do: raise(ArgumentError, "duplicate command option")
+    if length(keys) != length(Enum.uniq(keys)) do
+      raise ArgumentError, "duplicate command option"
+    end
 
-    unknown = keys -- @callback_command_keys
+    unknown = keys -- @command_keys
 
     if unknown != [] do
       raise ArgumentError,
-            "command/4 options only support :global; pass inputs, graph, and outputs as positional arguments, got: #{inspect(unknown)}"
+            "unknown command keys: #{inspect(unknown)}; pass output declarations as the first argument"
     end
   end
 
-  defp build_command(global, inputs, graph, outputs) do
-    {command_inputs, input_value} = normalize_input_shape!(inputs)
-    {command_graph, graph_value} = normalize_graph!(graph, input_value)
-    command_outputs = normalize_outputs!(outputs, graph_value, input_value)
+  defp normalize_outputs!(output_or_outputs) do
+    outputs = List.wrap(output_or_outputs)
 
-    Command.new(
-      global: global,
-      inputs: command_inputs,
-      graph: command_graph,
-      outputs: command_outputs
-    )
-  end
-
-  @doc false
-  def export_output_sources(outputs) do
-    streams =
-      outputs
-      |> Enum.flat_map(fn
-        %Output{mappings: mappings} when is_list(mappings) -> mappings
-        _ -> raise ArgumentError, "output mappings must be a list of Mapping values"
-      end)
-      |> Enum.flat_map(fn mapping ->
-        case mapping do
-          %Mapping{source: %StreamRef{plan: %{kind: :filter}} = source} -> [source]
-          %Mapping{} -> []
-          other -> raise ArgumentError, "invalid output mapping: #{inspect(other)}"
-        end
-      end)
-
-    case streams do
-      [] ->
-        {nil, outputs}
-
-      streams ->
-        graph = Builder.graph(outputs: streams)
-        exports = Enum.zip(streams, Graph.exports(graph))
-        exports = Map.new(exports, fn {stream, export} -> {stream_key(stream), export} end)
-
-        outputs =
-          Enum.map(outputs, fn output ->
-            mappings = Enum.map(output.mappings, &export_mapping(&1, exports))
-            %{output | mappings: mappings}
-          end)
-
-        {graph, outputs}
-    end
-  end
-
-  defp export_mapping(mapping, exports) do
-    case mapping.source do
-      %StreamRef{plan: %{kind: :filter}} = source ->
-        %{mapping | source: Map.fetch!(exports, stream_key(source))}
-
-      _source ->
-        mapping
-    end
-  end
-
-  defp stream_key(%StreamRef{plan: plan, output: output}), do: {plan.id, output}
-
-  defp normalize_input_shape!(%Input{} = input) do
-    input = normalize_input_value!(:input, input)
-    {[input], input}
-  end
-
-  defp normalize_input_shape!(source) when is_binary(source) or source == :stdin do
-    input = normalize_input_value!(:input, source)
-    {[input], input}
-  end
-
-  defp normalize_input_shape!({:pipe, fd} = source) when is_integer(fd) and fd >= 0 do
-    input = normalize_input_value!(:input, source)
-    {[input], input}
-  end
-
-  defp normalize_input_shape!({:url, url} = source) when is_binary(url) do
-    input = normalize_input_value!(:input, source)
-    {[input], input}
-  end
-
-  defp normalize_input_shape!(inputs) when is_list(inputs) do
-    if Keyword.keyword?(inputs) do
-      normalize_input_keyword_shape!(inputs)
-    else
-      input_values = Enum.map(inputs, &normalize_input_value!(:input, &1))
-      {input_values, input_values}
-    end
-  end
-
-  defp normalize_input_shape!(inputs) when is_map(inputs) do
-    entries =
-      Enum.map(inputs, fn {key, input} ->
-        {key, normalize_input_value!(key, input)}
-      end)
-
-    {Enum.map(entries, &elem(&1, 1)), Map.new(entries)}
-  end
-
-  defp normalize_input_shape!(other) do
-    raise ArgumentError,
-          "command inputs must be a source, input, list, keyword list, or map, got: #{inspect(other)}"
-  end
-
-  defp normalize_input_keyword_shape!(bindings) do
-    names = Keyword.keys(bindings)
-
-    if length(names) != length(Enum.uniq(names)) do
-      raise ArgumentError,
-            "duplicate command input names: #{inspect(names -- Enum.uniq(names))}"
+    if outputs == [] do
+      raise ArgumentError, "command requires at least one output"
     end
 
-    entries =
-      Enum.map(bindings, fn {name, input} ->
-        {name, normalize_input_value!(name, input)}
-      end)
-
-    {Enum.map(entries, &elem(&1, 1)), entries}
-  end
-
-  defp normalize_input_value!(_name, %Input{} = input), do: %{input | id: input.id || make_ref()}
-  defp normalize_input_value!(_name, source) when is_binary(source), do: Command.input(source)
-  defp normalize_input_value!(_name, :stdin), do: Command.input(:stdin)
-
-  defp normalize_input_value!(_name, {:pipe, fd}) when is_integer(fd) and fd >= 0,
-    do: Command.input({:pipe, fd})
-
-  defp normalize_input_value!(_name, {:url, url}) when is_binary(url),
-    do: Command.input({:url, url})
-
-  defp normalize_input_value!(name, other) do
-    raise ArgumentError,
-          "command input #{inspect(name)} must be built with input/1, input/2, or a source, got: #{inspect(other)}"
-  end
-
-  defp normalize_graph!(nil, _input_context), do: {nil, nil}
-
-  defp normalize_graph!(%Graph{} = graph, _input_context), do: {graph, graph}
-
-  defp normalize_graph!(fun, input_context) when is_function(fun, 1) do
-    graph_result = fun.(input_context)
-    graph = graph_from_callback_result!(graph_result)
-    {graph, graph_callback_value!(graph_result, graph)}
-  end
-
-  defp normalize_graph!(other, _input_context) do
-    raise ArgumentError,
-          "command graph must be a %FFix.Graph{} or one-arity callback, got: #{inspect(other)}"
-  end
-
-  defp graph_from_callback_result!(nil), do: nil
-
-  defp graph_from_callback_result!(%Graph{} = graph), do: graph
-
-  defp graph_from_callback_result!(%StreamRef{} = stream), do: Builder.graph(output: stream)
-
-  defp graph_from_callback_result!([]), do: nil
-
-  defp graph_from_callback_result!(values) when is_list(values) do
-    values
-    |> graph_outputs_from_list!()
-    |> graph_from_outputs!()
-  end
-
-  defp graph_from_callback_result!(values) when is_map(values) do
-    values
-    |> Map.to_list()
-    |> graph_outputs_from_map_entries!()
-    |> graph_from_outputs!()
-  end
-
-  defp graph_from_callback_result!(other) do
-    raise ArgumentError,
-          "graph callback must return a %FFix.Graph{}, stream, list, keyword list, map, or nil, got: #{inspect(other)}"
-  end
-
-  defp graph_callback_value!(nil, nil), do: nil
-  defp graph_callback_value!(%Graph{} = graph, %Graph{}), do: graph
-  defp graph_callback_value!(%StreamRef{}, %Graph{} = graph), do: Graph.export!(graph, 0)
-  defp graph_callback_value!([], nil), do: []
-
-  defp graph_callback_value!(values, %Graph{} = graph) when is_list(values) do
-    exports = Graph.exports(graph)
-
-    if Keyword.keyword?(values) do
-      values
-      |> Enum.zip(exports)
-      |> Enum.map(fn {{key, _value}, export} -> {key, export} end)
-    else
-      exports
-    end
-  end
-
-  defp graph_callback_value!(values, nil) when is_list(values), do: values
-
-  defp graph_callback_value!(values, %Graph{} = graph) when is_map(values) do
-    values
-    |> Map.keys()
-    |> Enum.zip(Graph.exports(graph))
-    |> Map.new()
-  end
-
-  defp graph_callback_value!(values, nil) when is_map(values), do: values
-
-  defp graph_outputs_from_list!(values) do
-    if Keyword.keyword?(values) do
-      Enum.map(values, fn {name, value} -> {name, normalize_graph_output!(name, value)} end)
-    else
-      Enum.map(values, &normalize_graph_output!(:output, &1))
-    end
-  end
-
-  defp graph_outputs_from_map_entries!(entries) do
-    Enum.map(entries, fn
-      {name, value} when is_atom(name) ->
-        {name, normalize_graph_output!(name, value)}
-
-      {_name, value} ->
-        normalize_graph_output!(:output, value)
-    end)
-  end
-
-  defp normalize_graph_output!(_name, %StreamRef{} = stream), do: stream
-
-  defp normalize_graph_output!(name, other) do
-    raise ArgumentError,
-          "graph output #{inspect(name)} must be an FFix.Graph.StreamRef, got: #{inspect(other)}"
-  end
-
-  defp graph_from_outputs!([]), do: nil
-  defp graph_from_outputs!(outputs), do: Builder.graph(outputs: outputs)
-
-  defp normalize_outputs!(nil, _graph_value, _input_context), do: []
-
-  defp normalize_outputs!(fun, graph_value, _input_context) when is_function(fun, 1) do
-    fun.(graph_value)
-    |> normalize_output_result!()
-  end
-
-  defp normalize_outputs!(fun, graph_value, input_context) when is_function(fun, 2) do
-    fun.(graph_value, input_context)
-    |> normalize_output_result!()
-  end
-
-  defp normalize_outputs!(%Output{} = output, _graph_value, _input_context), do: [output]
-
-  defp normalize_outputs!(outputs, _graph_value, _input_context) when is_list(outputs) do
-    normalize_output_result!(outputs)
-  end
-
-  defp normalize_outputs!(other, _graph_value, _input_context) do
-    raise ArgumentError, "command outputs must be a list or callback, got: #{inspect(other)}"
-  end
-
-  defp normalize_output_result!(%Output{} = output), do: [output]
-
-  defp normalize_output_result!(outputs) when is_list(outputs) do
     Enum.each(outputs, fn
-      %Output{} -> :ok
-      other -> raise ArgumentError, "invalid command output: #{inspect(other)}"
+      %Output{mappings: mappings} when is_list(mappings) -> :ok
+      other -> raise ArgumentError, "expected an Output declaration, got: #{inspect(other)}"
     end)
 
     outputs
   end
 
-  defp normalize_output_result!(other) do
-    raise ArgumentError,
-          "outputs callback must return an output or list of outputs, got: #{inspect(other)}"
+  defp mapped_streams!(outputs) do
+    Enum.flat_map(outputs, fn output ->
+      Enum.map(output.mappings, fn
+        %Mapping{source: %StreamRef{} = stream} ->
+          stream
+
+        %Mapping{source: %Export{}} ->
+          raise ArgumentError,
+                "bare graph Export sources are not supported by output-first commands; use graph[:name] for a captured stream, or Command.new/1 with an explicit graph"
+
+        other ->
+          raise ArgumentError,
+                "expected a mapping with a StreamRef source, got: #{inspect(other)}"
+      end)
+    end)
+  end
+
+  defp resolve_inputs!(captured_inputs, input_refs, options) do
+    case Keyword.fetch(options, :inputs) do
+      :error ->
+        if Enum.any?(input_refs, &is_nil(&1.declaration)) do
+          raise ArgumentError,
+                "unbound input reference; select streams from Input.new/2 declarations, bind graph inputs, or supply an explicit ordered :inputs list"
+        end
+
+        captured_inputs
+
+      {:ok, explicit_inputs} ->
+        inputs = unique_inputs!(explicit_inputs)
+        declarations = Map.new(inputs, &{&1.id, &1})
+
+        Enum.each(captured_inputs, fn captured ->
+          case Map.fetch(declarations, captured.id) do
+            {:ok, ^captured} ->
+              :ok
+
+            {:ok, _conflicting} ->
+              raise ArgumentError,
+                    "conflicting input snapshots for declaration #{inspect(captured.id)}"
+
+            :error ->
+              raise ArgumentError,
+                    "captured input declaration #{inspect(captured.id)} is missing from explicit :inputs"
+          end
+        end)
+
+        inputs
+    end
+  end
+
+  defp unique_inputs!(inputs) do
+    unless is_list(inputs) do
+      raise ArgumentError, "command inputs must be an explicit ordered list of Input declarations"
+    end
+
+    {reversed, _seen} =
+      Enum.reduce(inputs, {[], %{}}, fn input, {ordered, seen} ->
+        unless is_struct(input, Input) do
+          raise ArgumentError, "expected an Input declaration, got: #{inspect(input)}"
+        end
+
+        Command.validate_input!(input)
+
+        case Map.fetch(seen, input.id) do
+          {:ok, ^input} when input.id != nil ->
+            {ordered, seen}
+
+          {:ok, _conflicting} when input.id != nil ->
+            raise ArgumentError,
+                  "conflicting input snapshots for declaration #{inspect(input.id)}"
+
+          _new ->
+            {[input | ordered], Map.put(seen, input.id, input)}
+        end
+      end)
+
+    Enum.reverse(reversed)
+  end
+
+  defp direct_outputs(outputs) do
+    Enum.map(outputs, fn output ->
+      mappings =
+        Enum.map(output.mappings, fn mapping ->
+          %{mapping | source: %{mapping.source | context: nil}}
+        end)
+
+      %{output | mappings: mappings}
+    end)
+  end
+
+  defp lower_outputs(outputs, exports) do
+    {outputs, _remaining} =
+      Enum.map_reduce(outputs, exports, fn output, remaining ->
+        {mappings, remaining} =
+          Enum.map_reduce(output.mappings, remaining, fn mapping, [export | rest] ->
+            {%{mapping | source: export}, rest}
+          end)
+
+        {%{output | mappings: mappings}, remaining}
+      end)
+
+    outputs
   end
 end

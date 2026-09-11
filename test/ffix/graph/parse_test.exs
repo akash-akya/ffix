@@ -8,13 +8,13 @@ defmodule FFix.Graph.ParseTest do
     graph =
       FFix.Graph.input(0, :video)
       |> Filter.scale(w: 1280, h: -1)
-      |> Filter.drawtext(text: "Hello", x: FFix.expr("w-tw-20"), y: 20)
+      |> Filter.drawtext(text: "Hello", x: "w-tw-20", y: 20)
       |> then(&FFix.graph(output: &1))
 
     rendered = FFix.to_filtergraph(graph)
     parsed = Graph.parse!(rendered)
 
-    assert Enum.map(parsed.exports, & &1.name) == [nil]
+    assert Enum.map(parsed.exports, & &1.name) == ["out0"]
     assert FFix.to_filtergraph(parsed) == rendered
   end
 
@@ -55,7 +55,7 @@ defmodule FFix.Graph.ParseTest do
         outputs: [
           video:
             FFix.Graph.input(0, :video)
-            |> Filter.drawtext(text: "hello:world", x: FFix.expr("w-tw-20"), y: 20)
+            |> Filter.drawtext(text: "hello:world", x: "w-tw-20", y: 20)
         ]
       ),
       FFix.graph(
@@ -109,22 +109,20 @@ defmodule FFix.Graph.ParseTest do
     end
   end
 
-  test "parses explicitly labeled dynamic outputs we render via shape/2" do
+  test "parses explicitly labeled inferred dynamic outputs" do
     graph =
       FFix.Graph.input(0, :audio)
       |> Filter.ebur128(video: true)
-      |> FFix.shape([:video, :audio])
       |> then(fn [video, audio] -> FFix.graph(outputs: [audio: audio, video: video]) end)
 
     rendered = FFix.to_filtergraph(graph)
     assert FFix.to_filtergraph(Graph.parse!(rendered)) == rendered
   end
 
-  test "parses shaped concat graphs with one explicit output" do
+  test "parses concat graphs with one inferred output" do
     graph =
       [FFix.Graph.input(0, :video), FFix.Graph.input(1, :video)]
       |> Filter.concat()
-      |> FFix.shape([:video])
       |> then(&FFix.graph(outputs: [video: &1]))
 
     rendered = FFix.to_filtergraph(graph)

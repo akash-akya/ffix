@@ -3,8 +3,8 @@ defmodule FFix.Encoder do
   Source-taking encoder shortcuts and low-level encoder configuration.
 
   Named helpers return `FFix.Command.Mapping` values, not filterable streams or
-  running encoder instances. Use them after filtering, inside an output callback
-  or a one-callback `FFix.command/2` pipeline.
+  running encoder instances. Use them after filtering, as sources in output
+  declarations passed to `FFix.command/2`.
 
       FFix.Encoder.libx264(video, crf: 18, preset: "slow")
 

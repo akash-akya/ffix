@@ -53,8 +53,7 @@ defmodule FFix.Muxer do
     output_options = Keyword.get(controls, :output_options, [])
     {_special, output_options} = Options.split!(output_options, [])
     muxer_options = Options.normalize!(options, schema, "#{name} muxer")
-    output = Command.output(sources, target)
-    %{output | muxer: new(name, muxer_options), options: output_options}
+    Output.new(sources, target, [{:muxer, new(name, muxer_options)} | output_options])
   end
 
   require FFix.Helpers

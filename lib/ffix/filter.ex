@@ -11,25 +11,22 @@ defmodule FFix.Filter do
       |> scale(w: 1280, h: -1)
       |> fps(fps: 30)
 
-  Most filters return a single `FFix.Graph.StreamRef`. Multi-output filters return a tuple
-  or list:
+  Zero outputs return `FFix.Graph.Terminal`, one returns `FFix.Graph.StreamRef`,
+  and multiple outputs always return an ordered list:
 
       [left, right] = split(video, outputs: 2)
       stacked = hstack([left, hflip(right)])
 
-  Some ffmpeg filters have dynamic output shapes. Use `FFix.shape/2` when the
-  generated metadata cannot infer the shape you need:
-
-      [video, audio] =
-        audio_in
-        |> ebur128(video: true)
-        |> FFix.shape([:video, :audio])
+  Supported option-dependent shapes follow their effective options, including
+  aliases and positional values. For example, `ebur128(audio_in, video: true)`
+  returns `[video, audio]`, while video disabled returns just the audio reference.
+  Unresolved shapes raise rather than guessing a pad count or media type.
 
   Use `filter/4` to supply a filter name, explicit output media, and options
   without metadata lookup.
 
   Reported defaults/ranges are metadata, not emitted defaults or complete
-  validation. Strings and `FFix.Graph.Expr` values preserve FFmpeg syntax;
+  validation. Plain strings carry FFmpeg expressions and compound syntax;
   repeated `:pos` options supply positional arguments.
 
   Timeline-capable filters accept ffmpeg's implicit `enable:` option. Filters
@@ -51,7 +48,7 @@ defmodule FFix.Filter do
   alias FFix.Graph.StreamRef
   alias FFix.Graph.Terminal
 
-  @type option :: {atom() | String.t(), String.t() | atom() | number() | FFix.Graph.Expr.t()}
+  @type option :: {atom() | String.t(), String.t() | atom() | number()}
 
   @doc group: "Generic filters"
   @doc """
@@ -70,7 +67,7 @@ defmodule FFix.Filter do
 
   Names and options pass through without registry or option-schema lookup, even
   for known filters. No defaults, flags, or array delimiters are inferred. Use
-  scalar values, `FFix.expr/1`, or strings for compound syntax. Repeated `:pos`
+  scalar values or strings for compound syntax. Repeated `:pos`
   pairs supply positional arguments. Values are escaped during serialization.
 
   Named helpers retain metadata checks and shape inference. `FFix.Graph.parse!/1`

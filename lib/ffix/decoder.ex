@@ -12,8 +12,10 @@ defmodule FFix.Decoder do
   All decoded uses of an input stream share its configuration. Independent
   decoding requires separate input declarations, even for the same source file.
   Decoder helpers do not operate on individual filter branches. Pass the updated
-  input into the command: changing a callback-local input does not mutate the
-  command's existing input declaration.
+  input to stream selectors: existing streams retain their captured input snapshot.
+  Repeated decoder configuration replaces the previous value for that selector.
+  Use either absolute `{:index, n}` or media-relative `{media, n}` selectors on one
+  input, not both: they can overlap, and FFix does not probe to resolve that ambiguity.
 
   Named helpers check options against recorded metadata without querying FFmpeg.
   Reported defaults are not emitted, strings remain open FFmpeg values, and
@@ -56,12 +58,10 @@ defmodule FFix.Decoder do
   def auto(input, selector, options \\ []), do: decode(input, nil, selector, options)
 
   defp check_media!(selector, media) do
-    case selector do
-      {^media, _index} ->
-        :ok
+    selected_media = FFix.Graph.InputRef.media(selector)
 
-      _other ->
-        raise ArgumentError, "expected an indexed #{media} selector, got: #{inspect(selector)}"
+    if media != nil and selected_media != :unknown and selected_media != media do
+      raise ArgumentError, "expected an indexed #{media} selector, got: #{inspect(selector)}"
     end
   end
 

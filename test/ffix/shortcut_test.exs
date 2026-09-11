@@ -1,32 +1,44 @@
 defmodule FFix.ShortcutTest do
   use ExUnit.Case, async: true
-  use FFix
 
+  import FFix,
+    only: [
+      input: 1,
+      input: 2,
+      output: 2,
+      output: 3,
+      command: 1,
+      command: 2,
+      video: 1,
+      video: 2,
+      audio: 1,
+      audio: 2,
+      stream_copy: 1
+    ]
+
+  import FFix.Filter
   alias FFix.Command
   alias FFix.{Decoder, Demuxer, Encoder, Muxer}
 
-  test "the common one-callback pipeline builds a graph and independently configured outputs" do
+  test "the output-first pipeline builds a graph and independently configured outputs" do
     source = Demuxer.mov("input.mp4") |> Decoder.h264({:video, 0}, threads: 2)
+    input = source
+    [main, preview] = split(video(input), outputs: 2)
+    preview = scale(preview, w: 640, h: -2)
 
     built =
       command(
-        source,
-        fn input ->
-          [main, preview] = split(video(input), outputs: 2)
-          preview = scale(preview, w: 640, h: -2)
-
-          [
-            Muxer.mp4(
-              [Encoder.libx264(main, crf: 18, preset: "slow"), stream_copy(audio(input))],
-              "main.mp4",
-              movflags: [:faststart]
-            ),
-            Muxer.matroska([Encoder.libx264(preview, crf: 28)], "preview.mkv",
-              output_options: [t: 10]
-            )
-          ]
-        end,
-        global: [y: true]
+        [
+          Muxer.mp4(
+            [Encoder.libx264(main, crf: 18, preset: "slow"), stream_copy(audio(input))],
+            "main.mp4",
+            movflags: [:faststart]
+          ),
+          Muxer.matroska([Encoder.libx264(preview, crf: 28)], "preview.mkv",
+            output_options: [t: 10]
+          )
+        ],
+        global: [y: :flag]
       )
 
     argv = FFix.to_argv(built)
@@ -44,10 +56,10 @@ defmodule FFix.ShortcutTest do
   end
 
   test "named encoders remain reusable ordinary functions and do not emit defaults" do
+    input = FFix.input("in.mp4")
+
     built =
-      command("in.mp4", fn input ->
-        Muxer.mp4([web_video(video(input)), web_video(video(input), crf: 28)], "out.mp4")
-      end)
+      command(Muxer.mp4([web_video(video(input)), web_video(video(input), crf: 28)], "out.mp4"))
 
     argv = FFix.to_argv(built)
     assert values(argv, "-map") == ["0:v:0", "0:v:0"]
@@ -55,11 +67,8 @@ defmodule FFix.ShortcutTest do
     assert values(argv, "-crf:1") == ["28"]
     assert values(argv, "-preset:0") == ["slow"]
     assert built.graph == nil
-
-    default =
-      command("in.mp4", fn input ->
-        Muxer.mp4([Encoder.libx264(video(input))], "out.mp4")
-      end)
+    input = FFix.input("in.mp4")
+    default = command(Muxer.mp4([Encoder.libx264(video(input))], "out.mp4"))
 
     assert FFix.to_argv(default) == [
              "ffmpeg",
@@ -75,28 +84,39 @@ defmodule FFix.ShortcutTest do
            ]
   end
 
-  test "selectors choose individual tracks without changing broad access semantics" do
+  test "selectors distinguish individual tracks from broad media selections" do
     source = input("in.mkv")
 
     built =
       Command.new(
         inputs: [source],
-        outputs: [Command.output([video(source, 1), audio(source, 2), source[:audio]], "out.mkv")]
+        outputs: [
+          FFix.output(
+            [
+              video(source, 1),
+              audio(source, 2),
+              FFix.select(
+                source,
+                {:audio, :all}
+              )
+            ],
+            "out.mkv"
+          )
+        ]
       )
 
     assert values(FFix.to_argv(built), "-map") == ["0:v:1", "0:a:2", "0:a"]
     assert_raise ArgumentError, fn -> video(source, -1) end
   end
 
-  test "decoders modify their input owner without invalidating previously built references" do
+  test "decoders are configured before selecting references" do
     original = input("in.mp4")
-    selected = video(original)
 
     configured =
       original |> Decoder.h264({:video, 0}, threads: 2) |> Decoder.aac({:audio, 1}, threads: 1)
 
-    built =
-      command(configured, fn _input -> Muxer.mp4([stream_copy(selected)], "out.mp4") end)
+    selected = video(configured)
+    built = command(Muxer.mp4([stream_copy(selected)], "out.mp4"))
 
     assert FFix.to_argv(built) == [
              "ffmpeg",
@@ -130,7 +150,8 @@ defmodule FFix.ShortcutTest do
 
   test "automatic decoding emits only the requested options" do
     source = input("in.mp4") |> Decoder.auto({:video, 0}, threads: 2)
-    built = command(source, fn input -> output([video(input)], "out.mp4") end)
+    input = source
+    built = command(output([video(input)], "out.mp4"))
 
     assert FFix.to_argv(built) == [
              "ffmpeg",
@@ -146,7 +167,8 @@ defmodule FFix.ShortcutTest do
 
   test "demuxers separate AVOptions from raw input controls and support directional aliases" do
     source = Demuxer.mp4("in.bin", ignore_editlist: true, input_options: [ss: 5])
-    built = command(source, fn input -> Muxer.mp4([stream_copy(video(input))], :stdout) end)
+    input = source
+    built = command(Muxer.mp4([stream_copy(video(input))], :stdout))
 
     assert FFix.to_argv(built) == [
              "ffmpeg",
@@ -172,7 +194,8 @@ defmodule FFix.ShortcutTest do
     source =
       Demuxer.rawvideo("frames.rgb", video_size: "1920x1080", pixel_format: :rgb24, framerate: 30)
 
-    built = command(source, fn input -> Muxer.null([video(input)], "-") end)
+    input = source
+    built = command(Muxer.null([video(input)], "-"))
 
     assert FFix.to_argv(built) == [
              "ffmpeg",
@@ -201,12 +224,14 @@ defmodule FFix.ShortcutTest do
         decoders: %{{:video, 0} => Decoder.new("h264")}
       )
 
+    input = source
+
     built =
-      command(source, fn input ->
+      command(
         output([stream_copy(video(input))], "out.mp4",
           muxer: Muxer.new("mp4", movflags: "faststart")
         )
-      end)
+      )
 
     assert values(FFix.to_argv(built), "-f") == ["mov", "mp4"]
     assert values(FFix.to_argv(built), "-movflags") == ["faststart"]
@@ -215,7 +240,7 @@ defmodule FFix.ShortcutTest do
       Command.new(
         inputs: [source],
         outputs: [
-          Command.output([stream_copy(video(source))], "out.mp4",
+          FFix.output([stream_copy(video(source))], "out.mp4",
             muxer: Muxer.new("mp4", movflags: "faststart")
           )
         ]
@@ -225,14 +250,16 @@ defmodule FFix.ShortcutTest do
   end
 
   test "muxer booleans remain valued while output switches remain bare" do
+    input = FFix.input("in.mp4")
+
     built =
-      command("in.mp4", fn input ->
+      command(
         Muxer.mp4([Encoder.libx264(video(input), fastfirstpass: false)], "out.bin",
           empty_hdlr_name: true,
           movflags: [:faststart, :use_metadata_tags],
-          output_options: [shortest: true]
+          output_options: [shortest: :flag]
         )
-      end)
+      )
 
     argv = FFix.to_argv(built)
     assert values(argv, "-fastfirstpass:0") == ["false"]
@@ -247,9 +274,7 @@ defmodule FFix.ShortcutTest do
 
     assert_raise ArgumentError,
                  ~r/unknown libx264 encoder option "crrf".*Did you mean "crf"/,
-                 fn ->
-                   Encoder.libx264(source, crrf: 18)
-                 end
+                 fn -> Encoder.libx264(source, crrf: 18) end
 
     for options <- [[crf: true], [preset: 18], [fastfirstpass: %{}], [crf: nil]] do
       assert_raise ArgumentError, ~r/invalid value/, fn -> Encoder.libx264(source, options) end
@@ -279,7 +304,7 @@ defmodule FFix.ShortcutTest do
   test "raw values and new option names remain explicit escape hatches" do
     source = input("in.mp4")
     mapping = Encoder.libx264(video(source), crf: "18", raw: [{"future_option", "a=b:c=d"}])
-    built = command(source, fn _input -> Muxer.mp4([mapping], "out.mp4") end)
+    built = command(Muxer.mp4([mapping], "out.mp4"))
     assert values(FFix.to_argv(built), "-future_option:0") == ["a=b:c=d"]
 
     assert_raise ArgumentError, ~r/duplicate option/, fn ->
@@ -371,7 +396,7 @@ defmodule FFix.ShortcutTest do
   test "decoder helpers require an explicit indexed selector" do
     source = input("in.mp4")
 
-    assert_raise ArgumentError, ~r/expected an indexed video selector/, fn ->
+    assert_raise ArgumentError, ~r/decoder selector must be/, fn ->
       Decoder.h264(source, threads: 2)
     end
 
@@ -428,13 +453,9 @@ defmodule FFix.ShortcutTest do
   test "dynamic names do not need a generated registration" do
     source = Demuxer.demux("in.data", "vendor_demuxer", [{"custom", "yes"}])
     source = Decoder.decode(source, "vendor_decoder", {:video, 0}, [{"custom", "decode"}])
-
-    built =
-      command(source, fn input ->
-        mapped = Encoder.encode(video(input), "vendor_encoder", [{"custom", "encode"}])
-        Muxer.mux([mapped], "vendor_muxer", "out.data", raw: [{"custom", "mux"}])
-      end)
-
+    input = source
+    mapped = Encoder.encode(video(input), "vendor_encoder", [{"custom", "encode"}])
+    built = command(Muxer.mux([mapped], "vendor_muxer", "out.data", raw: [{"custom", "mux"}]))
     argv = FFix.to_argv(built)
     assert values(argv, "-f") == ["vendor_demuxer", "vendor_muxer"]
     assert values(argv, "-c:v:0") == ["vendor_decoder"]
@@ -445,73 +466,57 @@ defmodule FFix.ShortcutTest do
   end
 
   test "raw input format selection cannot silently override a demuxer helper" do
-    source = Demuxer.mov("in.mp4", input_options: [f: "matroska"])
-    built = command(source, fn input -> output([video(input)], "out.mp4") end)
-
     assert_raise ArgumentError, ~r/cannot be combined with a structured demuxer/, fn ->
-      FFix.to_argv(built)
+      source = Demuxer.mov("in.mp4", input_options: [f: "matroska"])
+      command(output(video(source), "out.mp4"))
     end
   end
 
-  test "one-callback construction preserves named inputs and accepts filter sources without inputs" do
+  test "ordinary maps organize input declarations and filter sources need no inputs" do
+    inputs = %{main: FFix.input("in.mp4"), music: FFix.input("in.wav")}
+
     built =
-      command(%{main: "in.mp4", music: "in.wav"}, fn inputs ->
+      command(
         Muxer.mp4(
           [Encoder.libx264(video(inputs.main)), Encoder.aac(audio(inputs.music))],
           "out.mp4"
         )
-      end)
+      )
 
     argv = FFix.to_argv(built)
     assert values(argv, "-i") == ["in.mp4", "in.wav"]
     assert values(argv, "-map") == ["0:v:0", "1:a:0"]
-
-    generated =
-      command([], fn [] ->
-        Muxer.null([testsrc(size: "16x16", duration: 0.1)], "-")
-      end)
-
+    generated = command(Muxer.null([testsrc(size: "16x16", duration: 0.1)], "-"))
     assert values(FFix.to_argv(generated), "-i") == []
     assert [_graph] = values(FFix.to_argv(generated), "-filter_complex")
   end
 
-  test "explicit graph/output callbacks continue to work with shortcuts" do
-    built =
-      command(
-        "in.mp4",
-        fn source -> scale(video(source), w: 320, h: -2) end,
-        fn scaled, source ->
-          Muxer.mp4([Encoder.libx264(scaled), stream_copy(audio(source))], "out.mp4")
-        end
-      )
-
+  test "explicit stream composition works with shortcuts" do
+    source = input("in.mp4")
+    scaled = scale(video(source), w: 320, h: -2)
+    built = command(Muxer.mp4([Encoder.libx264(scaled), stream_copy(audio(source))], "out.mp4"))
     assert values(FFix.to_argv(built), "-c:0") == ["libx264"]
     assert values(FFix.to_argv(built), "-c:1") == ["copy"]
   end
 
   test "automatic graphs do not insert splits or permit copying filtered outputs" do
-    copied =
-      command("in.mp4", fn source ->
-        Muxer.mp4([stream_copy(scale(video(source), w: 320, h: -2))], "out.mp4")
-      end)
+    source = FFix.input("in.mp4")
 
-    assert_raise ArgumentError, ~r/cannot copy a filtered source/, fn -> FFix.to_argv(copied) end
+    assert_raise ArgumentError, ~r/cannot copy a filtered source/, fn ->
+      command(Muxer.mp4([stream_copy(scale(video(source), w: 320, h: -2))], "out.mp4"))
+    end
 
-    duplicated =
-      command("in.mp4", fn source ->
-        mapped = video(source) |> scale(w: 320, h: -2) |> Encoder.libx264()
-        [Muxer.mp4([mapped], "first.mp4"), Muxer.mp4([mapped], "second.mp4")]
-      end)
+    source = FFix.input("in.mp4")
+    mapped = video(source) |> scale(w: 320, h: -2) |> Encoder.libx264()
 
-    assert_raise ArgumentError, ~r/is used 2 times/, fn -> FFix.to_argv(duplicated) end
+    assert_raise ArgumentError, ~r/is used 2 times/, fn ->
+      command([Muxer.mp4([mapped], "first.mp4"), Muxer.mp4([mapped], "second.mp4")])
+    end
   end
 
   test "the copy filter remains distinct from packet-level stream copy" do
-    built =
-      command("in.mp4", fn source ->
-        Muxer.mp4([source |> video() |> copy() |> Encoder.libx264()], "out.mp4")
-      end)
-
+    source = FFix.input("in.mp4")
+    built = command(Muxer.mp4([source |> video() |> copy() |> Encoder.libx264()], "out.mp4"))
     assert [graph] = values(FFix.to_argv(built), "-filter_complex")
     assert graph =~ "copy"
     assert values(FFix.to_argv(built), "-c:0") == ["libx264"]

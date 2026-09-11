@@ -212,7 +212,7 @@ defmodule FFix.Filter.MetadataTest do
     assert Value.normalize([:center, :top], specs.flags) == "center+top"
     assert Value.normalize("3", specs.flags) == 3
     assert Value.normalize("C+T", specs.flags) == "C+T"
-    expression = FFix.expr("between(t,1,2)")
+    expression = "between(t,1,2)"
     assert Value.normalize(expression, specs.flags) == expression
   end
 

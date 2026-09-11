@@ -101,6 +101,7 @@ defmodule FFix.Graph.Parse do
 
     node = %Node{
       id: node_id,
+      identity: make_ref(),
       kind: :filter,
       name: name,
       instance: filter.instance,
@@ -159,12 +160,10 @@ defmodule FFix.Graph.Parse do
         if MapSet.member?(used_refs, ref) do
           []
         else
-          name = if label != nil, do: export_name(label)
-
           [
             %Export{
               graph_id: graph_id,
-              name: name,
+              name: label,
               ref: ref,
               media: export_media(ref, state.nodes)
             }
@@ -215,6 +214,7 @@ defmodule FFix.Graph.Parse do
 
         node = %Node{
           id: node_id,
+          identity: make_ref(),
           kind: :input,
           name: :input,
           input_ref: input_ref,
@@ -257,15 +257,34 @@ defmodule FFix.Graph.Parse do
     end
   end
 
+  @media_prefixes %{
+    "v" => :video,
+    "a" => :audio,
+    "s" => :subtitle,
+    "d" => :data,
+    "t" => :attachment
+  }
+
   defp parse_input_ref(label) do
     case String.split(label, ":") do
-      [input] -> build_input_ref(input, :input)
-      [input, "v"] -> build_input_ref(input, :video)
-      [input, "a"] -> build_input_ref(input, :audio)
-      [input, "v", stream] -> build_stream_input_ref(input, stream, :video)
-      [input, "a", stream] -> build_stream_input_ref(input, stream, :audio)
-      [input | selector] -> build_raw_input_ref(input, Enum.join(selector, ":"))
-      _ -> nil
+      [input] ->
+        build_input_ref(input, :input)
+
+      [input, prefix] when is_map_key(@media_prefixes, prefix) ->
+        build_input_ref(input, Map.fetch!(@media_prefixes, prefix))
+
+      [input, prefix, stream] when is_map_key(@media_prefixes, prefix) ->
+        build_stream_input_ref(input, stream, Map.fetch!(@media_prefixes, prefix)) ||
+          build_raw_input_ref(input, prefix <> ":" <> stream)
+
+      [input, index] ->
+        build_stream_input_ref(input, index, :index) || build_raw_input_ref(input, index)
+
+      [input | selector] ->
+        build_raw_input_ref(input, Enum.join(selector, ":"))
+
+      _ ->
+        nil
     end
   end
 
@@ -300,17 +319,5 @@ defmodule FFix.Graph.Parse do
 
   defp preferred_label_metadata(preferred_labels), do: %{preferred_labels: preferred_labels}
 
-  defp export_name(label) do
-    if String.match?(label, ~r/^out\d+$/) do
-      nil
-    else
-      label
-    end
-  end
-
-  defp selector_media(:video), do: :video
-  defp selector_media(:audio), do: :audio
-  defp selector_media({:video, _}), do: :video
-  defp selector_media({:audio, _}), do: :audio
-  defp selector_media(_), do: :unknown
+  defp selector_media(selector), do: InputRef.media(selector)
 end
