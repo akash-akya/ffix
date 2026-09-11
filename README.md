@@ -308,18 +308,17 @@ output-stream callbacks.
 
 ### Refresh Helper Metadata
 
-The named functions, docs, and typespecs are checked-in generated Elixir code.
-No new FFmpeg scans are added to compilation. From the FFix repository:
+An internal macro defines the named functions, docs, and typespecs from
+`priv/ffmpeg/metadata.exs` during compilation, without querying FFmpeg.
+Refresh the recorded metadata explicitly:
 
 ```sh
-mix ffix.gen.helpers --check
-mix ffix.gen.helpers
-mix ffix.gen.helpers --refresh --ffmpeg /usr/bin/ffmpeg
+mix ffix.refresh.metadata --ffmpeg /usr/bin/ffmpeg
 ```
 
-Only `--refresh` captures live metadata. Normal generation reads the recorded
-snapshot; the generic `named` functions cover implementations without helpers.
-The existing filter helpers still perform their original compile-time discovery.
+Metadata changes automatically rebuild the helpers on the next compilation.
+Generic `named` functions cover implementations without helpers. The existing
+filter helpers retain their separate compile-time discovery.
 
 ## Discover FFmpeg Capabilities
 
