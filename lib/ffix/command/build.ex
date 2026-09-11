@@ -5,9 +5,9 @@ defmodule FFix.Command.Build do
   alias FFix.Command.Input
   alias FFix.Command.Mapping
   alias FFix.Command.Output
-  alias FFix.Filter.Builder
   alias FFix.Graph
-  alias FFix.Stream
+  alias FFix.Graph.Builder
+  alias FFix.Graph.StreamRef
 
   @command_keys [:global, :inputs, :graph, :outputs]
   @callback_command_keys [:global]
@@ -100,7 +100,7 @@ defmodule FFix.Command.Build do
       |> Enum.flat_map(& &1.mappings)
       |> Enum.flat_map(fn mapping ->
         case mapping do
-          %Mapping{source: %Stream{plan: %{kind: :filter}} = source} -> [source]
+          %Mapping{source: %StreamRef{plan: %{kind: :filter}} = source} -> [source]
           %Mapping{} -> []
           other -> raise ArgumentError, "invalid output mapping: #{inspect(other)}"
         end
@@ -128,7 +128,7 @@ defmodule FFix.Command.Build do
 
   defp export_mapping(mapping, exports) do
     case mapping.source do
-      %Stream{plan: %{kind: :filter}} = source ->
+      %StreamRef{plan: %{kind: :filter}} = source ->
         %{mapping | source: Map.fetch!(exports, stream_key(source))}
 
       _source ->
@@ -136,7 +136,7 @@ defmodule FFix.Command.Build do
     end
   end
 
-  defp stream_key(%Stream{plan: plan, output: output}), do: {plan.id, output}
+  defp stream_key(%StreamRef{plan: plan, output: output}), do: {plan.id, output}
 
   defp normalize_input_shape!(%Input{} = input) do
     input = normalize_input_value!(:input, input)
@@ -231,7 +231,7 @@ defmodule FFix.Command.Build do
 
   defp graph_from_callback_result!(%Graph{} = graph), do: graph
 
-  defp graph_from_callback_result!(%Stream{} = stream), do: Builder.graph(output: stream)
+  defp graph_from_callback_result!(%StreamRef{} = stream), do: Builder.graph(output: stream)
 
   defp graph_from_callback_result!([]), do: nil
 
@@ -255,7 +255,7 @@ defmodule FFix.Command.Build do
 
   defp graph_callback_value!(nil, nil), do: nil
   defp graph_callback_value!(%Graph{} = graph, %Graph{}), do: graph
-  defp graph_callback_value!(%Stream{}, %Graph{} = graph), do: Graph.export!(graph, 0)
+  defp graph_callback_value!(%StreamRef{}, %Graph{} = graph), do: Graph.export!(graph, 0)
   defp graph_callback_value!([], nil), do: []
 
   defp graph_callback_value!(values, %Graph{} = graph) when is_list(values) do
@@ -299,11 +299,11 @@ defmodule FFix.Command.Build do
     end)
   end
 
-  defp normalize_graph_output!(_name, %Stream{} = stream), do: stream
+  defp normalize_graph_output!(_name, %StreamRef{} = stream), do: stream
 
   defp normalize_graph_output!(name, other) do
     raise ArgumentError,
-          "graph output #{inspect(name)} must be an FFix.Stream, got: #{inspect(other)}"
+          "graph output #{inspect(name)} must be an FFix.Graph.StreamRef, got: #{inspect(other)}"
   end
 
   defp graph_from_outputs!([]), do: nil

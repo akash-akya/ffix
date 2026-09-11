@@ -157,13 +157,13 @@ defmodule FFix do
              ]
 
   alias FFix.Command
-  alias FFix.Expr
   alias FFix.Command.Build
-  alias FFix.Filter.Builder
   alias FFix.Graph
+  alias FFix.Graph.Builder
+  alias FFix.Graph.Expr
+  alias FFix.Graph.StreamRef
+  alias FFix.Graph.Terminal
   alias FFix.Runner
-  alias FFix.Stream
-  alias FFix.Terminal
 
   @doc group: "Setup"
   @doc """
@@ -221,12 +221,12 @@ defmodule FFix do
 
   @doc group: "Inputs and outputs"
   @doc "Selects one video stream by its media-relative index; defaults to the first video stream."
-  @spec video(Command.Input.t(), non_neg_integer()) :: Stream.t()
+  @spec video(Command.Input.t(), non_neg_integer()) :: StreamRef.t()
   def video(%Command.Input{} = input, index \\ 0), do: input[video: index]
 
   @doc group: "Inputs and outputs"
   @doc "Selects one audio stream by its media-relative index; defaults to the first audio stream."
-  @spec audio(Command.Input.t(), non_neg_integer()) :: Stream.t()
+  @spec audio(Command.Input.t(), non_neg_integer()) :: StreamRef.t()
   def audio(%Command.Input{} = input, index \\ 0), do: input[audio: index]
 
   @doc group: "Inputs and outputs"
@@ -250,18 +250,24 @@ defmodule FFix do
 
   @doc group: "Filtergraphs"
   @doc """
-  Applies a filter by name.
+  Applies a filter by string or atom name without consulting metadata.
 
-  Most code should call generated helpers from `FFix.Filter`, such as
-  `scale/2`, `overlay/3`, or `fps/2`. Use `filter/3` when the filter name is
-  dynamic.
+  Pass one stream reference or a flat list (`[]` for source filters), followed
+  by the name, required output media list, and options. Each output must be
+  `:audio`, `:video`, or `:unknown`. One output returns a stream reference,
+  multiple outputs return a list, and `[]` returns a terminal sink.
 
-      FFix.filter(:scale, [video], w: 1280, h: -1)
+  Prefer generated `FFix.Filter` helpers when the filter is known. Generic calls
+  require an explicit output shape and forward options without metadata checks.
+
+      FFix.filter(video, :scale, [:video], w: 1280, h: -1)
   """
-  @spec filter(atom() | String.t(), [Stream.t()], keyword()) ::
-          Stream.t() | Terminal.t() | [Stream.t()] | tuple()
-  def filter(name, inputs, options \\ []) when is_list(inputs) do
-    Builder.filter(name, inputs, options)
+  @spec filter(StreamRef.t() | [StreamRef.t()], atom() | String.t(), [output_media()], [
+          FFix.Filter.option()
+        ]) ::
+          StreamRef.t() | [StreamRef.t()] | Terminal.t()
+  def filter(inputs, name, output_media, options \\ []) do
+    FFix.Filter.filter(inputs, name, output_media, options)
   end
 
   @typedoc """
@@ -281,8 +287,8 @@ defmodule FFix do
         |> ebur128(video: true)
         |> FFix.shape([:audio, :video])
   """
-  @spec shape(Stream.t() | [Stream.t()] | tuple(), [output_media()]) ::
-          Stream.t() | [Stream.t()]
+  @spec shape(StreamRef.t() | [StreamRef.t()] | tuple(), [output_media()]) ::
+          StreamRef.t() | [StreamRef.t()]
   def shape(result, outputs), do: Builder.shape(result, outputs)
 
   @doc group: "Filtergraphs"

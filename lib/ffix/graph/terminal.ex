@@ -1,4 +1,4 @@
-defmodule FFix.Terminal do
+defmodule FFix.Graph.Terminal do
   @moduledoc """
   Opaque handle for a sink-ending pipeline.
 

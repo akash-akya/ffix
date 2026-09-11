@@ -1,7 +1,7 @@
 defmodule FFix.Graph.Render do
   @moduledoc false
 
-  alias FFix.Expr
+  alias FFix.Graph.Expr
   alias FFix.Graph
   alias FFix.Graph.Export
   alias FFix.Graph.InputRef
@@ -56,7 +56,7 @@ defmodule FFix.Graph.Render do
     inputs <> filter_name(node) <> args <> outputs <> ";"
   end
 
-  defp filter_name(%Node{instance: nil, name: name}), do: Atom.to_string(name)
+  defp filter_name(%Node{instance: nil, name: name}), do: to_string(name)
   defp filter_name(%Node{name: name, instance: instance}), do: "#{name}@#{instance}"
 
   defp input_label(%Ref{} = ref, nodes, output_labels) do
@@ -158,10 +158,11 @@ defmodule FFix.Graph.Render do
         node = Map.fetch!(graph.nodes, node_id)
 
         if node.kind == :filter do
-          count = Map.get(counts, node.name, 0)
-          label = if count == 0, do: Atom.to_string(node.name), else: "#{node.name}_#{count}"
+          name = to_string(node.name)
+          count = Map.get(counts, name, 0)
+          label = if count == 0, do: name, else: "#{name}_#{count}"
 
-          {Map.put(labels, node_id, label), Map.put(counts, node.name, count + 1)}
+          {Map.put(labels, node_id, label), Map.put(counts, name, count + 1)}
         else
           {labels, counts}
         end

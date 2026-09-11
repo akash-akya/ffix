@@ -74,6 +74,31 @@ defmodule FFix.FFmpegIntegrationTest do
     assert {192, 54} == probe_dimensions!(output_file)
   end
 
+  test "runs generic filters with explicit shapes through an encoder and muxer", %{
+    tmp_dir: tmp_dir,
+    sample_video: sample_video
+  } do
+    target = Path.join(tmp_dir, "generic.png")
+
+    command =
+      FFix.command(
+        sample_video,
+        fn source ->
+          source
+          |> FFix.video()
+          |> Filter.filter("scale", [:video], w: 80, h: -2)
+          |> Filter.filter("hflip", [:video])
+          |> Encoder.png(threads: 1)
+          |> Muxer.image2(target, update: true, output_options: ["frames:v": 1])
+        end,
+        global: ffmpeg_globals()
+      )
+
+    run_ffmpeg!(command)
+    assert_nonempty_file!(target)
+    assert probe_dimensions!(target) == {80, 46}
+  end
+
   test "accepts a parsed round-tripped graph with escaped metadata values", %{
     sample_video: sample_video
   } do

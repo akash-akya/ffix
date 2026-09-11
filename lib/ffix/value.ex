@@ -1,7 +1,7 @@
 defmodule FFix.Value do
   @moduledoc false
 
-  alias FFix.Expr
+  alias FFix.Graph.Expr
 
   @type option_spec :: %{optional(:type) => term()} | nil
 
