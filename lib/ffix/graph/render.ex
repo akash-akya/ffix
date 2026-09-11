@@ -105,7 +105,7 @@ defmodule FFix.Graph.Render do
   defp encode_value(%Expr{source: source}), do: escape_value(source)
   defp encode_value(value) when is_boolean(value), do: to_string(value)
   defp encode_value(value) when is_integer(value), do: Integer.to_string(value)
-  defp encode_value(value) when is_float(value), do: :erlang.float_to_binary(value, [:compact])
+  defp encode_value(value) when is_float(value), do: FFix.Value.float_to_string(value)
   defp encode_value(nil), do: ""
   defp encode_value(value) when is_atom(value), do: value |> Atom.to_string() |> escape_value()
   defp encode_value(value) when is_list(value), do: Enum.map_join(value, "|", &encode_value/1)

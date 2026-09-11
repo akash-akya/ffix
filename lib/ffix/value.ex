@@ -5,6 +5,41 @@ defmodule FFix.Value do
 
   @type option_spec :: %{optional(:type) => term()} | nil
 
+  # FFmpeg duration options accept decimal notation, not scientific notation.
+  @spec float_to_string(float()) :: String.t()
+  def float_to_string(value) when is_float(value) do
+    decimal =
+      case String.split(Float.to_string(value), "e") do
+        [decimal] ->
+          decimal
+
+        [mantissa, exponent] ->
+          sign = if String.starts_with?(mantissa, "-"), do: "-", else: ""
+          [whole, fraction] = mantissa |> String.trim_leading("-") |> String.split(".")
+          digits = whole <> fraction
+          point = byte_size(whole) + String.to_integer(exponent)
+
+          decimal =
+            cond do
+              point <= 0 ->
+                "0." <> String.duplicate("0", -point) <> digits
+
+              point >= byte_size(digits) ->
+                digits <> String.duplicate("0", point - byte_size(digits))
+
+              true ->
+                {left, right} = String.split_at(digits, point)
+                left <> "." <> right
+            end
+
+          sign <> decimal
+      end
+
+    if String.contains?(decimal, "."),
+      do: decimal |> String.trim_trailing("0") |> String.trim_trailing("."),
+      else: decimal
+  end
+
   @spec normalize(term(), option_spec()) :: term()
   def normalize(value, %{type: {:array, type}} = spec) when is_list(value) do
     item_spec = Map.put(spec, :type, type)
@@ -54,7 +89,7 @@ defmodule FFix.Value do
       %Expr{source: source} -> source
       value when is_binary(value) -> value
       value when is_integer(value) -> Integer.to_string(value)
-      value when is_float(value) -> :erlang.float_to_binary(value, [:compact])
+      value when is_float(value) -> float_to_string(value)
       value when is_boolean(value) -> to_string(value)
       nil -> ""
       value -> to_string(value)
