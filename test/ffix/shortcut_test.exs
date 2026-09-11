@@ -414,7 +414,7 @@ defmodule FFix.ShortcutTest do
       end
     end
 
-    assert_raise ArgumentError, ~r/expected a stream or graph export source/, fn ->
+    assert_raise ArgumentError, ~r/invalid output source\/target/, fn ->
       Muxer.mp4("out.mp4", sources: [source])
     end
 
@@ -503,7 +503,7 @@ defmodule FFix.ShortcutTest do
         [Muxer.mp4([mapped], "first.mp4"), Muxer.mp4([mapped], "second.mp4")]
       end)
 
-    assert_raise ArgumentError, ~r/is mapped 2 times/, fn -> FFix.to_argv(duplicated) end
+    assert_raise ArgumentError, ~r/is used 2 times/, fn -> FFix.to_argv(duplicated) end
   end
 
   test "the copy filter remains distinct from packet-level stream copy" do

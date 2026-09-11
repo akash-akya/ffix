@@ -404,7 +404,7 @@ defmodule FFix.OutputCallbackTest do
   test "unknown output media is rejected rather than guessed" do
     built =
       command("in.mp4", fn source ->
-        unknown = source |> video() |> null() |> FFix.shape([:unknown])
+        unknown = source |> video() |> FFix.Filter.filter("null", [:unknown])
 
         output(
           [main: unknown],

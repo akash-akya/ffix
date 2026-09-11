@@ -61,7 +61,15 @@ defmodule FFix.Command.Build do
   end
 
   defp validate_command_keys!(options) do
-    unknown = Keyword.keys(options) -- @command_keys
+    unless Keyword.keyword?(options),
+      do: raise(ArgumentError, "command options must be a keyword list")
+
+    keys = Keyword.keys(options)
+
+    if length(keys) != length(Enum.uniq(keys)),
+      do: raise(ArgumentError, "duplicate command option")
+
+    unknown = keys -- @command_keys
 
     if unknown != [] do
       raise ArgumentError, "unknown command keys: #{inspect(unknown)}"
@@ -73,7 +81,12 @@ defmodule FFix.Command.Build do
       raise ArgumentError, "command options must be a keyword list"
     end
 
-    unknown = Keyword.keys(options) -- @callback_command_keys
+    keys = Keyword.keys(options)
+
+    if length(keys) != length(Enum.uniq(keys)),
+      do: raise(ArgumentError, "duplicate command option")
+
+    unknown = keys -- @callback_command_keys
 
     if unknown != [] do
       raise ArgumentError,
@@ -94,10 +107,14 @@ defmodule FFix.Command.Build do
     )
   end
 
-  defp export_output_sources(outputs) do
+  @doc false
+  def export_output_sources(outputs) do
     streams =
       outputs
-      |> Enum.flat_map(& &1.mappings)
+      |> Enum.flat_map(fn
+        %Output{mappings: mappings} when is_list(mappings) -> mappings
+        _ -> raise ArgumentError, "output mappings must be a list of Mapping values"
+      end)
       |> Enum.flat_map(fn mapping ->
         case mapping do
           %Mapping{source: %StreamRef{plan: %{kind: :filter}} = source} -> [source]
@@ -105,7 +122,6 @@ defmodule FFix.Command.Build do
           other -> raise ArgumentError, "invalid output mapping: #{inspect(other)}"
         end
       end)
-      |> Enum.uniq_by(&stream_key/1)
 
     case streams do
       [] ->

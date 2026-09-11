@@ -65,6 +65,7 @@ defmodule FFix.Filter.Helpers do
         FFix.Graph.Builder.apply_filter(
           unquote(name),
           [unquote_splicing(input_args)],
+          unquote(inputs),
           unquote(outputs),
           options,
           unquote(Macro.escape(option_specs))
@@ -79,7 +80,7 @@ defmodule FFix.Filter.Helpers do
         quote(do: FFix.Graph.Terminal.t())
 
       [:N] ->
-        quote(do: FFix.Graph.StreamRef.t() | [FFix.Graph.StreamRef.t()])
+        quote(do: FFix.Graph.StreamRef.t() | [FFix.Graph.StreamRef.t()] | FFix.Graph.Terminal.t())
 
       [_single] ->
         quote(do: FFix.Graph.StreamRef.t())

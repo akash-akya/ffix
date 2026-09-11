@@ -54,6 +54,7 @@ defmodule FFix.Filter.MetadataTest do
 
     assert specs.overlay.repeatlast.desc =~ "extend last frame"
     assert filters.scale.inputs == [:V]
+    assert filters.scale.dynamic_pads.inputs =~ "dynamic"
     assert hd(entries).help.dynamic_pads.inputs =~ "dynamic"
     assert Enum.any?(hd(entries).help.option_sections, &(&1.name == "SWScaler"))
   end
@@ -238,6 +239,19 @@ defmodule FFix.Filter.MetadataTest do
     assert filter.flags == [:T]
     assert specs.enable.implicit == :timeline
     assert specs.enable.declarations == []
+  end
+
+  test "legacy count entry points share alias and positional inference" do
+    split = Metadata.filter_spec(:split)
+    select = Metadata.filter_spec(:select)
+
+    assert Metadata.dynamic_count_from_options(select, :outputs, outputs: 3, n: 2) == 2
+    assert Metadata.dynamic_count_from_options(split, :outputs, pos: 3) == 3
+    assert Metadata.dynamic_count_from_args(select, :outputs, [{"n", "2"}]) == 2
+    assert Metadata.dynamic_count_from_args(split, :outputs, pos: "3") == 3
+    assert Metadata.dynamic_count_from_options(split, :outputs, outputs: 0) == 0
+    assert Metadata.dynamic_count_from_options(split, :outputs, outputs: "bad") == nil
+    assert Metadata.dynamic_count_from_options(%{n: %{default: 2}}, :outputs, n: 3) == nil
   end
 
   defp captured_entry(name, inputs, outputs, flags \\ "...") do

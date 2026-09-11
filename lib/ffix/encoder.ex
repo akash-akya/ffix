@@ -46,6 +46,14 @@ defmodule FFix.Encoder do
     Mapping.new(source, new(name, options))
   end
 
+  @doc false
+  def validate_source_media!(%{media: media}, expected)
+      when media != :unknown and expected != nil and media != expected do
+    raise ArgumentError, "encoder expects #{expected} source, got: #{media}"
+  end
+
+  def validate_source_media!(_source, _expected), do: :ok
+
   require FFix.Helpers
   FFix.Helpers.define(:encoder)
 end

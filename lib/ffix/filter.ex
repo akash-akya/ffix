@@ -20,10 +20,10 @@ defmodule FFix.Filter do
   Some ffmpeg filters have dynamic output shapes. Use `FFix.shape/2` when the
   generated metadata cannot infer the shape you need:
 
-      [audio, video] =
+      [video, audio] =
         audio_in
         |> ebur128(video: true)
-        |> FFix.shape([:audio, :video])
+        |> FFix.shape([:video, :audio])
 
   Use `filter/4` to supply a filter name, explicit output media, and options
   without metadata lookup.

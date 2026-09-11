@@ -28,4 +28,28 @@ defmodule FFix.Graph.InputRef do
     raise ArgumentError,
           "input id must be a non-negative integer, reference, atom, or non-empty string, got: #{inspect(input)}"
   end
+
+  @spec normalize_selector!(term()) :: selector()
+  def normalize_selector!(selector) when selector in [:input, :video, :audio], do: selector
+
+  def normalize_selector!({media, index} = selector)
+      when media in [:video, :audio] and is_integer(index) and index >= 0,
+      do: selector
+
+  def normalize_selector!({:raw, value} = selector) when is_binary(value) and value != "" do
+    if String.contains?(value, <<0>>),
+      do: raise(ArgumentError, "input selector cannot contain NUL")
+
+    selector
+  end
+
+  def normalize_selector!(selector),
+    do: raise(ArgumentError, "invalid input selector: #{inspect(selector)}")
+
+  @spec media(selector()) :: :audio | :video | :unknown
+  def media(:video), do: :video
+  def media(:audio), do: :audio
+  def media({:video, _index}), do: :video
+  def media({:audio, _index}), do: :audio
+  def media(_selector), do: :unknown
 end

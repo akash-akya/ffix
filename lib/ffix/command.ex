@@ -123,11 +123,17 @@ defmodule FFix.Command do
   def new(options) when is_list(options) do
     validate_command_keys!(options)
 
+    graph = normalize_graph!(Keyword.get(options, :graph))
+    outputs = normalize_outputs!(Keyword.get(options, :outputs, []))
+
+    {graph, outputs} =
+      if graph, do: {graph, outputs}, else: FFix.Command.Build.export_output_sources(outputs)
+
     %__MODULE__{
       global_options: normalize_option_list!(Keyword.get(options, :global, []), :global),
       inputs: normalize_inputs!(Keyword.get(options, :inputs, [])),
-      graph: normalize_graph!(Keyword.get(options, :graph)),
-      outputs: normalize_outputs!(Keyword.get(options, :outputs, []))
+      graph: graph,
+      outputs: outputs
     }
   end
 
@@ -185,6 +191,10 @@ defmodule FFix.Command do
   def input(%__MODULE__{} = command, source), do: input(command, source, [])
 
   def input(source, options) when is_list(options) do
+    validate_endpoint!(source, :input)
+    {configuration, raw_options} = Options.split!(options, [:demuxer, :decoders])
+    validate_cli_options!(raw_options)
+
     if Keyword.has_key?(options, :label) do
       raise ArgumentError, "input labels are not supported; name inputs in command inputs instead"
     end
@@ -192,9 +202,9 @@ defmodule FFix.Command do
     %Input{
       id: make_ref(),
       source: source,
-      options: Keyword.drop(options, [:demuxer, :decoders]),
-      demuxer: Keyword.get(options, :demuxer),
-      decoders: Keyword.get(options, :decoders, %{})
+      options: raw_options,
+      demuxer: Keyword.get(configuration, :demuxer),
+      decoders: Keyword.get(configuration, :decoders, %{})
     }
   end
 
@@ -211,6 +221,10 @@ defmodule FFix.Command do
       |> FFix.Command.input("input.mp4", ss: "00:00:03")
   """
   @spec input(t(), Input.source(), keyword()) :: t()
+  def input(%__MODULE__{} = command, %Input{} = input, []) do
+    %{command | inputs: command.inputs ++ [input]}
+  end
+
   def input(%__MODULE__{} = command, source, options) when is_list(options) do
     %{command | inputs: command.inputs ++ [input(source, options)]}
   end
@@ -268,6 +282,9 @@ defmodule FFix.Command do
   def output(%__MODULE__{} = command, sources, target), do: output(command, sources, target, [])
 
   def output(sources, target, options) when is_list(options) do
+    validate_endpoint!(target, :output)
+    {configuration, raw_options} = Options.split!(options, [:muxer])
+    validate_cli_options!(raw_options)
     sources = List.wrap(sources)
 
     if sources == [] do
@@ -294,8 +311,8 @@ defmodule FFix.Command do
     %Output{
       target: target,
       mappings: mappings,
-      muxer: Keyword.get(options, :muxer),
-      options: Keyword.drop(options, [:muxer])
+      muxer: Keyword.get(configuration, :muxer),
+      options: raw_options
     }
   end
 
@@ -333,11 +350,18 @@ defmodule FFix.Command do
   """
   @spec validate!(t()) :: t()
   def validate!(%__MODULE__{} = command) do
+    validate_cli_options!(command.global_options)
     validate_option_callbacks!(command.global_options, false)
 
     Enum.each(command.inputs, fn input ->
       case input do
         %Input{} ->
+          validate_endpoint!(input.source, :input)
+          validate_cli_options!(input.options)
+
+          unless is_nil(input.id) or is_reference(input.id),
+            do: raise(ArgumentError, "input identity must be a reference or nil")
+
           validate_option_callbacks!(input.options, false)
           validate_demuxer!(input)
           validate_decoders!(input)
@@ -431,7 +455,15 @@ defmodule FFix.Command do
   end
 
   defp validate_command_keys!(options) do
-    unknown = Keyword.keys(options) -- [:global, :inputs, :graph, :outputs]
+    unless Keyword.keyword?(options),
+      do: raise(ArgumentError, "command options must be a keyword list")
+
+    keys = Keyword.keys(options)
+
+    if length(keys) != length(Enum.uniq(keys)),
+      do: raise(ArgumentError, "duplicate command option")
+
+    unknown = keys -- [:global, :inputs, :graph, :outputs]
 
     if unknown != [] do
       raise ArgumentError, "unknown command keys: #{inspect(unknown)}"
@@ -509,6 +541,9 @@ defmodule FFix.Command do
   end
 
   defp validate_output!(output, graph, input_count, input_index_map) do
+    validate_endpoint!(output.target, :output)
+    validate_cli_options!(output.options)
+
     unless is_list(output.mappings) do
       raise ArgumentError, "output mappings must be a list of Mapping values"
     end
@@ -727,7 +762,9 @@ defmodule FFix.Command do
 
   @doc false
   def validate_component!(component) do
-    unless is_nil(component.name) or (is_binary(component.name) and component.name != "") do
+    unless is_nil(component.name) or
+             (is_binary(component.name) and component.name != "" and
+                not String.contains?(component.name, <<0>>)) do
       raise ArgumentError, "component name must be a non-empty string or nil"
     end
 
@@ -749,6 +786,11 @@ defmodule FFix.Command do
       end
     end)
 
+    names = Enum.map(component.options, fn {key, _value} -> encode_option_key(key) end)
+
+    if length(names) != length(Enum.uniq(names)),
+      do: raise(ArgumentError, "duplicate component option; specify each option once")
+
     callbacks? = is_struct(component, Encoder) or is_struct(component, Muxer)
     validate_option_callbacks!(component.options, callbacks?)
     component
@@ -767,6 +809,9 @@ defmodule FFix.Command do
     if name in (@codec_selection_options ++ @mapping_options ++ ["f"]) do
       raise ArgumentError, "#{inspect(name)} is a CLI control, not a component AVOption"
     end
+
+    if is_binary(value) and String.contains?(value, <<0>>),
+      do: raise(ArgumentError, "component option values cannot contain NUL")
 
     scalar? = is_binary(value) or is_number(value) or (is_atom(value) and not is_nil(value))
 
@@ -787,16 +832,13 @@ defmodule FFix.Command do
   end
 
   defp validate_raw_options!(options, reserved, owner) do
+    reserved = Enum.map(reserved, &canonical_option_name/1)
+
     Enum.each(options, fn {key, _value} ->
       name = encode_option_key(key)
       [base_name | _specifier] = String.split(name, ":", parts: 2)
 
-      canonical_name =
-        case base_name do
-          "ab" -> "b"
-          "vb" -> "b"
-          name -> name
-        end
+      canonical_name = canonical_option_name(base_name)
 
       if base_name in reserved or canonical_name in reserved do
         raise ArgumentError, "raw option #{inspect(name)} cannot be combined with #{owner}"
@@ -809,7 +851,7 @@ defmodule FFix.Command do
   end
 
   defp validate_source!(%Export{} = export, %Graph{} = graph, _input_count, _input_index_map) do
-    unless Enum.member?(graph.exports, export) do
+    unless export.graph_id == graph.id and Enum.member?(graph.exports, export) do
       raise ArgumentError,
             "graph export #{inspect(export.name || export.ref)} is not exported by the command graph"
     end
@@ -956,11 +998,14 @@ defmodule FFix.Command do
           %{mapping | encoding: resolve_component_options!(mapping.encoding, streams)}
         end)
 
+      options = Options.resolve!(output.options, streams)
+      validate_cli_options!(options)
+
       %{
         output
         | mappings: mappings,
           muxer: resolve_component_options!(output.muxer, streams),
-          options: Options.resolve!(output.options, streams)
+          options: options
       }
     else
       output
@@ -1068,10 +1113,19 @@ defmodule FFix.Command do
   end
 
   defp resolve_stream_source!(
-         %StreamRef{plan: %{kind: :input, input_ref: %InputRef{} = input_ref}},
+         %StreamRef{
+           plan: %{kind: :input, outputs: 1, input_ref: %InputRef{} = input_ref},
+           output: 0,
+           media: media
+         },
          input_count,
          input_index_map
        ) do
+    selector = InputRef.normalize_selector!(input_ref.selector)
+
+    unless media == InputRef.media(selector),
+      do: raise(ArgumentError, "input stream media does not match its selector")
+
     resolve_input_ref!(input_ref, input_count, input_index_map)
   end
 
@@ -1146,6 +1200,64 @@ defmodule FFix.Command do
   defp encode_option_value(value) do
     raise ArgumentError, "invalid CLI option value: #{inspect(value)}"
   end
+
+  defp canonical_option_name(name) when name in ["ab", "vb"], do: "b"
+  defp canonical_option_name(name), do: name
+
+  @doc false
+  def validate_endpoint!(endpoint, direction) do
+    valid? =
+      case endpoint do
+        value when is_binary(value) -> value != "" and not String.contains?(value, <<0>>)
+        {:url, value} when is_binary(value) -> value != "" and not String.contains?(value, <<0>>)
+        {:pipe, descriptor} when is_integer(descriptor) and descriptor >= 0 -> true
+        :stdin -> direction == :input
+        :stdout -> direction == :output
+        _ -> false
+      end
+
+    unless valid?,
+      do: raise(ArgumentError, "invalid #{direction} source/target: #{inspect(endpoint)}")
+
+    endpoint
+  end
+
+  defp validate_cli_options!(options) do
+    {_special, options} = Options.split!(options, [])
+
+    Enum.each(options, fn {key, value} ->
+      name = encode_option_key(key)
+
+      if name == "" or String.starts_with?(name, "-") or
+           String.contains?(name, [" ", "\t", "\n", "\r", <<0>>]),
+         do: raise(ArgumentError, "invalid CLI option name: #{inspect(name)}")
+
+      validate_cli_value!(value)
+    end)
+  end
+
+  defp validate_cli_value!(value) when is_function(value, 1), do: :ok
+
+  defp validate_cli_value!(value) when is_binary(value) do
+    if String.contains?(value, <<0>>),
+      do: raise(ArgumentError, "CLI option values cannot contain NUL")
+
+    :ok
+  end
+
+  defp validate_cli_value!(value) when is_atom(value) or is_number(value), do: :ok
+
+  defp validate_cli_value!(values) when is_list(values) do
+    Enum.each(values, fn value ->
+      if is_function(value), do: raise(ArgumentError, "callbacks must be complete option values")
+      validate_cli_value!(value)
+    end)
+  end
+
+  defp validate_cli_value!(value) when is_function(value), do: :ok
+
+  defp validate_cli_value!(value),
+    do: raise(ArgumentError, "invalid CLI option value: #{inspect(value)}")
 
   defp encode_input_source(:stdin), do: "pipe:0"
   defp encode_input_source({:pipe, fd}) when is_integer(fd) and fd >= 0, do: "pipe:#{fd}"

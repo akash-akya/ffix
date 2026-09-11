@@ -61,45 +61,26 @@ defmodule FFix.Filter.Metadata do
 
   @spec dynamic_count_from_options(map(), :inputs | :outputs, keyword()) :: integer() | nil
   def dynamic_count_from_options(option_specs, kind, options) when is_list(options) do
-    case dynamic_count_option(option_specs, kind) do
+    filter_name = Enum.find_value(option_specs, fn {_option, spec} -> spec[:filter_name] end)
+
+    case filter_name do
       nil ->
         nil
 
-      option ->
-        parse_integer(Keyword.get(options, option)) || option_default(option_specs[option])
+      name ->
+        case FFix.Filter.Shape.resolve(name, kind, options) do
+          {:ok, media} -> length(media)
+          {:unresolved, _reason} -> nil
+        end
     end
   end
 
   @spec dynamic_count_from_args(map(), :inputs | :outputs, keyword()) :: integer() | nil
   def dynamic_count_from_args(option_specs, kind, args) when is_list(args) do
-    case dynamic_count_option(option_specs, kind) do
-      nil ->
-        nil
-
-      option ->
-        option_name = Atom.to_string(option)
-
-        args
-        |> Enum.find_value(fn
-          {^option_name, value} -> parse_integer(value)
-          {_other, _value} -> nil
-        end)
-        |> Kernel.||(option_default(option_specs[option]))
-    end
+    dynamic_count_from_options(option_specs, kind, args)
   end
 
   @spec option_default(map() | nil) :: integer() | nil
   def option_default(nil), do: nil
   def option_default(%{default: default}), do: default
-
-  defp parse_integer(value) when is_integer(value), do: value
-
-  defp parse_integer(value) when is_binary(value) do
-    case Integer.parse(value) do
-      {integer, ""} -> integer
-      _ -> nil
-    end
-  end
-
-  defp parse_integer(_value), do: nil
 end

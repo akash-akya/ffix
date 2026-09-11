@@ -472,7 +472,7 @@ defmodule FFix.FFmpegIntegrationTest do
     assert %FFix.Runner.Progress{status: :end} = result.last_progress
   end
 
-  test "runner stderr discard suppresses ffmpeg log and progress events" do
+  test "runner stderr discard keeps live ffmpeg events without retaining logs" do
     parent = self()
     command = runner_observation_command()
 
@@ -486,16 +486,12 @@ defmodule FFix.FFmpegIntegrationTest do
     assert result.exit_status == 0
     assert result.stderr == nil
     assert result.logs == []
-    assert result.last_progress == nil
+    assert %FFix.Runner.Progress{status: :end} = result.last_progress
 
     events = collect_runner_events([])
-
-    refute Enum.any?(events, fn
-             {:stderr, _} -> true
-             {:log, _} -> true
-             {:progress, _} -> true
-             _ -> false
-           end)
+    assert Enum.any?(events, &match?({:stderr, _}, &1))
+    assert Enum.any?(events, &match?({:log, _}, &1))
+    assert Enum.any?(events, &match?({:progress, %FFix.Runner.Progress{status: :end}}, &1))
   end
 
   defp create_sample_video!(path) do

@@ -64,7 +64,7 @@ defmodule FFix.Graph.Render do
 
     case node.kind do
       :input ->
-        "[#{input_ref_to_string(node.input_ref)}]"
+        "[#{escape_graph(input_ref_to_string(node.input_ref))}]"
 
       :filter ->
         label = Map.fetch!(output_labels, ref_key(ref))
@@ -93,33 +93,38 @@ defmodule FFix.Graph.Render do
         {key, value} -> "#{key}=#{encode_value(value)}"
       end)
 
-    "=" <> encoded
+    "=" <> escape_graph(encoded)
   end
 
   defp encode_setting_value(value) when is_list(value) do
-    Enum.map_join(value, "+", &encode_value/1)
+    value |> Enum.map_join("+", &encode_value/1) |> escape_graph()
   end
 
-  defp encode_setting_value(value), do: encode_value(value)
+  defp encode_setting_value(value), do: value |> encode_value() |> escape_graph()
 
   defp encode_value(%Expr{source: source}), do: escape_value(source)
   defp encode_value(value) when is_boolean(value), do: to_string(value)
   defp encode_value(value) when is_integer(value), do: Integer.to_string(value)
   defp encode_value(value) when is_float(value), do: :erlang.float_to_binary(value, [:compact])
-  defp encode_value(value) when is_atom(value), do: Atom.to_string(value)
+  defp encode_value(nil), do: ""
+  defp encode_value(value) when is_atom(value), do: value |> Atom.to_string() |> escape_value()
   defp encode_value(value) when is_list(value), do: Enum.map_join(value, "|", &encode_value/1)
   defp encode_value(value) when is_binary(value), do: escape_value(value)
-  defp encode_value(nil), do: ""
 
-  defp escape_value(value) do
+  # FFmpeg consumes option escaping after consuming filtergraph escaping. Neither
+  # layer is shell quoting; this string is passed as one argv entry.
+  defp escape_value(value), do: escape(value, ~c"\\':= \t\r\n")
+  defp escape_graph(value), do: escape(value, ~c"\\'[],; \t\r\n")
+
+  defp escape(value, special_chars) do
+    if String.contains?(value, <<0>>) do
+      raise ArgumentError, "filtergraph values must not contain NUL"
+    end
+
     value
-    |> String.replace("\\", "\\\\")
-    |> String.replace(":", "\\:")
-    |> String.replace(",", "\\,")
-    |> String.replace(";", "\\;")
-    |> String.replace("[", "\\[")
-    |> String.replace("]", "\\]")
-    |> String.replace("'", "\\'")
+    |> String.to_charlist()
+    |> Enum.map(fn char -> if char in special_chars, do: [?\\, char], else: char end)
+    |> List.to_string()
   end
 
   defp input_ref_to_string(%InputRef{input: input, selector: :input}),
@@ -189,7 +194,8 @@ defmodule FFix.Graph.Render do
             {labels, used_labels}
           else
             preferred_label = Map.get(preferred_labels, output)
-            base_label = preferred_label || "#{Map.fetch!(node_labels, node_id)}_#{output}"
+            fallback_label = "#{Map.fetch!(node_labels, node_id)}_#{output}"
+            base_label = safe_label(preferred_label, fallback_label)
             label = unique_label(base_label, used_labels)
             {Map.put(labels, key, label), MapSet.put(used_labels, label)}
           end
@@ -208,7 +214,7 @@ defmodule FFix.Graph.Render do
     Enum.with_index(exports)
     |> Enum.reduce({%{}, MapSet.new()}, fn {%Export{name: name, ref: ref}, index},
                                            {labels, used} ->
-      base_label = if name, do: to_string(name), else: "out#{index}"
+      base_label = safe_label(name, "out#{index}")
       label = unique_label(base_label, used)
 
       {Map.put(labels, ref_key(ref), label), MapSet.put(used, label)}
@@ -239,6 +245,17 @@ defmodule FFix.Graph.Render do
   end
 
   defp ref_key(%Ref{node_id: node_id, output: output}), do: {node_id, output}
+
+  defp safe_label(nil, fallback), do: fallback
+
+  defp safe_label(name, fallback) do
+    label = to_string(name)
+
+    case String.match?(label, ~r/\A[A-Za-z0-9_]+\z/) do
+      true -> label
+      false -> fallback
+    end
+  end
 
   defp unique_label(base, used_labels) do
     if MapSet.member?(used_labels, base) do

@@ -96,22 +96,25 @@ defmodule FFix.Graph.ParseTest do
              |> String.trim()
   end
 
-  test "normalizes quoted values without losing meaning" do
-    assert FFix.to_filtergraph(
-             Graph.parse!(~S([0:v]drawtext=text='hello, world':x=20:y=20[video]))
-           ) ==
-             ~S([0:v]drawtext=text=hello\, world:x=20:y=20[video];)
-
-    assert FFix.to_filtergraph(Graph.parse!(~S([0:v]drawtext=text='it\'s:ok':x=20:y=20[video]))) ==
-             ~S([0:v]drawtext=text=it\'s\:ok:x=20:y=20[video];)
+  test "normalizes quoted and layered escaped values without losing meaning" do
+    for {source, text} <- [
+          {~S([0:v]drawtext=text='hello, world':x=20:y=20[video]), "hello, world"},
+          {~S([0:v]drawtext=text=it\\\'s\\:ok:x=20:y=20[video]), "it's:ok"}
+        ] do
+      graph = Graph.parse!(source)
+      node = Enum.find(Graph.nodes(graph), &(&1.name == :drawtext))
+      assert List.keyfind(node.args, "text", 0) == {"text", text}
+      rendered = FFix.to_filtergraph(graph)
+      assert FFix.to_filtergraph(Graph.parse!(rendered)) == rendered
+    end
   end
 
   test "parses explicitly labeled dynamic outputs we render via shape/2" do
     graph =
       FFix.Graph.input(0, :audio)
       |> Filter.ebur128(video: true)
-      |> FFix.shape([:audio, :video])
-      |> then(fn [audio, video] -> FFix.graph(outputs: [audio: audio, video: video]) end)
+      |> FFix.shape([:video, :audio])
+      |> then(fn [video, audio] -> FFix.graph(outputs: [audio: audio, video: video]) end)
 
     rendered = FFix.to_filtergraph(graph)
     assert FFix.to_filtergraph(Graph.parse!(rendered)) == rendered
