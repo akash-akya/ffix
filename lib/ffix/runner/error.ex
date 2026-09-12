@@ -1,6 +1,13 @@
 defmodule FFix.Runner.Error do
   @moduledoc """
-  Error raised or returned by `FFix.Runner` when command execution fails.
+  An FFmpeg process that failed to start, finish successfully, or exchange data.
+
+  `kind` is `:spawn`, `:exit`, or `:io`. The `message` is suitable for logs, and
+  `result` contains captured diagnostics. `exit_status` is available when the
+  process produced one. See `FFix.Runner.Result` for its fields.
+
+  `FFix.run/2` returns `{:error, error}`. `FFix.run!/2` raises this exception.
+  Exceptions from your own callbacks and stream consumers propagate separately.
   """
 
   alias FFix.Runner.Result

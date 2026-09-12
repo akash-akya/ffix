@@ -1,26 +1,45 @@
 defmodule FFix.Demuxer do
   @moduledoc """
-  Format-specific input shortcuts and low-level demuxer configuration.
+  Choose how FFmpeg reads an input format.
 
-  Named helpers return `FFix.Command.Input` declarations and force a format.
-  Top-level options configure demuxer AVOptions; put raw input CLI controls in
-  `input_options:`. Retain `FFix.input/2` for automatic format detection.
+  For ordinary media files, start with `FFix.input/2`: FFmpeg usually detects
+  their format. Select a demuxer when the input needs extra information, such as
+  the dimensions of raw video or the sample rate of raw audio.
 
-      FFix.Demuxer.rawvideo("frames.rgb",
-        video_size: "1920x1080",
-        pixel_format: "rgb24",
-        framerate: 30
-      )
+  ## Read raw frames
 
-  Helpers and option schemas come from recorded FFmpeg metadata. Aliases such as
-  MOV/MP4 refer to the input registration, not the correspondingly named muxers.
-  Some input formats are device backends; a helper does not establish hardware
-  availability. No discovery or default-option population occurs on construction.
+      alias FFix.{Demuxer, Encoder, Muxer}
 
-  Strings remain open FFmpeg values, and flag lists are normalized. Use
-  `raw: [{"new_option", "value"}]` to bypass metadata checks for selected options,
-  or `demux/3` for a dynamic format without a recorded schema. `new/2` builds an
-  unbound configuration for `FFix.Command.Input.demuxer`.
+      source =
+        Demuxer.rawvideo("frames.rgb",
+          video_size: "1920x1080",
+          pixel_format: "rgb24",
+          framerate: 30
+        )
+
+      output = source |> FFix.video(0) |> Encoder.libx264() |> Muxer.mp4("frames.mp4")
+      FFix.command(output)
+
+  A raw frame file carries no header describing its size or pixel layout, so
+  these options must match the data. The demuxer returns an input declaration;
+  select its streams in the same way as any other input.
+
+  ## Input controls
+
+  Pass format-specific options directly to the helper. General input controls,
+  such as seeking, go in `input_options:`:
+
+      FFix.Demuxer.mov("interview.mp4", input_options: [ss: 30])
+
+  `mov/2` reads the MOV/MP4 family of containers. Input and output format names
+  can differ; use `FFix.Muxer` to choose the destination format.
+
+  Use `demux/3` for other format names, including FFmpeg input devices. Named
+  helpers use the recorded option reference; `raw:` accepts newer option names
+  as described in `FFix.Encoder`. Check `FFix.Discovery` for the formats and device
+  backends available in your build.
+
+  See the [FFmpeg demuxer reference](https://ffmpeg.org/ffmpeg-formats.html#Demuxers).
   """
 
   alias FFix.Command
@@ -30,13 +49,27 @@ defmodule FFix.Demuxer do
   @type t :: %__MODULE__{name: String.t() | nil, options: [Command.av_option()]}
   defstruct [:name, options: []]
 
-  @doc "Builds an unbound demuxer configuration without a metadata schema."
+  @doc """
+  Builds a demuxer configuration for the `demuxer:` option of `FFix.input/2`.
+
+      format = FFix.Demuxer.new("rawvideo", video_size: "640x480", pixel_format: "rgb24")
+      FFix.input("frames.rgb", demuxer: format)
+
+  A `nil` name keeps automatic format detection while applying the options.
+  """
   @spec new(String.t() | nil, [Command.av_option()]) :: t()
   def new(name, options \\ []) do
     Options.validate_component!(%__MODULE__{name: name, options: options})
   end
 
-  @doc "Builds an input for a dynamic demuxer name; extra CLI controls go in input_options."
+  @doc """
+  Declares an input using an FFmpeg format name and its options.
+
+      FFix.Demuxer.demux("recording.pcm", "s16le", sample_rate: 48000)
+
+  Names and options are passed to FFmpeg. General input controls go in
+  `input_options:`. Use `FFix.Decoder` for decoding settings after declaring the input.
+  """
   @spec demux(Input.source(), String.t(), list()) :: Input.t()
   def demux(source, name, options \\ []), do: build_input(source, name, options, nil)
 

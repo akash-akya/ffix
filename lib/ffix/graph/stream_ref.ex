@@ -1,9 +1,14 @@
 defmodule FFix.Graph.StreamRef do
   @moduledoc """
-  Opaque reference to one input stream or filter output in an immutable graph.
+  A selected input stream or the result of a filter.
 
-  References retain the graph's other branches, sinks, and settings. Broad and
-  optional input selections use `FFix.Selection` instead.
+  Obtain a stream with an indexed helper such as `FFix.video/3`, a `FFix.Filter`
+  function, or `FFix.Graph.export/2`. Pass it to another filter, an encoder, or
+  an output. These functions manage the reference for you.
+
+  A stream retrieved from a graph retains the graph's other branches. See
+  `FFix.Graph` for keeping them connected, and `FFix.Selection` for output
+  queries that may match several tracks.
   """
 
   @type media :: :audio | :video | :subtitle | :data | :attachment | :unknown

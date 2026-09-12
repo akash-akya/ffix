@@ -44,8 +44,16 @@ defmodule FFix.HelpersTest do
                   %{"en" => doc}, %{defaults: 1}} =
                    Enum.find(docs, &(elem(&1, 0) == {:function, function_name, full_arity}))
 
-          assert doc =~ "#{name}: #{entry.description}"
-          assert doc =~ "Metadata baseline: FFmpeg #{metadata.version.version}"
+          assert doc =~ entry.description
+          assert doc =~ "See `#{inspect(module)}`"
+
+          Enum.each(entry.option_sections, fn section ->
+            Enum.each(section.options, fn option ->
+              unless String.contains?(option.flags, "R") do
+                assert doc =~ "`#{option.name}`"
+              end
+            end)
+          end)
         else
           refute function_exported?(module, function_name, 2)
         end
@@ -122,9 +130,35 @@ defmodule FFix.HelpersTest do
     assert [doc] = docs
 
     assert doc =~ description
-    assert doc =~ "General capabilities: dr1 delay threads\n"
-    assert doc =~ "`custom-option` (Fixture AVOptions, :string): #{literal}"
+    assert doc =~ "General capabilities: dr1 delay threads"
+    assert doc =~ "`custom-option` (string): #{literal}"
     assert Enum.all?(String.split(doc, "\n"), &(&1 == String.trim_trailing(&1)))
+  end
+
+  test "component options omit empty descriptions while retaining listed values" do
+    Enum.each(["", " \t\n", nil], fn blank ->
+      metadata = fixture_metadata(["fixture_encoder"], "Fixture")
+      [component] = metadata.components
+      [section] = component.option_sections
+      [option] = section.options
+      option = %{option | help: blank, constants: [%{name: "auto"}]}
+      section = %{section | options: [option]}
+      component = %{component | option_sections: [section]}
+      definitions = Helpers.definitions(%{metadata | components: [component]}, :encoder)
+
+      {_quoted, docs} =
+        Macro.prewalk(definitions, [], fn
+          {:@, _, [{:doc, _, [doc]}]} = node, docs when is_binary(doc) ->
+            {node, [doc | docs]}
+
+          node, docs ->
+            {node, docs}
+        end)
+
+      assert [doc] = docs
+      assert doc =~ "- `custom-option` (string) Values: `auto`."
+      refute doc =~ "(string):"
+    end)
   end
 
   test "invalid identifiers stay out of the helper API and reserved names fail explicitly" do

@@ -1,34 +1,40 @@
 defmodule FFix.Discovery do
   @moduledoc """
-  Explicit discovery of the capabilities of an installed FFmpeg build.
+  Inspect the codecs, formats, and filters available in an FFmpeg installation.
 
-  Discovery is separate from command construction and the filter DSL. Nothing
-  is scanned at compile time or cached globally. `list/2` fetches a catalog;
-  `help/3` checks that registry and fetches just one implementation's help.
+  Use discovery to check a deployment's capabilities or build an option picker.
+  Each query runs the selected FFmpeg executable and returns `{:ok, metadata}`
+  or `{:error, error}`.
 
-      {:ok, encoders} = FFix.Discovery.list(:encoder)
-      {:ok, details} = FFix.Discovery.help(:encoder, "libx264")
-      {:ok, formats} = FFix.Discovery.list(:pixel_format)
+      alias FFix.Discovery
+      {:ok, encoders} = Discovery.list(:encoder)
+      Enum.any?(encoders, fn encoder -> "libx264" in encoder.names end)
 
-  Component kinds: `:encoder`, `:decoder`, `:codec`, `:muxer`, `:demuxer`,
-  `:format`, `:device`, `:filter`, `:bitstream_filter`, `:protocol`.
+      {:ok, details} = Discovery.help(:encoder, "libx264")
+      Enum.flat_map(details.option_sections, fn section -> section.options end)
 
-  Supporting catalogs: `:pixel_format`, `:sample_format`, `:channel`,
-  `:channel_layout`, `:hardware_acceleration`, `:disposition`, `:color`.
+  `list/2` returns a catalog. `help/3` retrieves options and properties for one
+  component. `version/1` identifies the build; store it alongside results when
+  saving a capability snapshot. Use `FFix.Discovery.Parser` to parse saved
+  FFmpeg help text yourself.
 
-  Devices are input/output format backends, not physical device inventories.
-  Inspect their help with `:demuxer` or `:muxer`. Names are scoped by kind;
-  for example, the MOV demuxer's aliases are not aliases of the MP4 muxer.
-  Hardware registration does not establish runtime availability.
+  > #### Registration and usability {: .info}
+  > A listed hardware encoder may still need a compatible device and driver.
+  > Test the intended command on the target machine before relying on it.
 
-  Options for all calls:
+  Discovery describes the executable. To inspect tracks inside a media file,
+  use [ffprobe](https://ffmpeg.org/ffprobe.html).
 
-    * `:ffmpeg` — executable path or name; defaults to `FFMPEG_BIN` or `ffmpeg`
-    * `:timeout` — per-command timeout in milliseconds (default: 10_000)
-    * `:max_output` — maximum captured bytes per command (default: 8_388_608)
+  ## Query options
 
-  See `FFix.Discovery.Parser` for the metadata representation and pure parsing.
-  Store the result of `version/1` alongside metadata when retaining a snapshot.
+  All query functions accept:
+
+  - `:ffmpeg` — executable path/name; defaults to `FFMPEG_BIN`, then `ffmpeg` on `PATH`.
+  - `:timeout` — per-process timeout in milliseconds; defaults to `10_000`.
+  - `:max_output` — maximum captured bytes per process; defaults to `8_388_608`.
+
+  A `help/3` query first checks the catalog, then requests help. Limits apply to
+  each process. See `FFix.Discovery.Error` for failures and captured diagnostics.
   """
 
   alias FFix.Discovery.Error
@@ -67,11 +73,25 @@ defmodule FFix.Discovery do
   @type option :: {:ffmpeg, String.t()} | {:timeout, pos_integer()} | {:max_output, pos_integer()}
   @type result(value) :: {:ok, value} | {:error, Error.t()}
 
-  @doc "Returns the supported catalog kinds without running FFmpeg."
+  @doc "Returns the catalog kinds accepted by `list/2`. This is the list of query types supported by FFix."
   @spec kinds() :: [atom()]
   def kinds, do: Keyword.keys(@catalogs)
 
-  @doc "Lists registrations or vocabulary entries, preserving aliases and declaration order."
+  @doc """
+  Lists the entries in an FFmpeg capability catalog.
+
+      FFix.Discovery.list(:filter)
+      FFix.Discovery.list(:muxer, ffmpeg: "/usr/local/bin/ffmpeg")
+
+  Component catalogs: `:encoder`, `:decoder`, `:codec`, `:muxer`, `:demuxer`,
+  `:format`, `:device`, `:filter`, `:bitstream_filter`, and `:protocol`.
+  Other catalogs: `:pixel_format`, `:sample_format`, `:channel`, `:channel_layout`,
+  `:hardware_acceleration`, `:disposition`, and `:color`.
+
+  Entries contain a `names` list, retaining aliases, plus the catalog's properties.
+  Names are scoped by kind: input-format aliases need not be output-format aliases.
+  `:device` lists supported device backends rather than connected physical devices.
+  """
   @spec list(atom(), [option()]) :: result([map()])
   def list(kind, options \\ []) do
     command = Keyword.fetch!(@catalogs, kind)
@@ -79,11 +99,18 @@ defmodule FFix.Discovery do
   end
 
   @doc """
-  Fetches details for a registered implementation or format alias.
+  Fetches options and properties for a registered component or format alias.
 
-  `:not_found` means the name is not registered for this kind.
-  `:help_unavailable` means it is registered but FFmpeg does not expose help.
-  Successful help with `option_sections: []` is valid and distinct from both.
+      FFix.Discovery.help(:muxer, "mp4")
+
+  Supported kinds are `:encoder`, `:decoder`, `:muxer`, `:demuxer`, `:filter`,
+  `:bitstream_filter`, and `:protocol`. Inspect a device backend through its
+  `:demuxer` or `:muxer` entry.
+
+  Help contains ordered `option_sections` and `properties`; see
+  `FFix.Discovery.Parser` for their representation. A component may have an empty
+  option list. Errors distinguish an absent registration (`:not_found`) from
+  a registration whose help is unavailable (`:help_unavailable`).
   """
   @spec help(atom(), String.t(), [option()]) :: result(map())
   def help(kind, name, options \\ []) do
@@ -96,11 +123,17 @@ defmodule FFix.Discovery do
     end
   end
 
-  @doc "Fetches shared option sections once, without merging them into private options."
+  @doc """
+  Fetches general codec, format, and I/O options from FFmpeg's full help.
+
+  Returns separate sections for AVCodecContext, AVFormatContext, AVIOContext,
+  and URLContext. Keep section names when displaying options: the same option
+  name may have different meanings in different sections.
+  """
   @spec shared([option()]) :: result([map()])
   def shared(options \\ []), do: query(["-h", "full"], &Parser.shared/1, options)
 
-  @doc "Returns version/build provenance, including the resolved executable path."
+  @doc "Returns the FFmpeg version, build configuration, library versions, original text, and resolved executable path."
   @spec version([option()]) :: result(map())
   def version(options \\ []) do
     with {:ok, capture} <- Exec.run(["-version"], options),

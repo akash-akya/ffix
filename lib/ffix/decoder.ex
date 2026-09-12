@@ -1,30 +1,45 @@
 defmodule FFix.Decoder do
   @moduledoc """
-  Decoder shortcuts that configure streams on an input declaration.
+  Configure how an input stream is decoded.
 
-  Named helpers return an updated `FFix.Command.Input`, preserving its identity.
-  Every call requires an indexed selector. Only options are optional.
+  FFmpeg normally chooses a decoder from the input's codec. Use this module to
+  select an implementation or change decoding options, such as its thread count.
+  Configure decoding on the input before selecting streams:
 
-      input
-      |> FFix.Decoder.h264({:video, 0}, threads: 2)
-      |> FFix.Decoder.aac({:audio, 0}, threads: 1)
+      alias FFix.{Decoder, Filter}
 
-  All decoded uses of an input stream share its configuration. Independent
-  decoding requires separate input declarations, even for the same source file.
-  Decoder helpers do not operate on individual filter branches. Pass the updated
-  input to stream selectors: existing streams retain their captured input snapshot.
-  Repeated decoder configuration replaces the previous value for that selector.
-  Use either absolute `{:index, n}` or media-relative `{media, n}` selectors on one
-  input, not both: they can overlap, and FFix does not probe to resolve that ambiguity.
+      source =
+        FFix.input("interview.mp4")
+        |> Decoder.h264({:video, 0}, threads: 2)
 
-  Named helpers check options against recorded metadata without querying FFmpeg.
-  Reported defaults are not emitted, strings remain open FFmpeg values, and
-  `raw: [{"new_option", "value"}]` bypasses metadata checks for particular options.
-  Registration in the baseline does not guarantee availability in another build.
+      picture = source |> FFix.video(0) |> Filter.scale(w: 640, h: -2)
+      FFix.output(picture, "preview.mp4") |> FFix.command()
 
-  `decode/4` forwards codec or decoder names and options without a metadata schema.
-  `auto/3` leaves decoder selection to FFmpeg. `new/2` constructs an unbound
-  configuration for the lower-level model.
+  This assumes H.264 video. `auto/3` applies options while letting FFmpeg choose
+  the decoder. Output compression is configured separately with `FFix.Encoder`.
+
+  ## Select the input track
+
+  Decoder selectors identify one track:
+
+  - `{:video, 0}` — the first video track.
+  - `{:audio, 1}` — the second audio track.
+  - `{:index, 3}` — stream 3, counting every stream in the file.
+
+  Subtitle, data, and attachment selectors follow the same indexed form.
+  Choose either media-relative selectors or absolute indexes for one input.
+  Mixing them could configure the same track twice under different names.
+
+  All uses of that input share its decoding settings. Declare the file twice if
+  you need independent decoding or seeking. See `FFix.Command.Input` for input
+  reuse. Configuring the same selector again replaces its previous decoder settings.
+
+  Named helpers use the recorded option reference. Use `decode/4` for other
+  decoder names and `raw:` for newer options, as described in `FFix.Encoder`.
+  Availability can be checked through `FFix.Discovery`.
+
+  See the [FFmpeg codec reference](https://ffmpeg.org/ffmpeg-codecs.html) for
+  decoder-specific options.
   """
 
   alias FFix.Command
@@ -34,13 +49,28 @@ defmodule FFix.Decoder do
   @type t :: %__MODULE__{name: String.t() | nil, options: [Command.av_option()]}
   defstruct [:name, options: []]
 
-  @doc "Builds an unbound configuration without metadata lookup."
+  @doc """
+  Builds a decoder configuration for an input's `decoders:` map.
+
+      decoder = FFix.Decoder.new("h264", threads: 2)
+      FFix.input("interview.mp4", decoders: %{{:video, 0} => decoder})
+
+  A `nil` name lets FFmpeg choose the decoder while applying the options.
+  """
   @spec new(String.t() | nil, [Command.av_option()]) :: t()
   def new(name, options \\ []) do
     Options.validate_component!(%__MODULE__{name: name, options: options})
   end
 
-  @doc "Configures one explicitly indexed input stream using a codec or decoder name."
+  @doc """
+  Configures an input track with an FFmpeg codec or decoder name and options.
+
+      source = FFix.input("recording.flac")
+      FFix.Decoder.decode(source, "flac", {:audio, 0})
+
+  Returns the updated input. Select streams from this returned value so they
+  use the new settings. Names and options are passed to FFmpeg.
+  """
   @spec decode(Input.t(), String.t() | nil, Input.decoder_selector(), list()) :: Input.t()
   def decode(input, name, selector, options \\ []) do
     unless is_struct(input, Input) do
@@ -53,7 +83,11 @@ defmodule FFix.Decoder do
     %{input | decoders: Map.put(input.decoders, selector, decoder)}
   end
 
-  @doc "Configures one indexed input stream without forcing a decoder implementation."
+  @doc """
+  Applies decoding options while FFmpeg chooses the implementation.
+
+      FFix.input("interview.mp4") |> FFix.Decoder.auto({:video, 0}, threads: 2)
+  """
   @spec auto(Input.t(), Input.decoder_selector(), list()) :: Input.t()
   def auto(input, selector, options \\ []), do: decode(input, nil, selector, options)
 

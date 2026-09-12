@@ -1,15 +1,70 @@
 defmodule FFix.Command.Input do
   @moduledoc """
-  One ffmpeg input declaration, with an identity independent of its filename.
+  Declare media sources and select their streams.
 
-  `new/2` stores raw input CLI options, an optional `FFix.Demuxer`, and indexed
-  `FFix.Decoder` configurations. Options render before this input's `-i`.
+  Create an input with `FFix.input/2` or `new/2`. A file may contain video,
+  several audio tracks, subtitles, and other streams. Select the tracks you
+  want before applying filters or declaring outputs.
 
-  `select/3` accepts an absolute stream index, `:all`, or a raw FFmpeg selector
-  string. Use `FFix.video/3`, `FFix.audio/3`, or `FFix.subtitle/3` for media-relative
-  indexes. Broad, raw, and optional selections return `FFix.Selection`, not a
-  filterable reference. Configure inputs before selecting; captured snapshots
-  cannot be updated by reassigning a variable.
+  ## Select tracks
+
+      source = FFix.input("interview.mp4")
+      picture = FFix.video(source, 0)
+      sound = FFix.audio(source, 0)
+      output = FFix.output([picture, sound], "interview.mkv")
+
+  Indexes start at zero within each media type. `audio(source, 1)` selects the
+  second audio track, regardless of where video or subtitles occur in the file.
+  `FFix.select(source, 3)` instead counts every stream in the file.
+
+  Use `:all` to retain every track of a media type. `optional: true` lets FFmpeg
+  omit a missing match, which is useful for files that may have no audio:
+
+      sources = [
+        FFix.stream_copy(FFix.video(source, 0)),
+        FFix.stream_copy(FFix.audio(source, :all, optional: true))
+      ]
+
+      FFix.output(sources, "interview.mkv") |> FFix.command()
+
+  An indexed, required selection can feed a filter. Broad, optional, and string
+  selections return `FFix.Selection` values for output mapping. Their number of
+  matches is determined by FFmpeg when it reads the input. Even a string like
+  `"v:0"` is treated as a query; use `FFix.video(source, 0)` for a filter input.
+
+  To find the tracks in a file, use
+  [ffprobe](https://ffmpeg.org/ffprobe.html), for example
+  `ffprobe -v error -show_streams interview.mp4`. `FFix.Discovery` describes the
+  FFmpeg installation's capabilities rather than the contents of a media file.
+
+  ## Reuse an input
+
+  Reusing the same declaration across outputs opens the source once. Declare
+  the same file twice when you need different input settings:
+
+      opening = FFix.input("interview.mp4", ss: 0)
+      ending = FFix.input("interview.mp4", ss: 120)
+
+      outputs = [
+        FFix.output(FFix.video(opening, 0), "opening.mp4", t: 10),
+        FFix.output(FFix.video(ending, 0), "ending.mp4", t: 10)
+      ]
+
+      FFix.command(outputs)
+
+  Configure seeking and `FFix.Decoder` options before selecting streams. A stream
+  keeps the input configuration it was selected from, so selecting first and
+  changing that input later creates conflicting configurations.
+
+  ## Input formats and options
+
+  FFmpeg usually detects file formats. Use `FFix.Demuxer` when a format needs
+  explicit settings, such as raw frame dimensions. `FFix.Decoder` configures
+  how individual tracks are decoded.
+
+  General input options are written before this source's `-i`. For example,
+  `ss: 30` seeks before decoding. See `FFix.Command` for option syntax and the
+  [FFmpeg input options](https://ffmpeg.org/ffmpeg.html#Main-options) for their meaning.
   """
 
   alias FFix.Decoder
@@ -37,7 +92,20 @@ defmodule FFix.Command.Input do
 
   defstruct [:source, :id, :demuxer, options: [], decoders: %{}]
 
-  @doc "Builds an input declaration without probing or evaluating callbacks."
+  @doc """
+  Declares a file, URL, or pipe source and its options.
+
+      FFix.Command.Input.new("interview.mp4", ss: 30)
+      FFix.Command.Input.new({:url, "https://example.com/interview.mp4"})
+      FFix.Command.Input.new(:stdin, f: "image2pipe")
+
+  Sources can be path/URL strings, `{:url, url}`, `:stdin`, or `{:pipe, descriptor}`.
+  Use `FFix.Runner`'s `stdin:` option to supply bytes to `:stdin`.
+
+  `demuxer:` accepts a `FFix.Demuxer` configuration. `decoders:` accepts a map of
+  indexed selectors to `FFix.Decoder` configurations. Remaining options are
+  general FFmpeg input controls; callbacks are supported on outputs only.
+  """
   @spec new(source(), [option()]) :: t()
   def new(source, options \\ []) do
     {configuration, raw_options} = Options.split!(options, [:demuxer, :decoders])
@@ -119,7 +187,15 @@ defmodule FFix.Command.Input do
     end
   end
 
-  @doc "Selects an absolute input index, all streams, or a raw selector; optional selections may match nothing."
+  @doc """
+  Selects an absolute stream index, all streams, or an FFmpeg stream specifier.
+
+      FFix.Command.Input.select(source, "a:m:language:eng", optional: true)
+
+  An integer returns a required stream reference with unknown media type.
+  `:all`, strings, and `optional: true` return output selections. See
+  `FFix.select/3` for examples and the module guide for media-relative indexes.
+  """
   @spec select(t(), selector(), [selection_option()]) :: StreamRef.t() | Selection.t()
   def select(%__MODULE__{} = input, selector, options \\ []) do
     selector =

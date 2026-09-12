@@ -39,7 +39,7 @@ defmodule FFix.Helpers do
           raise ArgumentError, "helper name conflicts with an existing function: #{name}"
         end
 
-        helper(entry, name, schema, options, metadata.version.version)
+        helper(entry, name, schema, options)
       end)
     end)
   end
@@ -97,11 +97,11 @@ defmodule FFix.Helpers do
     end)
   end
 
-  defp helper(entry, name, schema, options, version) do
+  defp helper(entry, name, schema, options) do
     function_name = String.to_atom(name)
     type_name = {String.to_atom("#{name}_option"), [], []}
     option_type = union(option_types(schema, entry.kind) ++ special_types(entry.kind))
-    doc = documentation(entry, name, options, version)
+    doc = documentation(entry, name, options)
     schema = Macro.escape(schema)
 
     body =
@@ -250,56 +250,110 @@ defmodule FFix.Helpers do
     |> Enum.reduce(fn type, combined -> quote(do: unquote(type) | unquote(combined)) end)
   end
 
-  defp documentation(entry, name, options, version) do
-    role =
+  defp documentation(entry, name, options) do
+    {role, guide} =
       case entry.kind do
-        :encoder ->
-          "Maps one source to an independent encoded output stream."
-
-        :decoder ->
-          "Configures an explicitly indexed #{entry.media_type} input stream."
-
-        :muxer ->
-          "Builds an output declaration from sources and a target. Raw CLI controls go in output_options."
-
-        :demuxer ->
-          "Builds an input declaration. Raw CLI controls go in input_options."
+        :encoder -> {"Encodes the selected streams with `#{name}`.", "FFix.Encoder"}
+        :decoder -> {"Configures #{entry.media_type} decoding on an input.", "FFix.Decoder"}
+        :muxer -> {"Declares an output in #{name} format.", "FFix.Muxer"}
+        :demuxer -> {"Declares an input in #{name} format.", "FFix.Demuxer"}
       end
+
+    counts = Enum.frequencies_by(options, fn {_owner, option} -> option.name end)
 
     rows =
       Enum.map_join(options, "\n", fn {owner, option} ->
-        constants = Enum.map_join(option.constants, ", ", & &1.name)
-
-        suffix =
-          case constants do
-            "" -> ""
-            names -> " Reported constants: #{names}."
+        origin =
+          if counts[option.name] > 1 do
+            " — #{owner}"
+          else
+            ""
           end
 
-        "  * `#{option.name}` (#{owner}, #{inspect(option.type)}): #{option.help}" <> suffix
+        constants = Enum.map_join(option.constants, ", ", &"`#{&1.name}`")
+
+        suffix =
+          if constants == "" do
+            ""
+          else
+            " Values: #{constants}."
+          end
+
+        "- `#{option.name}` (#{option_type(option.type)})#{origin}" <>
+          description_suffix(option.help, ": ") <> suffix
       end)
 
     properties =
-      Enum.map_join(entry.properties, "\n", fn {label, value} ->
-        "  * #{label}: #{value}"
-      end)
+      Enum.map_join(entry.properties, "\n", fn {label, value} -> "- #{label}: #{value}" end)
+
+    example = component_example(entry.kind, name)
+
+    example =
+      if example do
+        "## Example\n\n    #{example}\n"
+      else
+        ""
+      end
+
+    properties =
+      if properties == "" do
+        ""
+      else
+        "## Format and codec details\n\n#{properties}\n"
+      end
+
+    rows =
+      if rows == "" do
+        "This helper has no listed format-specific options."
+      else
+        rows
+      end
 
     """
-    #{name}: #{entry.description}
+    #{entry.description}
 
-    #{role}
+    #{role} See `#{guide}` for usage and option conventions.
 
-    #{properties}
-
-    Metadata baseline: FFmpeg #{version}. Option defaults/ranges below are reported
-    metadata, not emitted defaults or a complete validator. Strings remain an
-    escape hatch for FFmpeg expressions; use `raw:` for unlisted option names.
-
+    #{example}
     ## Options
 
     #{rows}
+
+    #{properties}
     """
     |> String.split("\n")
     |> Enum.map_join("\n", &String.trim_trailing/1)
+    |> String.trim()
   end
+
+  defp component_example(kind, name) do
+    examples = %{
+      {:encoder, "libx264"} => ~s|FFix.Encoder.libx264(video, crf: 23, preset: "medium")|,
+      {:encoder, "aac"} => ~s|FFix.Encoder.aac(audio, b: "128k")|,
+      {:encoder, "libopus"} => ~s|FFix.Encoder.libopus(audio, b: "96k")|,
+      {:encoder, "ffv1"} => ~s|FFix.Encoder.ffv1(video)|,
+      {:decoder, "h264"} => ~s|FFix.Decoder.h264(input, {:video, 0}, threads: 2)|,
+      {:decoder, "aac"} => ~s|FFix.Decoder.aac(input, {:audio, 0})|,
+      {:muxer, "mp4"} => ~s|FFix.Muxer.mp4(sources, "interview.mp4", movflags: [:faststart])|,
+      {:muxer, "matroska"} => ~s|FFix.Muxer.matroska(sources, "archive.mkv")|,
+      {:muxer, "hls"} => ~s|FFix.Muxer.hls(sources, "hls/index.m3u8", hls_time: 4)|,
+      {:muxer, "null"} => ~s|FFix.Muxer.null(sources, :stdout)|,
+      {:demuxer, "rawvideo"} =>
+        ~s|FFix.Demuxer.rawvideo("frames.rgb", video_size: "640x480", pixel_format: "rgb24", framerate: 30)|,
+      {:demuxer, "lavfi"} => ~s|FFix.Demuxer.lavfi("testsrc2=size=640x360:duration=2")|
+    }
+
+    Map.get(examples, {kind, name})
+  end
+
+  def description_suffix(description, separator) do
+    case String.trim(description || "") do
+      "" -> ""
+      text -> separator <> text
+    end
+  end
+
+  def option_type({:array, type}), do: "#{option_type(type)} list"
+  def option_type({:unknown, name}), do: name
+  def option_type(type), do: to_string(type)
 end
