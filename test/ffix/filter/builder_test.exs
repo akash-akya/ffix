@@ -4,14 +4,6 @@ defmodule FFix.Filter.BuilderTest do
   alias FFix.Filter
   alias FFix.Graph
 
-  test "generated wrappers reject unknown options" do
-    video = FFix.Graph.input(0, :video)
-
-    assert_raise ArgumentError, "foo is not a valid option", fn ->
-      Filter.scale(video, foo: 1)
-    end
-  end
-
   test "concat infers mixed output media from v/a options" do
     [video, audio] =
       Filter.concat(

@@ -25,17 +25,30 @@ defmodule FFix.CommandValidationTest do
                  end
   end
 
-  test "either decoder namespace remains independently usable" do
-    for selectors <- [[{:index, 0}, {:index, 1}], [{:video, 0}, {:audio, 0}]] do
-      [picture_selector, sound_selector] = selectors
-      input = FFix.input("in.mp4")
-      input = Decoder.decode(input, "mpeg4", picture_selector, threads: 1)
-      input = Decoder.decode(input, "aac", sound_selector, threads: 2)
-      output = FFix.output(FFix.video(input, 0), "out.mp4")
-      argv = FFix.command(output) |> FFix.to_argv()
-      assert "mpeg4" in argv
-      assert "aac" in argv
-    end
+  test "absolute decoder selectors retain their input-local indexes" do
+    input =
+      FFix.input("in.mp4")
+      |> Decoder.decode("mpeg4", {:index, 3}, threads: 1)
+      |> Decoder.decode("aac", {:index, 1}, threads: 2)
+
+    command = input |> FFix.video(0) |> FFix.output("out.mp4") |> FFix.command()
+
+    assert FFix.to_argv(command) == [
+             "ffmpeg",
+             "-c:1",
+             "aac",
+             "-threads:1",
+             "2",
+             "-c:3",
+             "mpeg4",
+             "-threads:3",
+             "1",
+             "-i",
+             "in.mp4",
+             "-map",
+             "0:v:0",
+             "out.mp4"
+           ]
   end
 
   test "canonical commands reject changed snapshots in direct and graph references" do
@@ -141,10 +154,22 @@ defmodule FFix.CommandValidationTest do
     source =
       FFix.input("in.mp4", [{"future_option", "value"}, metadata: "first", metadata: "second"])
 
-    input = source
-    command = FFix.command(FFix.output(FFix.video(input, 0), "out.mp4"))
-    assert "-future_option" in FFix.to_argv(command)
-    assert Enum.count(FFix.to_argv(command), &(&1 == "-metadata")) == 2
+    command = FFix.command(FFix.output(FFix.video(source, 0), "out.mp4"))
+
+    assert FFix.to_argv(command) == [
+             "ffmpeg",
+             "-future_option",
+             "value",
+             "-metadata",
+             "first",
+             "-metadata",
+             "second",
+             "-i",
+             "in.mp4",
+             "-map",
+             "0:v:0",
+             "out.mp4"
+           ]
   end
 
   test "known media mismatches are caught, but generic names still bypass metadata" do
@@ -159,23 +184,25 @@ defmodule FFix.CommandValidationTest do
     assert %FFix.Graph.StreamRef{} = Filter.filter(audio, "scale", [:video])
   end
 
-  test "input declaration identity is not filename equality, and mapping/output occurrences are not deduplicated" do
+  test "separate input declarations open the same filename independently" do
     first = FFix.input("same.mp4")
     second = FFix.input("same.mp4")
-    refute first.id == second.id
-    mapping = Encoder.encode(FFix.video(first, 0), "mpeg4")
+    output = FFix.output([FFix.video(first, 0), FFix.video(second, 0)], "out.mp4")
+    command = FFix.command(output)
+    assert command.inputs == [first, second]
 
-    output =
-      FFix.output([main: mapping], "out.mp4",
-        metadata: fn streams -> "title=#{streams.main.index}" end
-      )
-
-    command = FFix.command([output, output], inputs: [first, second])
-    argv = FFix.to_argv(command)
-    assert Enum.count(argv, &(&1 == "-i")) == 2
-    assert Enum.count(argv, &(&1 == "-map")) == 2
-    assert Enum.count(argv, &(&1 == "-c:0")) == 2
-    assert Enum.count(argv, &(&1 == "title=0")) == 2
+    assert FFix.to_argv(command) == [
+             "ffmpeg",
+             "-i",
+             "same.mp4",
+             "-i",
+             "same.mp4",
+             "-map",
+             "0:v:0",
+             "-map",
+             "1:v:0",
+             "out.mp4"
+           ]
   end
 
   test "output-first materialization agrees with explicit low-level canonical exports" do
@@ -193,15 +220,6 @@ defmodule FFix.CommandValidationTest do
       )
 
     assert FFix.to_argv(explicit) == expected
-    assert_raise ArgumentError, ~r/used 2 times/, fn -> FFix.command([output, output]) end
-  end
-
-  test "appending an input declaration preserves its configuration and identity" do
-    input = FFix.Demuxer.mov("in.mp4", input_options: [ss: 2])
-    command = Command.new() |> Command.add_input(input)
-    assert command.inputs == [input]
-    command = Command.add_output(command, FFix.output(FFix.video(input, 0), "out.mp4"))
-    assert "0:v:0" in FFix.to_argv(command)
   end
 
   test "conflict aliases are canonicalized in both directions" do

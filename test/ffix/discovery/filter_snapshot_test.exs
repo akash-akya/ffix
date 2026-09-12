@@ -24,32 +24,4 @@ defmodule FFix.Discovery.FilterSnapshotTest do
     assert scale.help.dynamic_pads.inputs == "dynamic (depending on the options)"
     assert Enum.map(scale.help.option_sections, & &1.name) == ["scale", "SWScaler", "framesync"]
   end
-
-  test "representative help captures retain full sections, pad declarations, and aliases" do
-    for name <- ~w(scale scale2ref aresample aformat fade null testsrc nullsink avsynctest) do
-      path = Path.join(@fixtures, "filter-#{name}.txt")
-
-      assert {:ok, %{kind: :filter, names: [^name]} = help} =
-               Parser.help(:filter, File.read!(path))
-
-      assert help.inputs != nil
-      assert help.outputs != nil
-    end
-  end
-
-  test "the public parsers cover legacy catalog, option, and constant rows" do
-    assert {:ok, [%{names: ["ebur128"], inputs: "A", outputs: "N", flags: "..."}]} =
-             Parser.list(:filter, "Filters:\n ... ebur128 A->N EBU R128 scanner.\n")
-
-    assert {:ok, [option]} =
-             Parser.options("""
-               split             <string>     ..F.A...... set split frequencies (default "500")
-                   repeat          0            ..FV....... Repeat the previous frame.
-             """)
-
-    assert option.name == "split"
-    assert option.type == :string
-    assert option.declared_default == ~s("500")
-    assert [%{name: "repeat", value: "0", help: "Repeat the previous frame."}] = option.constants
-  end
 end

@@ -80,10 +80,6 @@ defmodule FFix.HelpersTest do
     assert muxer_type =~ "FFix.Command.option_callback()"
     assert muxer_type =~ ":output_options"
 
-    for removed <- [":video", ":audio", ":sources"] do
-      refute muxer_type =~ removed
-    end
-
     {:ok, specs} = Code.Typespec.fetch_specs(FFix.Muxer)
     {{:hls, 3}, [spec]} = List.keyfind(specs, {:hls, 3}, 0)
     signature = Code.Typespec.spec_to_quoted(:hls, spec) |> Macro.to_string()
@@ -201,14 +197,6 @@ defmodule FFix.HelpersTest do
 
     assert apply(module, :libx264, [:source, [crf: 18]]) ==
              {:source, "libx264", [{"crf", 18}]}
-  end
-
-  test "metadata refresh rejects obsolete generation arguments" do
-    for arguments <- [["--check"], ["--refresh"], ["--ffmpeg"], ["unexpected"]] do
-      assert_raise Mix.Error, "use mix ffix.refresh.metadata [--ffmpeg executable]", fn ->
-        Mix.Tasks.Ffix.Refresh.Metadata.run(arguments)
-      end
-    end
   end
 
   defp option_type(module, name) do

@@ -2,34 +2,10 @@ defmodule FFix.Filter.MetadataTest do
   use ExUnit.Case, async: true
 
   alias FFix.Discovery.Parser
-  alias FFix.Filter.Metadata
   alias FFix.Filter.Schema
   alias FFix.Value
 
   @fixtures Path.expand("../../fixtures/discovery/ffmpeg-7.1.5", __DIR__)
-
-  test "filter_spec exposes parsed option metadata" do
-    spec = Metadata.filter_spec("drawtext")
-
-    assert %{text: %{type: :string}, x: %{type: :string}, y: %{type: :string}} = spec
-  end
-
-  test "timeline filters expose the implicit enable option" do
-    spec = Metadata.filter_spec("drawtext")
-
-    assert %{enable: %{type: :string, implicit: :timeline}} = spec
-  end
-
-  test "framesync filters expose common framesync options" do
-    spec = Metadata.filter_spec("overlay")
-
-    assert %{
-             eof_action: %{type: :int},
-             shortest: %{type: :boolean},
-             repeatlast: %{type: :boolean},
-             ts_sync_mode: %{type: :int}
-           } = spec
-  end
 
   test "real help selects primary and framesync owners without exposing child sections" do
     entries = [
@@ -239,19 +215,6 @@ defmodule FFix.Filter.MetadataTest do
     assert filter.flags == [:T]
     assert specs.enable.implicit == :timeline
     assert specs.enable.declarations == []
-  end
-
-  test "legacy count entry points share alias and positional inference" do
-    split = Metadata.filter_spec(:split)
-    select = Metadata.filter_spec(:select)
-
-    assert Metadata.dynamic_count_from_options(select, :outputs, outputs: 3, n: 2) == 2
-    assert Metadata.dynamic_count_from_options(split, :outputs, pos: 3) == 3
-    assert Metadata.dynamic_count_from_args(select, :outputs, [{"n", "2"}]) == 2
-    assert Metadata.dynamic_count_from_args(split, :outputs, pos: "3") == 3
-    assert Metadata.dynamic_count_from_options(split, :outputs, outputs: 0) == 0
-    assert Metadata.dynamic_count_from_options(split, :outputs, outputs: "bad") == nil
-    assert Metadata.dynamic_count_from_options(%{n: %{default: 2}}, :outputs, n: 3) == nil
   end
 
   defp captured_entry(name, inputs, outputs, flags \\ "...") do

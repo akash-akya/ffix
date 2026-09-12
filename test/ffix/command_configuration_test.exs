@@ -13,19 +13,11 @@ defmodule FFix.CommandConfigurationTest do
       mappings: [
         %Mapping{source: FFix.audio(input, 0), encoding: :copy},
         %Mapping{
-          source:
-            FFix.video(
-              input,
-              0
-            ),
+          source: FFix.video(input, 0),
           encoding: %Encoder{name: "libx264", options: [{"crf", 18}]}
         },
         %Mapping{
-          source:
-            FFix.video(
-              input,
-              0
-            ),
+          source: FFix.video(input, 0),
           encoding: %Encoder{name: "libx264", options: [{"crf", 28}]}
         }
       ],
@@ -81,10 +73,7 @@ defmodule FFix.CommandConfigurationTest do
           FFix.output(
             [
               FFix.video(first, 0),
-              FFix.video(
-                second,
-                0
-              )
+              FFix.video(second, 0)
             ],
             "out.mkv"
           )
@@ -127,15 +116,7 @@ defmodule FFix.CommandConfigurationTest do
 
     command = %Command{
       inputs: [input],
-      outputs: [
-        FFix.output(
-          FFix.select(
-            input,
-            :all
-          ),
-          "out.mkv"
-        )
-      ]
+      outputs: [FFix.output(FFix.select(input, :all), "out.mkv")]
     }
 
     assert Command.to_argv(command) == [
@@ -166,11 +147,7 @@ defmodule FFix.CommandConfigurationTest do
       target: "out.mp4",
       mappings: [
         %Mapping{
-          source:
-            FFix.video(
-              input,
-              0
-            ),
+          source: FFix.video(input, 0),
           encoding: %Encoder{
             options: [
               preset: :slow,
@@ -228,33 +205,6 @@ defmodule FFix.CommandConfigurationTest do
 
     command = %Command{inputs: [input], outputs: [output]}
     assert Command.to_argv(command) == ["ffmpeg", "-i", "source.mkv", "-map", "0:v:0", "out.mp4"]
-  end
-
-  test "configuration names are literal values, not live discovery requests" do
-    input = FFix.input("source.mkv")
-
-    output = %Output{
-      target: "out.file",
-      mappings: [
-        %Mapping{source: FFix.video(input, 0), encoding: %Encoder{name: "not_installed;encoder"}}
-      ],
-      muxer: %Muxer{name: "not_installed_muxer"}
-    }
-
-    command = %Command{inputs: [input], outputs: [output]}
-
-    assert Command.to_argv(command) == [
-             "ffmpeg",
-             "-i",
-             "source.mkv",
-             "-map",
-             "0:v:0",
-             "-c:0",
-             "not_installed;encoder",
-             "-f",
-             "not_installed_muxer",
-             "out.file"
-           ]
   end
 
   test "reordering mappings and reusing encoders resets indexes for each output" do

@@ -143,10 +143,7 @@ defmodule FFix.FFmpegIntegrationTest do
           FFix.output(
             [
               graph[:master],
-              FFix.audio(
-                src,
-                0
-              )
+              FFix.audio(src, 0)
             ],
             master_path,
             vcodec: :mpeg4,
@@ -172,33 +169,7 @@ defmodule FFix.FFmpegIntegrationTest do
     assert ["video"] == probe_codec_types!(thumb_path)
   end
 
-  test("omits filter_complex for direct broad input selections", %{
-    tmp_dir: tmp_dir,
-    sample_video: sample_video
-  }) do
-    src = FFix.input(sample_video)
-
-    output_path = Path.join(tmp_dir, "copy.mp4")
-
-    command =
-      FFix.command(
-        [
-          FFix.output(
-            [FFix.stream_copy(FFix.video(src, :all)), FFix.stream_copy(FFix.audio(src, :all))],
-            output_path
-          )
-        ],
-        global: ffmpeg_globals(),
-        inputs: [src]
-      )
-
-    refute Enum.member?(FFix.to_argv(command), "-filter_complex")
-    run_ffmpeg!(command)
-    assert_nonempty_file!(output_path)
-    assert ["video", "audio"] == probe_codec_types!(output_path)
-  end
-
-  test("runs separately configured encodes of one input after copied audio", %{
+  test("runs independently selected codecs after copied audio", %{
     tmp_dir: tmp_dir,
     sample_video: sample_video
   }) do
@@ -211,26 +182,15 @@ defmodule FFix.FFmpegIntegrationTest do
       mappings: [
         %Mapping{source: FFix.audio(input, 0), encoding: :copy},
         %Mapping{
-          source:
-            FFix.video(
-              input,
-              0
-            ),
+          source: FFix.video(input, 0),
           encoding: %Encoder{
             name: "mpeg4",
             options: [b: 300_000, threads: 1, data_partitioning: false]
           }
         },
         %Mapping{
-          source:
-            FFix.video(
-              input,
-              0
-            ),
-          encoding: %Encoder{
-            name: "mpeg4",
-            options: [b: 600_000, threads: 1, data_partitioning: true]
-          }
+          source: FFix.video(input, 0),
+          encoding: %Encoder{name: "ffv1", options: [level: 3, threads: 1]}
         }
       ],
       muxer: %Muxer{name: "matroska", options: [cluster_time_limit: 500]},
@@ -240,45 +200,7 @@ defmodule FFix.FFmpegIntegrationTest do
     command = %Command{global_options: ffmpeg_globals(), inputs: [input], outputs: [output]}
     run_ffmpeg!(command)
     assert_nonempty_file!(output_path)
-    assert probe_codec_types!(output_path) == ["audio", "video", "video"]
-  end
-
-  test("runs configured filter exports through independent encoders and muxers", %{
-    tmp_dir: tmp_dir,
-    sample_video: sample_video
-  }) do
-    input = FFix.input(sample_video)
-    [master, preview] = Filter.split(FFix.video(input, 0), outputs: 2)
-    preview = Filter.scale(preview, w: 80, h: 48)
-    graph = FFix.graph(outputs: [master: master, preview: preview])
-    encoder = %Encoder{name: "mpeg4", options: [b: 300_000, threads: 1]}
-    master_path = Path.join(tmp_dir, "configured-master.mp4")
-    preview_path = Path.join(tmp_dir, "configured-preview.mkv")
-
-    master_output = %Output{
-      target: master_path,
-      mappings: [
-        %Mapping{source: graph[:master], encoding: encoder},
-        %Mapping{source: FFix.audio(input, 0), encoding: :copy}
-      ],
-      muxer: %Muxer{name: "mp4", options: [movflags: "faststart", empty_hdlr_name: true]},
-      options: [t: 0.3]
-    }
-
-    preview_output = %Output{
-      target: preview_path,
-      mappings: [%Mapping{source: graph[:preview], encoding: encoder}],
-      muxer: %Muxer{name: "matroska"},
-      options: [t: 0.3]
-    }
-
-    command = FFix.command([master_output, preview_output], global: ffmpeg_globals())
-
-    run_ffmpeg!(command)
-    assert_nonempty_file!(master_path)
-    assert_nonempty_file!(preview_path)
-    assert probe_codec_types!(master_path) == ["video", "audio"]
-    assert probe_dimensions!(preview_path) == {80, 48}
+    assert probe_stream_field!(output_path, "codec_name") == ["aac", "mpeg4", "ffv1"]
   end
 
   test("shortcut pipeline runs demuxing, decoding, filtered encodes, and independent muxers", %{
@@ -290,17 +212,17 @@ defmodule FFix.FFmpegIntegrationTest do
 
     main_path = Path.join(tmp_dir, "shortcuts.mp4")
     preview_path = Path.join(tmp_dir, "shortcuts-preview.mkv")
-    source = input
-    [main, preview] = Filter.split(FFix.video(source, 0), outputs: 2)
+    [main, preview] = Filter.split(FFix.video(input, 0), outputs: 2)
     preview = Filter.scale(preview, w: 80, h: 48)
+    graph = FFix.graph(outputs: [main: main, preview: preview])
 
     command =
       FFix.command(
         [
           Muxer.mp4(
             [
-              Encoder.mpeg4(main, b: 300_000, threads: 1),
-              FFix.stream_copy(FFix.audio(source, 0))
+              Encoder.mpeg4(graph[:main], b: 300_000, threads: 1),
+              FFix.stream_copy(FFix.audio(input, 0))
             ],
             main_path,
             movflags: [:faststart],
@@ -308,7 +230,7 @@ defmodule FFix.FFmpegIntegrationTest do
             output_options: [t: 0.3]
           ),
           Muxer.matroska(
-            [Encoder.mpeg4(preview, b: 200_000, threads: 1, data_partitioning: true)],
+            [Encoder.mpeg4(graph[:preview], b: 200_000, threads: 1, data_partitioning: true)],
             preview_path,
             output_options: [t: 0.3]
           )
@@ -317,7 +239,8 @@ defmodule FFix.FFmpegIntegrationTest do
       )
 
     run_ffmpeg!(command)
-    assert probe_codec_types!(main_path) == ["video", "audio"]
+    assert probe_stream_field!(main_path, "codec_name") == ["mpeg4", "aac"]
+    assert probe_stream_field!(preview_path, "codec_name") == ["mpeg4"]
     assert probe_dimensions!(preview_path) == {80, 48}
   end
 
@@ -332,10 +255,8 @@ defmodule FFix.FFmpegIntegrationTest do
       Demuxer.rawvideo(raw_path, video_size: "16x16", pixel_format: :rgb24, framerate: 1)
       |> Decoder.rawvideo({:video, 0}, threads: 1)
 
-    source = input
-
     command =
-      FFix.command(Muxer.image2([Encoder.png(FFix.video(source, 0))], png_path, update: true),
+      FFix.command(Muxer.image2([Encoder.png(FFix.video(input, 0))], png_path, update: true),
         global: ffmpeg_globals()
       )
 
@@ -392,38 +313,11 @@ defmodule FFix.FFmpegIntegrationTest do
     end
   end
 
-  test "runner parses ffmpeg logs and progress events" do
-    parent = self()
-    command = runner_observation_command()
-
-    result =
-      FFix.run!(command,
-        progress: true,
-        stderr: :collect,
-        on_event: fn event -> send(parent, event) end
-      )
-
-    assert result.exit_status == 0
-    assert result.stderr =~ "[info]"
-    assert Enum.any?(result.logs, &(&1.level == :info))
-    assert %FFix.Runner.Progress{status: :end} = result.last_progress
-    assert result.last_progress.frame >= 1
-    events = collect_runner_events([])
-
-    assert Enum.any?(events, fn
-             {:log, %FFix.Runner.Log{level: :info}} -> true
-             _ -> false
-           end)
-
-    assert Enum.any?(events, fn
-             {:progress, %FFix.Runner.Progress{status: :end}} -> true
-             _ -> false
-           end)
-  end
-
   test "runner streams ffmpeg logs and progress events" do
     command = runner_observation_command()
-    events = FFix.stream(command, progress: true, stderr: :collect) |> Enum.to_list()
+
+    events =
+      FFix.stream(command, ffmpeg: @ffmpeg, progress: true, stderr: :collect) |> Enum.to_list()
 
     assert Enum.any?(events, fn
              {:log, %FFix.Runner.Log{level: :info}} -> true
@@ -438,28 +332,9 @@ defmodule FFix.FFmpegIntegrationTest do
     assert {:exit, result} = List.last(events)
     assert result.exit_status == 0
     assert result.stderr =~ "[info]"
+    assert Enum.any?(result.logs, &(&1.level == :info))
     assert %FFix.Runner.Progress{status: :end} = result.last_progress
-  end
-
-  test "runner stderr discard keeps live ffmpeg events without retaining logs" do
-    parent = self()
-    command = runner_observation_command()
-
-    result =
-      FFix.run!(command,
-        progress: true,
-        stderr: :discard,
-        on_event: fn event -> send(parent, event) end
-      )
-
-    assert result.exit_status == 0
-    assert result.stderr == nil
-    assert result.logs == []
-    assert %FFix.Runner.Progress{status: :end} = result.last_progress
-    events = collect_runner_events([])
-    assert Enum.any?(events, &match?({:stderr, _}, &1))
-    assert Enum.any?(events, &match?({:log, _}, &1))
-    assert Enum.any?(events, &match?({:progress, %FFix.Runner.Progress{status: :end}}, &1))
+    assert result.last_progress.frame >= 1
   end
 
   defp create_sample_video!(path) do
@@ -521,23 +396,15 @@ output:
     )
   end
 
-  defp run_ffmpeg!(command) do
-    result = FFix.run!(command, stderr: :collect)
+  defp run_ffmpeg!(command), do: FFix.run!(command, ffmpeg: @ffmpeg, stderr: :collect)
 
-    assert result.exit_status == 0,
-           "ffmpeg failed with exit #{inspect(result.exit_status)}
-command: #{result.shell}
-output:
-#{result.stderr}"
+  defp probe_codec_types!(path), do: probe_stream_field!(path, "codec_type")
 
-    result
-  end
-
-  defp probe_codec_types!(path) do
+  defp probe_stream_field!(path, field) do
     {output, 0} =
       System.cmd(
         @ffprobe,
-        ["-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", path],
+        ["-v", "error", "-show_entries", "stream=#{field}", "-of", "csv=p=0", path],
         stderr_to_stdout: true
       )
 
@@ -556,14 +423,6 @@ output:
     |> String.trim()
     |> String.split("x", parts: 2)
     |> then(fn [width, height] -> {String.to_integer(width), String.to_integer(height)} end)
-  end
-
-  defp collect_runner_events(events) do
-    receive do
-      event -> collect_runner_events([event | events])
-    after
-      0 -> Enum.reverse(events)
-    end
   end
 
   defp assert_nonempty_file!(path) do

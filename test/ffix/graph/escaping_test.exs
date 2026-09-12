@@ -54,16 +54,10 @@ defmodule FFix.Graph.EscapingTest do
       args = FilterGraph.parse_args(filter.args)
       assert {"text", text} in args
 
-      # Reconstruct the explicit node data from the pure syntax parser.
-      nodes =
-        Map.new(named.nodes, fn {node_id, node} ->
-          case node.kind do
-            :filter -> {node_id, %{node | args: args}}
-            :input -> {node_id, node}
-          end
-        end)
-
-      assert FFix.to_filtergraph(%{named | nodes: nodes}) == rendered
+      parsed = Graph.parse!(rendered)
+      node = Enum.find(Graph.nodes(parsed), &(&1.name == :drawtext))
+      assert {"text", text} in node.args
+      assert FFix.to_filtergraph(parsed) == rendered
     end
   end
 
@@ -92,9 +86,9 @@ defmodule FFix.Graph.EscapingTest do
   end
 
   test "renderer rejects NUL in named values and expressions" do
-    for value <- ["bad\0text", "bad\0expression"] do
+    for options <- [[text: "bad\0text"], [text: "safe", x: "bad\0expression"]] do
       assert_raise ArgumentError, ~r/NUL/, fn ->
-        [text: value] |> text_graph(:named) |> FFix.to_filtergraph()
+        options |> text_graph(:named) |> FFix.to_filtergraph()
       end
     end
   end
@@ -132,6 +126,8 @@ defmodule FFix.Graph.EscapingTest do
       |> then(&FFix.graph(output: &1))
       |> FFix.to_filtergraph()
 
+    expected_hash = frame_hash(expected)
+
     for width <- ["if(gt(iw,32),32,iw)", "min(iw,32)"] do
       actual =
         video
@@ -139,7 +135,7 @@ defmodule FFix.Graph.EscapingTest do
         |> then(&FFix.graph(output: &1))
         |> FFix.to_filtergraph()
 
-      assert frame_hash(actual) == frame_hash(expected)
+      assert frame_hash(actual) == expected_hash
     end
   end
 
