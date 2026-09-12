@@ -3,73 +3,126 @@ defmodule FFix.Graph.Bind do
 
   alias FFix.Command.Input
   alias FFix.Graph
-  alias FFix.Graph.{Builder, InputRef, StreamRef}
+  alias FFix.Graph.{Builder, InputRef, Merge, Ref, StreamRef}
 
-  def bind(%Graph{} = graph, bindings) do
-    Builder.validate_graph!(graph, allow_unused: true)
+  def bind(%Graph{} = template, bindings) do
+    Builder.validate_graph!(template, allow_unused: true)
     bindings = normalize_bindings!(bindings)
-    graph_id = make_ref()
+    ports = selectors_by_input(template)
+    initial = {Merge.new(template.settings), %{}, MapSet.new()}
 
-    {nodes, used} =
-      Enum.map_reduce(graph.order, MapSet.new(), fn node_id, used ->
-        node = Map.fetch!(graph.nodes, node_id)
-        node = %{node | identity: make_ref()}
-
+    {graph, replacements, used} =
+      Enum.reduce(Graph.nodes(template), initial, fn node, {graph, replacements, used} ->
         if node.kind == :input do
-          input_ref = node.input_ref
+          {stream, key} = resolve_binding!(node.input_ref, bindings, ports)
+          {graph, _inputs} = Merge.add(graph, stream.graph)
 
-          keys =
-            Enum.filter(
-              [{input_ref.input, input_ref.selector}, input_ref.input],
-              &Map.has_key?(bindings, &1)
-            )
-
-          {binding, used} =
-            case keys do
-              [key] ->
-                value = Map.fetch!(bindings, key)
-
-                if is_struct(value, StreamRef) and key == input_ref.input and
-                     multiple_selectors?(graph, key),
-                   do:
-                     raise(
-                       ArgumentError,
-                       "input #{inspect(key)} has multiple selectors; bind an Input declaration or exact {input, selector} slots"
-                     )
-
-                {value, MapSet.put(used, key)}
-
-              [] ->
-                {input_ref.binding || input_ref.declaration, used}
-
-              _ ->
-                raise ArgumentError, "multiple bindings for graph input #{inspect(input_ref)}"
+          used =
+            if key == nil do
+              used
+            else
+              MapSet.put(used, key)
             end
 
-          binding = select_binding!(binding, input_ref)
-          validate_media!(node.output_media, binding)
-          {{node_id, %{node | input_ref: %{input_ref | binding: binding}}}, used}
+          {graph, Map.put(replacements, node.id, stream.ref), used}
         else
-          {{node_id, node}, used}
+          cloned = %{
+            node
+            | id: make_ref(),
+              inputs: Enum.map(node.inputs, &replace_ref(&1, replacements))
+          }
+
+          graph = %{
+            graph
+            | nodes: Map.put(graph.nodes, cloned.id, cloned),
+              order: graph.order ++ [cloned.id]
+          }
+
+          graph =
+            if cloned.output_media == [] do
+              %{graph | terminals: graph.terminals ++ [cloned.id]}
+            else
+              graph
+            end
+
+          {graph, Map.put(replacements, node.id, cloned.id), used}
         end
       end)
 
     unused = Map.keys(bindings) -- MapSet.to_list(used)
-    if unused != [], do: raise(ArgumentError, "unknown graph input bindings: #{inspect(unused)}")
 
-    instance = %{
-      graph
-      | id: graph_id,
-        nodes: Map.new(nodes),
-        exports: Enum.map(graph.exports, &%{&1 | graph_id: graph_id})
-    }
-
-    {streams, terminals} = Builder.graph_roots(instance)
+    if unused != [] do
+      raise ArgumentError, "unknown graph input bindings: #{inspect(unused)}"
+    end
 
     exports =
-      Enum.zip_with(graph.exports, streams, fn export, stream -> {export.name, stream} end)
+      Enum.map(template.exports, fn export ->
+        ref = replace_ref(export.ref, replacements)
+        media = Enum.fetch!(graph.nodes[ref.node_id].output_media, ref.output)
+        %{export | graph_id: graph.id, ref: ref, media: media}
+      end)
 
-    Builder.graph(outputs: exports, terminals: terminals)
+    %{graph | exports: exports}
+  end
+
+  defp replace_ref(ref, replacements) do
+    case Map.fetch!(replacements, ref.node_id) do
+      %Ref{} = bound_pad -> bound_pad
+      node_id -> %{ref | node_id: node_id}
+    end
+  end
+
+  defp selectors_by_input(graph) do
+    graph
+    |> Graph.nodes()
+    |> Enum.filter(&(&1.kind == :input))
+    |> Enum.group_by(& &1.input_ref.input, & &1.input_ref.selector)
+    |> Map.new(fn {input, selectors} -> {input, Enum.uniq(selectors)} end)
+  end
+
+  defp resolve_binding!(input_ref, bindings, ports) do
+    keys =
+      Enum.filter(
+        [{input_ref.input, input_ref.selector}, input_ref.input],
+        &Map.has_key?(bindings, &1)
+      )
+
+    {value, key} =
+      case keys do
+        [] -> {input_ref.declaration, nil}
+        [key] -> {Map.fetch!(bindings, key), key}
+        _ -> raise ArgumentError, "multiple bindings for graph input #{inspect(input_ref)}"
+      end
+
+    if is_struct(value, StreamRef) and key == input_ref.input and length(ports[key]) > 1 do
+      raise ArgumentError,
+            "input #{inspect(key)} has multiple selectors; bind an Input declaration or exact {input, selector} slots"
+    end
+
+    stream =
+      case value do
+        %Input{} ->
+          Builder.input(value, input_ref.selector)
+
+        %StreamRef{} ->
+          value
+
+        nil ->
+          raise ArgumentError, "unbound graph input: #{inspect(input_ref.input)}"
+
+        _ ->
+          raise ArgumentError,
+                "graph inputs bind to Input declarations or StreamRefs, got: #{inspect(value)}"
+      end
+
+    StreamRef.node!(stream)
+    expected = InputRef.media(input_ref.selector)
+
+    if expected != :unknown and stream.media not in [:unknown, expected] do
+      raise ArgumentError, "graph input expects #{expected}, got: #{stream.media}"
+    end
+
+    {stream, key}
   end
 
   defp normalize_bindings!(bindings) when is_map(bindings) or is_list(bindings) do
@@ -84,8 +137,9 @@ defmodule FFix.Graph.Bind do
               InputRef.normalize_input_id!(input)
           end
 
-        if Map.has_key?(result, key),
-          do: raise(ArgumentError, "duplicate graph input binding: #{inspect(key)}")
+        if Map.has_key?(result, key) do
+          raise ArgumentError, "duplicate graph input binding: #{inspect(key)}"
+        end
 
         Map.put(result, key, value)
 
@@ -94,45 +148,7 @@ defmodule FFix.Graph.Bind do
     end)
   end
 
-  defp normalize_bindings!(_bindings),
-    do: raise(ArgumentError, "graph bindings must be a map or ordered list of pairs")
-
-  defp multiple_selectors?(graph, input) do
-    graph.nodes
-    |> Map.values()
-    |> Enum.filter(&(&1.kind == :input and &1.input_ref.input == input))
-    |> Enum.map(& &1.input_ref.selector)
-    |> Enum.uniq()
-    |> length()
-    |> Kernel.>(1)
-  end
-
-  defp select_binding!(%Input{} = input, input_ref), do: Builder.input(input, input_ref.selector)
-  defp select_binding!(%StreamRef{} = stream, _input_ref), do: stream
-
-  defp select_binding!(nil, input_ref),
-    do:
-      raise(
-        ArgumentError,
-        "unbound graph input: #{inspect(input_ref.input)} #{inspect(input_ref.selector)}"
-      )
-
-  defp select_binding!(other, _input_ref),
-    do:
-      raise(
-        ArgumentError,
-        "graph inputs bind to Input declarations or StreamRefs, got: #{inspect(other)}"
-      )
-
-  defp validate_media!([expected], %StreamRef{media: actual, plan: plan}) do
-    if expected != :unknown and actual not in [:unknown, expected],
-      do: raise(ArgumentError, "graph input expects #{expected}, got: #{actual}")
-
-    if plan.kind == :input do
-      selector = plan.input_ref.selector
-
-      if selector == :all or match?({_media, :all}, selector),
-        do: raise(ArgumentError, "graph inputs require one stream, not an all-stream selection")
-    end
+  defp normalize_bindings!(_bindings) do
+    raise ArgumentError, "graph bindings must be a map or ordered list of pairs"
   end
 end

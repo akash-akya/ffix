@@ -66,7 +66,7 @@ defmodule FFix.ShortcutTest do
     assert values(argv, "-crf:0") == ["18"]
     assert values(argv, "-crf:1") == ["28"]
     assert values(argv, "-preset:0") == ["slow"]
-    assert built.graph == nil
+    refute "-filter_complex" in argv
     input = FFix.input("in.mp4")
     default = command(Muxer.mp4([Encoder.libx264(video(input, 0))], "out.mp4"))
 

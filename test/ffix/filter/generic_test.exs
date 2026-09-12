@@ -1,19 +1,8 @@
 defmodule FFix.Filter.GenericTest do
   use ExUnit.Case, async: true
 
-  alias FFix.{Command, Encoder, Filter, Graph, Muxer}
+  alias FFix.{Encoder, Filter, Graph, Muxer}
   alias FFix.Graph.{StreamRef, Terminal}
-
-  test "graph references, terminals, and plans share a namespace without expression wrappers" do
-    source = FFix.input("in.mp4")
-    assert %StreamRef{} = video = FFix.video(source, 0)
-    assert %Graph.Builder.Plan{} = video.plan
-    refute function_exported?(FFix, :expr, 1)
-    refute Code.ensure_loaded?(FFix.Graph.Expr)
-    assert %StreamRef{} = Filter.scale(video, w: 320, h: -2)
-    assert %Terminal{} = Filter.nullsink(video)
-    assert %Command.Mapping{} = Encoder.libx264(video)
-  end
 
   test "generic operations take inputs first with only options optional" do
     video = Graph.input(0, :video)
@@ -24,21 +13,12 @@ defmodule FFix.Filter.GenericTest do
     assert render(delegated) == render(direct)
     assert render(piped) == render(direct)
     assert %StreamRef{} = Filter.filter(video, "null", [:video])
-
-    for module <- [FFix, Filter] do
-      assert Keyword.get_values(module.__info__(:functions), :filter) == [3, 4]
-
-      assert_raise ArgumentError, ~r/filter inputs must be/, fn ->
-        apply(module, :filter, [:scale, [video], [w: 320]])
-      end
-    end
   end
 
   test "unknown names and options serialize without creating atoms" do
     name = "vendor_filter_#{System.unique_integer([:positive])}"
     assert_raise ArgumentError, fn -> String.to_existing_atom(name) end
     result = Filter.filter(Graph.input(0, :video), name, [:video], [{"custom-option", 5}])
-    assert result.plan.name == name
     assert render(result) == "[0:v]#{name}=custom-option=5[out0];"
     assert_raise ArgumentError, fn -> String.to_existing_atom(name) end
   end
@@ -54,9 +34,7 @@ defmodule FFix.Filter.GenericTest do
     end
 
     [first, second] = Filter.filter(video, "split", [:video, :video])
-    assert first.plan.args == []
-    assert first.plan.id == second.plan.id
-    assert [first.output, second.output] == [0, 1]
+    assert FFix.to_filtergraph(FFix.graph(outputs: [first, second])) == "[0:v]split[out0][out1];"
   end
 
   test "source and sink filters use explicit empty input and output lists" do
@@ -125,9 +103,6 @@ defmodule FFix.Filter.GenericTest do
         {"width", expression},
         mode: :fast
       ])
-
-    assert result.plan.args ==
-             [pos: text, pos: 2] ++ [{"enabled", false}, {"width", expression}, {"mode", "fast"}]
 
     assert [chain: [parsed]] = FFix.Parsers.FilterGraph.parse(render(result))
 

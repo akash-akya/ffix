@@ -17,11 +17,10 @@ defmodule FFix.Graph.InputRef do
   @type t :: %__MODULE__{
           input: input_id(),
           selector: selector(),
-          declaration: FFix.Command.Input.t() | nil,
-          binding: FFix.Graph.StreamRef.t() | nil
+          declaration: FFix.Command.Input.t() | nil
         }
 
-  defstruct [:input, :selector, :declaration, :binding]
+  defstruct [:input, :selector, :declaration]
 
   @spec new(FFix.Command.Input.t() | input_id() | atom(), selector()) :: t()
   def new(input_or_id, selector) do

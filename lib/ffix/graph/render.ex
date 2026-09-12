@@ -71,11 +71,10 @@ defmodule FFix.Graph.Render do
     end
   end
 
-  defp outputs_to_string(%Node{outputs: 0}, _output_labels), do: ""
-
   defp outputs_to_string(%Node{} = node, output_labels) do
-    0..(node.outputs - 1)
-    |> Enum.map_join("", fn output ->
+    node.output_media
+    |> Enum.with_index()
+    |> Enum.map_join("", fn {_media, output} ->
       case Map.get(output_labels, {node.id, output}) do
         nil -> ""
         label -> "[#{label}]"
@@ -208,15 +207,19 @@ defmodule FFix.Graph.Render do
   end
 
   # Multi-output filters need labels for every output so later outputs stay addressable.
-  defp required_outputs(%Node{outputs: outputs}, _used_outputs) when outputs > 1 do
-    Enum.to_list(0..(outputs - 1))
+  defp required_outputs(%Node{output_media: media}, _used_outputs) when length(media) > 1 do
+    Enum.to_list(0..(length(media) - 1))
   end
 
-  defp required_outputs(%Node{id: node_id, outputs: 1}, used_outputs) do
-    if MapSet.member?(used_outputs, {node_id, 0}), do: [0], else: []
+  defp required_outputs(%Node{id: node_id, output_media: [_media]}, used_outputs) do
+    if MapSet.member?(used_outputs, {node_id, 0}) do
+      [0]
+    else
+      []
+    end
   end
 
-  defp required_outputs(%Node{}, _used_outputs), do: []
+  defp required_outputs(%Node{output_media: []}, _used_outputs), do: []
 
   defp used_outputs(%Graph{} = graph) do
     input_refs =
