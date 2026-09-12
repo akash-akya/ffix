@@ -92,8 +92,6 @@ defmodule FFix.Filter.HelpersTest do
 
     assert [%StreamRef{media: :video}, %StreamRef{media: :audio}] =
              Filter.concat([video, audio, other_video, audio], v: 1, a: 1)
-
-    assert Filter.split(video) |> hd() |> Map.fetch!(:plan) |> Map.fetch!(:args) == []
   end
 
   test "named helper output counts honor aliases and positional options" do
@@ -109,32 +107,31 @@ defmodule FFix.Filter.HelpersTest do
   test "filter helpers preserve arrays, raw strings, expressions, flags and positional order" do
     audio = Graph.input(0, :audio)
     formatted = Filter.aformat(audio, sample_rates: ["44100", 48000], sample_fmts: [:fltp, :s16])
-    assert formatted.plan.args == [sample_rates: [44100, 48000], sample_fmts: ["fltp", "s16"]]
     graph = FFix.graph(output: formatted)
 
     assert FFix.to_filtergraph(graph) ==
              "[0:a]aformat=sample_rates=44100|48000:sample_fmts=fltp|s16[out0];"
 
-    assert Filter.aformat(audio, sample_rates: "44100|48000").plan.args ==
-             [sample_rates: "44100|48000"]
+    assert arguments(Filter.aformat(audio, sample_rates: "44100|48000")) ==
+             [{"sample_rates", "44100|48000"}]
 
     video = Graph.input(0, :video)
     expression = "between(t,1,2)"
 
-    assert Filter.fade(video, type: :out, start_frame: "2").plan.args ==
-             [type: "out", start_frame: 2]
+    assert arguments(Filter.fade(video, type: :out, start_frame: "2")) ==
+             [{"type", "out"}, {"start_frame", "2"}]
 
-    assert Filter.drawtext(video, text_align: [], enable: expression).plan.args ==
-             [text_align: "", enable: expression]
+    assert arguments(Filter.drawtext(video, text_align: [], enable: expression)) ==
+             [{"text_align", ""}, {"enable", expression}]
 
-    assert Filter.scale(video, pos: 1280, pos: -1).plan.args == [pos: 1280, pos: -1]
-    assert Filter.scale(video, w: 1280, w: "iw/2").plan.args == [w: 1280, w: "iw/2"]
+    assert arguments(Filter.scale(video, pos: 1280, pos: -1)) == [pos: "1280", pos: "-1"]
+    assert arguments(Filter.scale(video, w: 1280, w: "iw/2")) == [{"w", "1280"}, {"w", "iw/2"}]
 
     assert_raise ArgumentError, ~r/vendor_option is not a valid option/, fn ->
       Filter.null(video, vendor_option: :literal)
     end
 
-    assert Filter.filter(video, "null", [:video], vendor_option: :literal).plan.args ==
+    assert arguments(Filter.filter(video, "null", [:video], vendor_option: :literal)) ==
              [{"vendor_option", "literal"}]
   end
 
@@ -194,7 +191,7 @@ defmodule FFix.Filter.HelpersTest do
     assert module.__info__(:macros) == []
     assert module.__info__(:functions) == [fixture_filter: 1, fixture_filter: 2]
     stream = apply(module, :fixture_filter, [Graph.input(0, :video), [custom: literal]])
-    assert stream.plan.args == [custom: literal]
+    assert arguments(stream) == [{"custom", literal}]
   end
 
   test "filter generation rejects a collision with the generic operation" do
@@ -240,6 +237,12 @@ defmodule FFix.Filter.HelpersTest do
     assert [%StreamRef{}, %StreamRef{}] = apply(module, :split, [video])
     assert %StreamRef{} = apply(module, :scale, [video, [w: 1280]])
     assert length(module.__info__(:functions)) == 1_102
+  end
+
+  defp arguments(stream) do
+    text = FFix.to_filtergraph(FFix.graph(output: stream))
+    [chain: [filter]] = FFix.Parsers.FilterGraph.parse(text)
+    FFix.Parsers.FilterGraph.parse_args(filter.args)
   end
 
   defp signature(name, arity) do

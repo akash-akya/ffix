@@ -12,7 +12,6 @@ defmodule FFix.Graph.Parse do
   @type state :: %{
           nodes: %{Graph.node_id() => Node.t()},
           order: [Graph.node_id()],
-          next_id: pos_integer(),
           input_nodes: %{InputRef.t() => Graph.node_id()},
           labels: %{String.t() => Ref.t()},
           declared_labels: MapSet.t(String.t()),
@@ -40,7 +39,6 @@ defmodule FFix.Graph.Parse do
     %{
       nodes: %{},
       order: [],
-      next_id: 1,
       input_nodes: %{},
       labels: %{},
       declared_labels: labels,
@@ -87,12 +85,12 @@ defmodule FFix.Graph.Parse do
       raise ArgumentError, "unlabelled outputs must connect to the next filter or be labelled"
     end
 
-    node_id = state.next_id
+    node_id = make_ref()
 
     refs =
-      if expected_outputs == 0,
-        do: [],
-        else: Enum.map(0..(expected_outputs - 1), &%Ref{node_id: node_id, output: &1})
+      Enum.with_index(output_media, fn _media, output ->
+        %Ref{node_id: node_id, output: output}
+      end)
 
     preferred_labels =
       filter.outputs
@@ -101,19 +99,12 @@ defmodule FFix.Graph.Parse do
 
     node = %Node{
       id: node_id,
-      identity: make_ref(),
       kind: :filter,
       name: name,
       instance: filter.instance,
       inputs: explicit_inputs ++ implicit_inputs,
       args: args,
-      outputs: expected_outputs,
       output_media: output_media,
-      media:
-        case Enum.uniq(output_media) do
-          [media] -> media
-          _ -> :unknown
-        end,
       metadata: preferred_label_metadata(preferred_labels)
     }
 
@@ -124,8 +115,9 @@ defmodule FFix.Graph.Parse do
     state =
       Enum.zip(filter.outputs, labeled_refs)
       |> Enum.reduce(state, fn {label, ref}, state ->
-        if Map.has_key?(state.labels, label),
-          do: raise(ArgumentError, "duplicate graph label: #{inspect(label)}")
+        if Map.has_key?(state.labels, label) do
+          raise ArgumentError, "duplicate graph label: #{inspect(label)}"
+        end
 
         %{
           state
@@ -151,7 +143,10 @@ defmodule FFix.Graph.Parse do
     graph_id = make_ref()
 
     terminals =
-      Enum.filter(order, &(state.nodes[&1].kind == :filter and state.nodes[&1].outputs == 0))
+      Enum.filter(
+        order,
+        &(state.nodes[&1].kind == :filter and state.nodes[&1].output_media == [])
+      )
 
     used_refs = state.nodes |> Map.values() |> Enum.flat_map(& &1.inputs) |> MapSet.new()
 
@@ -190,12 +185,10 @@ defmodule FFix.Graph.Parse do
         {ref, state}
 
       :error ->
-        if MapSet.member?(state.declared_labels, label),
-          do:
-            raise(
-              ArgumentError,
-              "forward or cyclic graph label #{inspect(label)}; declare producers before consumers"
-            )
+        if MapSet.member?(state.declared_labels, label) do
+          raise ArgumentError,
+                "forward or cyclic graph label #{inspect(label)}; declare producers before consumers"
+        end
 
         case parse_input_ref(label) do
           %InputRef{} = input_ref -> ensure_input_node(state, input_ref)
@@ -210,17 +203,14 @@ defmodule FFix.Graph.Parse do
 
     case state.input_nodes[input_ref] do
       nil ->
-        node_id = state.next_id
+        node_id = make_ref()
 
         node = %Node{
           id: node_id,
-          identity: make_ref(),
           kind: :input,
           name: :input,
           input_ref: input_ref,
-          outputs: 1,
-          output_media: [selector_media(input_ref.selector)],
-          media: selector_media(input_ref.selector)
+          output_media: [selector_media(input_ref.selector)]
         }
 
         ref = %Ref{node_id: node_id, output: 0}
@@ -239,8 +229,7 @@ defmodule FFix.Graph.Parse do
     %{
       state
       | nodes: Map.put(state.nodes, node_id, node),
-        order: [node_id | state.order],
-        next_id: node_id + 1
+        order: [node_id | state.order]
     }
   end
 

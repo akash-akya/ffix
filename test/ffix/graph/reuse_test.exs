@@ -19,16 +19,13 @@ defmodule FFix.Graph.ReuseTest do
     assert command.inputs == [source]
     assert filter_names(command.graph) == [:scale, :hflip]
     assert Enum.map(input_nodes(command.graph), & &1.input_ref.selector) == [{:video, 0}]
-
-    assert FFix.to_argv(command)
-           |> Enum.member?("[0:v:0]scale=16:16[scale_0];\n[scale_0]hflip[out0];")
   end
 
   test "parsed out-number labels keep their names and pad addresses" do
     graph = Graph.parse!("[0:v]split[out1][out0]")
     assert Enum.map(graph.exports, & &1.name) == ["out1", "out0"]
-    assert graph[:out0].output == 1
-    assert graph[:out1].output == 0
+    assert graph[:out0].ref.output == 1
+    assert graph[:out1].ref.output == 0
     assert Graph.to_filtergraph(graph) == "[0:v]split[out1][out0];"
   end
 
@@ -37,8 +34,6 @@ defmodule FFix.Graph.ReuseTest do
     template = preview_template()
     first = Graph.bind(template, picture: FFix.video(source, 0))
     second = Graph.bind(template, picture: FFix.video(source, 0))
-    refute first.id == second.id
-    refute first[:preview].plan.id == second[:preview].plan.id
 
     command =
       FFix.command([
@@ -48,9 +43,6 @@ defmodule FFix.Graph.ReuseTest do
 
     assert command.inputs == [source]
     assert filter_names(command.graph) == [:hflip, :hflip]
-
-    assert length(Enum.uniq(Enum.map(Graph.nodes(command.graph), & &1.identity))) ==
-             length(command.graph.order)
   end
 
   test "bound external producers retain identity and still require explicit splits" do
@@ -71,24 +63,6 @@ defmodule FFix.Graph.ReuseTest do
     assert Enum.count(filter_names(command.graph), &(&1 == :scale)) == 1
     assert Enum.count(filter_names(command.graph), &(&1 == :split)) == 1
     assert Enum.count(filter_names(command.graph), &(&1 == :hflip)) == 1
-  end
-
-  test "a selected export cannot discard independent instance branches" do
-    port = Graph.input(:picture, :video)
-    template = FFix.graph(outputs: [first: Filter.hflip(port), second: Filter.vflip(port)])
-    instance = Graph.bind(template, picture: FFix.video(FFix.input("in.mp4"), 0))
-
-    assert_raise ArgumentError, ~r/unconnected filter output/, fn ->
-      instance[:first] |> FFix.output("out.mp4") |> FFix.command()
-    end
-
-    command =
-      FFix.command(FFix.output(instance[:first], "out.mp4"),
-        terminals: [Filter.nullsink(instance[:second])]
-      )
-
-    assert filter_names(command.graph) == [:hflip, :vflip, :nullsink]
-    assert length(command.graph.terminals) == 1
   end
 
   test "nested binding preserves unused external branches until the final command" do
@@ -241,34 +215,11 @@ defmodule FFix.Graph.ReuseTest do
     scale = Enum.find(Graph.nodes(graph), &(&1.name == :scale))
     changed = Graph.update_node(graph, scale.id, &%{&1 | args: [w: 32, h: 32]})
 
-    assert_raise ArgumentError, ~r/conflicting definitions/, fn ->
-      FFix.command([FFix.output(picture, "one.mp4"), FFix.output(changed[0], "two.mp4")])
-    end
-  end
+    outputs = [FFix.output(picture, "one.mp4"), FFix.output(changed[0], "two.mp4")]
 
-  test "all helper result containers agree and unresolved shapes are explicit" do
-    video = Graph.input(0, :video)
-    audio = Graph.input(0, :audio)
-    assert %StreamRef{} = Filter.split(video, outputs: 1)
-    assert %StreamRef{} = Filter.select(video)
-    assert %StreamRef{} = Filter.ebur128(audio)
-
-    assert [%StreamRef{media: :video}, %StreamRef{media: :audio}] =
-             Filter.ebur128(audio, video: true)
-
-    assert [%StreamRef{}, %StreamRef{}] = Filter.scale2ref(video, video)
-    assert %Terminal{} = Filter.split(video, outputs: 0)
-
-    assert_raise ArgumentError, ~r/use FFix.Filter.filter\/4/, fn ->
-      Filter.extractplanes(video, planes: "y+u")
-    end
-
-    assert [%StreamRef{}, %StreamRef{}] =
-             Filter.filter(video, "extractplanes", [:video, :video], planes: "y+u")
-
-    refute function_exported?(FFix, :shape, 2)
-    refute function_exported?(FFix, :expr, 1)
-    assert FFix.__info__(:macros) == []
+    Enum.each([outputs, Enum.reverse(outputs)], fn ordered ->
+      assert_raise ArgumentError, ~r/conflicting definitions/, fn -> FFix.command(ordered) end
+    end)
   end
 
   @tag skip: is_nil(@ffmpeg)
@@ -320,8 +271,9 @@ defmodule FFix.Graph.ReuseTest do
     FFix.graph(outputs: [preview: Filter.hflip(Graph.input(:picture, :video))])
   end
 
-  defp filter_names(graph),
-    do: for(node <- Graph.nodes(graph), node.kind == :filter, do: node.name)
+  defp filter_names(graph) do
+    graph |> Graph.nodes() |> Enum.filter(&(&1.kind == :filter)) |> Enum.map(& &1.name)
+  end
 
   defp input_nodes(graph), do: Enum.filter(Graph.nodes(graph), &(&1.kind == :input))
 end

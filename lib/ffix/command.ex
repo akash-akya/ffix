@@ -405,7 +405,7 @@ defmodule FFix.Command do
   defp validate_input_snapshots!(inputs, graph, outputs, input_index_map) do
     graph_refs =
       if graph do
-        for {_id, %{kind: :input, input_ref: input_ref}} <- graph.nodes, do: input_ref
+        graph |> Graph.nodes() |> Enum.filter(&(&1.kind == :input)) |> Enum.map(& &1.input_ref)
       else
         []
       end
@@ -414,7 +414,7 @@ defmodule FFix.Command do
       Enum.flat_map(outputs, fn output ->
         Enum.flat_map(output.mappings, fn
           %Mapping{source: %Selection{input_ref: input_ref}} -> [input_ref]
-          %Mapping{source: %StreamRef{plan: %{kind: :input, input_ref: input_ref}}} -> [input_ref]
+          %Mapping{source: %StreamRef{} = stream} -> [StreamRef.node!(stream).input_ref]
           _mapping -> []
         end)
       end)
@@ -617,8 +617,8 @@ defmodule FFix.Command do
 
   defp source_node(source, graph) do
     case source do
-      %StreamRef{plan: plan} ->
-        plan
+      %StreamRef{} = stream ->
+        StreamRef.node!(stream)
 
       %Export{ref: ref} ->
         Map.fetch!(graph.nodes, ref.node_id)
@@ -745,12 +745,6 @@ defmodule FFix.Command do
     Selection.validate!(selection)
     resolve_input_ref!(selection.input_ref, input_count, input_index_map)
     :ok
-  end
-
-  defp validate_source!(%StreamRef{context: context}, _graph, _input_count, _input_index_map)
-       when not is_nil(context) do
-    raise ArgumentError,
-          "graph references require FFix.command/2 or canonical graph.exports handles with an explicit graph"
   end
 
   defp validate_source!(%StreamRef{} = stream, _graph, input_count, input_index_map) do
@@ -986,28 +980,19 @@ defmodule FFix.Command do
     raise ArgumentError, "invalid input ref #{inspect(input)}"
   end
 
-  defp resolve_stream_source!(
-         %StreamRef{
-           plan: %{kind: :input, outputs: 1, input_ref: %InputRef{} = input_ref},
-           output: 0,
-           media: media
-         },
-         input_count,
-         input_index_map
-       ) do
-    selector = InputRef.normalize_selector!(input_ref.selector)
+  defp resolve_stream_source!(%StreamRef{} = stream, input_count, input_index_map) do
+    node = StreamRef.node!(stream)
+    FFix.Graph.Builder.validate_graph!(stream.graph, allow_unused: true)
 
-    unless media == InputRef.media(selector),
-      do: raise(ArgumentError, "input stream media does not match its selector")
+    unless node.kind == :input and map_size(stream.graph.nodes) == 1 and
+             stream.graph.settings == [] do
+      raise ArgumentError,
+            "graph references require FFix.command/2 or canonical graph.exports handles with an explicit graph"
+    end
 
-    resolved = resolve_input_ref!(input_ref, input_count, input_index_map)
+    resolved = resolve_input_ref!(node.input_ref, input_count, input_index_map)
     validate_mapped_input!(resolved)
     resolved
-  end
-
-  defp resolve_stream_source!(%StreamRef{} = stream, _input_count, _input_index_map) do
-    raise ArgumentError,
-          "invalid output source: #{inspect(stream)}; only direct input streams can be mapped, export graph outputs instead"
   end
 
   defp validate_mapped_input!(input_ref) do

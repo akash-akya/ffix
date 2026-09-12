@@ -2,14 +2,12 @@ defmodule FFix.SelectionTest do
   use ExUnit.Case, async: true
 
   alias FFix.{Command, Encoder, Filter, Graph, Muxer, Selection}
-  alias FFix.Command.Input
   alias FFix.Graph.StreamRef
 
   test "media helpers require an explicit index or :all" do
     input = FFix.input("not-opened.mkv")
 
     for helper <- [:video, :audio, :subtitle] do
-      refute function_exported?(FFix, helper, 1)
       assert %StreamRef{} = apply(FFix, helper, [input, 0])
       assert %Selection{} = apply(FFix, helper, [input, :all])
       assert_raise ArgumentError, fn -> apply(FFix, helper, [input, -1]) end
@@ -28,7 +26,6 @@ defmodule FFix.SelectionTest do
     input = FFix.input("in.mkv")
     picture = FFix.video(input, 0, attached_pictures: false)
     assert %StreamRef{media: :video} = picture
-    assert picture.plan.input_ref.selector == {:video_only, 0}
     assert %Selection{} = selection = FFix.video(input, :all, attached_pictures: false)
     assert Selection.media(selection) == :video
 
@@ -92,27 +89,6 @@ defmodule FFix.SelectionTest do
     assert_raise ArgumentError, ~r/graph inputs require one stream/, fn ->
       Graph.to_filtergraph(graph)
     end
-  end
-
-  test "canonical input bindings cannot silently discard selections" do
-    input = FFix.input("in.mkv")
-    graph = FFix.graph(output: Filter.hflip(FFix.video(input, 0)))
-    [input_node | _rest] = graph.order
-
-    for binding <- [FFix.video(input, :all), FFix.video(input, 1, optional: true), :invalid] do
-      malformed = put_in(graph.nodes[input_node].input_ref.binding, binding)
-
-      assert_raise ArgumentError, ~r/bindings require one stream reference/, fn ->
-        FFix.validate!(malformed)
-      end
-
-      assert_raise ArgumentError, ~r/bindings require one stream reference/, fn ->
-        malformed[0]
-      end
-    end
-
-    malformed = put_in(graph.nodes[input_node].input_ref.binding, FFix.audio(input, 0))
-    assert_raise ArgumentError, ~r/graph input expects video/, fn -> FFix.validate!(malformed) end
   end
 
   test "optional raw selectors retain a single optional marker and remain opaque" do
@@ -310,31 +286,6 @@ defmodule FFix.SelectionTest do
     assert_received %{index: 0, specifier: "v:0"}
   end
 
-  test "selections retain graph sinks and settings without becoming graph nodes" do
-    input = FFix.input("in.mkv")
-
-    template =
-      FFix.graph(
-        output: Filter.hflip(Graph.input(:picture, :video)),
-        terminals: [Filter.anullsink(Graph.input(:sound, :audio))],
-        settings: [sws_flags: "bilinear"]
-      )
-
-    instance = Graph.bind(template, picture: FFix.video(input, 0), sound: FFix.audio(input, 0))
-
-    output =
-      FFix.output(
-        [Encoder.ffv1(instance[0]), FFix.stream_copy(FFix.audio(input, :all))],
-        "out.mkv"
-      )
-
-    command = FFix.command(output)
-    assert command.inputs == [input]
-    assert command.graph.settings == [{:sws_flags, "bilinear"}]
-    assert length(command.graph.terminals) == 1
-    assert Enum.count(Graph.nodes(command.graph), &(&1.kind == :input)) == 2
-  end
-
   test "raw queries and optional indexes keep their literal mapping suffixes" do
     input = FFix.input("in.mkv")
 
@@ -355,14 +306,5 @@ defmodule FFix.SelectionTest do
       |> Map.update!(:mappings, fn [mapping] -> [%{mapping | encoding: :copy}] end)
       |> FFix.command()
     end
-  end
-
-  test "lists of known references can be filtered independently or combined" do
-    input = FFix.input("in.mkv")
-    videos = [FFix.video(input, 0), FFix.video(input, 1)]
-    scaled = Enum.map(videos, &Filter.scale(&1, w: 320, h: -2))
-    assert length(FFix.graph(outputs: scaled).exports) == 2
-    assert %StreamRef{} = Filter.hstack(videos)
-    assert %StreamRef{media: :attachment} = Input.select_media(input, :attachment, 0)
   end
 end

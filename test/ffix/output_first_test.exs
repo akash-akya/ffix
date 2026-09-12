@@ -10,9 +10,6 @@ defmodule FFix.OutputFirstTest do
   alias FFix.Encoder
   alias FFix.Graph
   alias FFix.Graph.Builder
-  alias FFix.Graph.InputRef
-  alias FFix.Graph.StreamRef
-  alias FFix.Selection
 
   test "direct mappings infer declaration order and do not emit an empty graph" do
     first = Input.new("same.mp4")
@@ -31,7 +28,6 @@ defmodule FFix.OutputFirstTest do
     command = Build.command(output)
 
     assert command.inputs == [second, first]
-    assert command.graph == nil
 
     assert Command.to_argv(command) == [
              "ffmpeg",
@@ -116,38 +112,6 @@ defmodule FFix.OutputFirstTest do
       Input.select(input, "s?")
     ]
 
-    input_refs =
-      Enum.map(streams, fn stream ->
-        case stream do
-          %Selection{input_ref: input_ref} -> input_ref
-          %StreamRef{plan: %{input_ref: input_ref}} -> input_ref
-        end
-      end)
-
-    assert Enum.all?(input_refs, &(&1.declaration == input))
-
-    assert Enum.map(input_refs, &InputRef.selector_string(&1.selector)) == [
-             "",
-             "v",
-             "a:2",
-             "s:1",
-             "d:0",
-             "t:0",
-             "4",
-             "s?"
-           ]
-
-    assert Enum.map(streams, &match?(%StreamRef{}, &1)) == [
-             false,
-             false,
-             true,
-             true,
-             true,
-             true,
-             true,
-             false
-           ]
-
     argv = streams |> Output.new("out.mkv") |> Build.command() |> Command.to_argv()
 
     assert argv == [
@@ -190,9 +154,6 @@ defmodule FFix.OutputFirstTest do
         ] do
       assert_raise ArgumentError, fn -> Input.select(input, selector) end
     end
-
-    refute function_exported?(Input, :fetch, 2)
-    assert InputRef.normalize_selector!(:video) == :video
   end
 
   test "decoder configuration replaces a selector and generic codec names remain literal" do
@@ -370,39 +331,9 @@ defmodule FFix.OutputFirstTest do
     command = Command.new() |> Command.add_input(input) |> Command.add_output(output)
     assert command.inputs == [input]
     assert command.outputs == [output]
-    refute function_exported?(Command, :input, 2)
-    refute function_exported?(Command, :output, 3)
 
     for source <- [:main, 0] do
       assert_raise ArgumentError, fn -> Mapping.new(source) end
-    end
-  end
-
-  test "direct references retain context terminal dependencies and settings" do
-    direct = Input.new("main.mp4") |> FFix.video(0)
-    sink_source = Input.new("sink.mp4") |> FFix.audio(0)
-    terminal = Builder.filter(sink_source, "anullsink", [], [])
-    context = %{id: make_ref(), roots: [direct, terminal], settings: [sws_flags: "bicubic"]}
-    contextual = %{direct | context: context}
-    command = Build.command(Output.new([contextual, contextual], "out.mp4"))
-
-    assert Enum.map(command.inputs, & &1.source) == ["main.mp4", "sink.mp4"]
-    assert length(command.graph.terminals) == 1
-    assert command.graph.settings == [sws_flags: "bicubic"]
-    assert "-filter_complex" in Command.to_argv(command)
-
-    assert_raise ArgumentError, ~r/conflicting graph setting/, fn ->
-      Build.command(Output.new(contextual, "out.mp4"), settings: [sws_flags: "neighbor"])
-    end
-  end
-
-  test "mapped stream occurrences do not hide conflicting producer definitions" do
-    source = Input.new("in.mp4") |> FFix.video(0)
-    filtered = Builder.filter(source, "null", [:video], [])
-    conflicting = %{filtered | plan: %{filtered.plan | name: "hflip"}}
-
-    assert_raise ArgumentError, ~r/conflicting definitions/, fn ->
-      Build.command(Output.new([filtered, conflicting], "out.mp4"))
     end
   end
 

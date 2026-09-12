@@ -62,7 +62,7 @@ defmodule FFix.CommandValidationTest do
     assert "-ss" in FFix.to_argv(Command.new(inputs: [changed], outputs: [uncaptured]))
   end
 
-  test "canonical commands cannot discard context from a direct graph export" do
+  test "canonical commands cannot discard a direct reference's other graph branches" do
     input = FFix.input("in.mp4")
     selected = FFix.video(input, 0)
     sink = selected |> Filter.hflip() |> Filter.nullsink()
@@ -81,17 +81,12 @@ defmodule FFix.CommandValidationTest do
     assert FFix.validate!(Command.new(inputs: [input], graph: graph, outputs: [canonical]))
   end
 
-  test "input-only graph context is collected before direct command lowering" do
+  test "selecting an input-only graph export retains its other input declarations" do
     picture = FFix.input("picture.mp4")
     sound = FFix.input("sound.wav")
     graph = FFix.graph(outputs: [main: FFix.video(picture, 0), other: FFix.audio(sound, 0)])
     command = graph[:main] |> FFix.output("out.mp4") |> FFix.command()
-    assert command.graph == nil
     assert command.inputs == [picture, sound]
-
-    [output] = command.outputs
-    [mapping] = output.mappings
-    assert mapping.source.context == nil
 
     refute "-filter_complex" in FFix.to_argv(command)
   end
@@ -198,12 +193,6 @@ defmodule FFix.CommandValidationTest do
       )
 
     assert FFix.to_argv(explicit) == expected
-    changed = %{picture | plan: %{picture.plan | args: [w: 32, h: 32]}}
-
-    assert_raise ArgumentError, ~r/conflicting definitions/, fn ->
-      FFix.command([output, FFix.output(changed, "other.mp4")])
-    end
-
     assert_raise ArgumentError, ~r/used 2 times/, fn -> FFix.command([output, output]) end
   end
 

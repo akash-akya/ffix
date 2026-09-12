@@ -5,7 +5,8 @@ defmodule FFix.Command.Build do
   alias FFix.Command.Input
   alias FFix.Command.Mapping
   alias FFix.Command.Output
-  alias FFix.Graph.Builder
+  alias FFix.Graph.Merge
+  alias FFix.Graph.Terminal
   alias FFix.Graph.Export
   alias FFix.Graph.StreamRef
   alias FFix.Selection
@@ -17,20 +18,26 @@ defmodule FFix.Command.Build do
     validate_options!(options)
     outputs = normalize_outputs!(output_or_outputs)
     sources = mapped_sources!(outputs)
-    streams = Enum.filter(sources, &is_struct(&1, StreamRef))
     terminals = Keyword.get(options, :terminals, [])
-    settings = Keyword.get(options, :settings, [])
 
-    candidate =
-      if streams != [] or terminals != [] or settings != [] do
-        Builder.graph(outputs: streams, terminals: terminals, settings: settings)
-      end
+    unless is_list(terminals) do
+      raise ArgumentError, "command terminals must be an ordered list"
+    end
 
-    input_refs =
-      Enum.flat_map(sources, fn
-        %Selection{input_ref: input_ref} -> [input_ref]
-        %StreamRef{} = stream -> Builder.input_refs([stream])
-      end) ++ Builder.input_refs(terminals)
+    Enum.each(terminals, &Terminal.validate!/1)
+    initial = {Merge.new(Keyword.get(options, :settings, [])), []}
+
+    {graph, reversed_inputs} =
+      Enum.reduce(sources ++ terminals, initial, fn
+        %Selection{input_ref: input_ref}, {graph, inputs} ->
+          {graph, [input_ref | inputs]}
+
+        source, {graph, inputs} ->
+          {graph, added_inputs} = Merge.add(graph, source.graph)
+          {graph, Enum.reverse(added_inputs, inputs)}
+      end)
+
+    input_refs = Enum.reverse(reversed_inputs)
 
     captured_inputs =
       input_refs
@@ -40,19 +47,27 @@ defmodule FFix.Command.Build do
 
     inputs = resolve_inputs!(captured_inputs, input_refs, options)
 
-    filters? =
-      candidate != nil and Enum.any?(candidate.nodes, fn {_id, node} -> node.kind == :filter end)
+    filters? = Enum.any?(graph.nodes, fn {_id, node} -> node.kind == :filter end)
 
-    {graph, outputs} =
-      if filters? do
-        {candidate, lower_outputs(outputs, candidate.exports)}
+    if not filters? and graph.settings != [] do
+      raise ArgumentError,
+            "graph settings require filter nodes; cannot discard settings from a direct mapping command"
+    end
+
+    exports =
+      sources
+      |> Enum.filter(&is_struct(&1, StreamRef))
+      |> Enum.map(fn stream ->
+        %Export{graph_id: graph.id, ref: stream.ref, media: stream.media}
+      end)
+
+    outputs = lower_outputs(outputs, exports)
+
+    graph =
+      if map_size(graph.nodes) == 0 do
+        nil
       else
-        if candidate != nil and candidate.settings != [] do
-          raise ArgumentError,
-                "graph settings require filter nodes; cannot discard settings from a direct mapping command"
-        end
-
-        {nil, direct_outputs(outputs)}
+        %{graph | exports: exports}
       end
 
     Command.new(
@@ -102,6 +117,7 @@ defmodule FFix.Command.Build do
     Enum.flat_map(outputs, fn output ->
       Enum.map(output.mappings, fn
         %Mapping{source: %StreamRef{} = stream} ->
+          StreamRef.node!(stream)
           stream
 
         %Mapping{source: %Selection{} = selection} ->
@@ -178,21 +194,6 @@ defmodule FFix.Command.Build do
       end)
 
     Enum.reverse(reversed)
-  end
-
-  defp direct_outputs(outputs) do
-    Enum.map(outputs, fn output ->
-      mappings =
-        Enum.map(output.mappings, fn
-          %{source: %StreamRef{} = source} = mapping ->
-            %{mapping | source: %{source | context: nil}}
-
-          mapping ->
-            mapping
-        end)
-
-      %{output | mappings: mappings}
-    end)
   end
 
   defp lower_outputs(outputs, exports) do

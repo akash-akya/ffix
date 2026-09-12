@@ -19,7 +19,7 @@ defmodule FFix.Graph do
   sinks, and settings. All produced pads must ultimately be consumed or mapped;
   unused branches do not disappear when only one export is selected.
 
-  Local node numbers and wire labels are assigned when graphs are assembled.
+  Nodes use stable identities; wire labels are assigned when graphs are rendered.
   Logical export names and output mapping names are separate from wire labels.
   Graph access is read-only and returns filterable stream references. Parsing
   preserves explicit wire labels as export names, including names like `out0`.
@@ -30,7 +30,7 @@ defmodule FFix.Graph do
 
   alias __MODULE__.{Bind, Builder, Export, Parse, Render, StreamRef, Terminal}
 
-  @type node_id :: pos_integer()
+  @type node_id :: reference()
   @type setting :: {atom() | String.t(), term()}
   @type input_id :: non_neg_integer() | atom() | String.t() | reference()
   @type input_selector ::
@@ -88,12 +88,16 @@ defmodule FFix.Graph do
   @doc group: "Exports"
   @doc "Returns filterable exports in declaration order, carrying the instance's other roots."
   @spec exports(t()) :: [StreamRef.t()]
-  def exports(%__MODULE__{} = graph), do: graph |> Builder.graph_roots() |> elem(0)
+  def exports(%__MODULE__{} = graph) do
+    Enum.map(graph.exports, &stream(graph, &1))
+  end
 
   @doc group: "Exports"
-  @doc "Returns terminal references, including their graph context, for command `terminals:`."
+  @doc "Returns sink references retaining the graph, for command `terminals:`."
   @spec terminals(t()) :: [Terminal.t()]
-  def terminals(%__MODULE__{} = graph), do: graph |> Builder.graph_roots() |> elem(1)
+  def terminals(%__MODULE__{} = graph) do
+    Enum.map(graph.terminals, fn node_id -> %Terminal{graph: graph, node_id: node_id} end)
+  end
 
   @doc group: "Exports"
   @doc "Looks up an export by name or zero-based position; returns nil when missing."
@@ -114,7 +118,17 @@ defmodule FFix.Graph do
           nil
       end
 
-    if index != nil and index < length(graph.exports), do: Enum.at(exports(graph), index)
+    if index != nil and index < length(graph.exports) do
+      stream(graph, Enum.at(graph.exports, index))
+    end
+  end
+
+  defp stream(%__MODULE__{id: graph_id} = graph, %Export{graph_id: graph_id} = export) do
+    %StreamRef{graph: graph, ref: export.ref, media: export.media}
+  end
+
+  defp stream(_graph, _export) do
+    raise ArgumentError, "graph export belongs to a different graph"
   end
 
   @doc group: "Exports"

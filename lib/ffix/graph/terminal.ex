@@ -1,17 +1,18 @@
 defmodule FFix.Graph.Terminal do
   @moduledoc """
-  Opaque handle for a sink-ending pipeline.
+  Opaque reference to a sink in an immutable graph.
 
-  Terminal values are produced by sink filters and can be attached to a graph
-  with `FFix.graph(terminals: [...])` when a branch is meant to end inside the
-  filtergraph instead of becoming an output mapping.
+  Pass terminal values to `FFix.graph(terminals: [...])` or `FFix.command/2`.
   """
 
-  @opaque t :: %__MODULE__{
-            plan: term(),
-            media: FFix.Graph.StreamRef.media() | nil,
-            context: FFix.Graph.StreamRef.context() | nil
-          }
+  @opaque t :: %__MODULE__{graph: FFix.Graph.t(), node_id: FFix.Graph.node_id()}
+  defstruct [:graph, :node_id]
 
-  defstruct [:plan, :media, :context]
+  @doc false
+  def validate!(%__MODULE__{graph: graph, node_id: node_id} = terminal) do
+    case Map.fetch(graph.nodes, node_id) do
+      {:ok, %FFix.Graph.Node{kind: :filter, output_media: []}} -> terminal
+      _ -> raise ArgumentError, "terminal must reference a sink node"
+    end
+  end
 end

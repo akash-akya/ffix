@@ -12,12 +12,6 @@ defmodule FFix.Filter.BuilderTest do
     end
   end
 
-  test "uses metadata defaults for dynamic output filters" do
-    assert [left, right] = Filter.split(FFix.Graph.input(0, :video))
-    assert left.output == 0
-    assert right.output == 1
-  end
-
   test "concat infers mixed output media from v/a options" do
     [video, audio] =
       Filter.concat(

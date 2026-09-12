@@ -22,7 +22,7 @@ defmodule FFix.Selection do
     unless is_boolean(optional), do: raise(ArgumentError, "optional must be a boolean")
 
     case input_ref do
-      %InputRef{input: identity, declaration: %Input{id: identity}, binding: nil}
+      %InputRef{input: identity, declaration: %Input{id: identity}}
       when is_reference(identity) ->
         InputRef.normalize_selector!(input_ref.selector)
 
