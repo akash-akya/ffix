@@ -9,7 +9,7 @@ defmodule FFix.CommandValidationTest do
       |> Decoder.decode("rawvideo", {:index, 0}, threads: 1)
       |> Decoder.decode("mpeg4", {:video, 0}, skip_frame: "nokey")
 
-    output = FFix.output(FFix.video(input), "out.mp4")
+    output = FFix.output(FFix.video(input, 0), "out.mp4")
     command = Command.new(inputs: [input], outputs: [output])
 
     assert_raise ArgumentError,
@@ -31,7 +31,7 @@ defmodule FFix.CommandValidationTest do
       input = FFix.input("in.mp4")
       input = Decoder.decode(input, "mpeg4", picture_selector, threads: 1)
       input = Decoder.decode(input, "aac", sound_selector, threads: 2)
-      output = FFix.output(FFix.video(input), "out.mp4")
+      output = FFix.output(FFix.video(input, 0), "out.mp4")
       argv = FFix.command(output) |> FFix.to_argv()
       assert "mpeg4" in argv
       assert "aac" in argv
@@ -40,7 +40,7 @@ defmodule FFix.CommandValidationTest do
 
   test "canonical commands reject changed snapshots in direct and graph references" do
     original = FFix.input("in.mp4")
-    selected = FFix.video(original)
+    selected = FFix.video(original, 0)
     changed = %{original | options: [ss: 10]}
     direct = FFix.output(selected, "out.mp4")
     graph = FFix.graph(output: Filter.hflip(selected))
@@ -58,13 +58,13 @@ defmodule FFix.CommandValidationTest do
     assert FFix.validate!(Command.new(inputs: [original], outputs: [direct]))
     assert FFix.validate!(Command.new(inputs: [original], graph: graph, outputs: [filtered]))
 
-    uncaptured = FFix.output(Graph.input(0, :video), "out.mp4")
+    uncaptured = FFix.output(Graph.input(0, {:video, 0}), "out.mp4")
     assert "-ss" in FFix.to_argv(Command.new(inputs: [changed], outputs: [uncaptured]))
   end
 
   test "canonical commands cannot discard context from a direct graph export" do
     input = FFix.input("in.mp4")
-    selected = FFix.video(input)
+    selected = FFix.video(input, 0)
     sink = selected |> Filter.hflip() |> Filter.nullsink()
     graph = FFix.graph(outputs: [main: selected], terminals: [sink])
     output = FFix.output(graph[:main], "out.mp4")
@@ -84,7 +84,7 @@ defmodule FFix.CommandValidationTest do
   test "input-only graph context is collected before direct command lowering" do
     picture = FFix.input("picture.mp4")
     sound = FFix.input("sound.wav")
-    graph = FFix.graph(outputs: [main: FFix.video(picture), other: FFix.audio(sound)])
+    graph = FFix.graph(outputs: [main: FFix.video(picture, 0), other: FFix.audio(sound, 0)])
     command = graph[:main] |> FFix.output("out.mp4") |> FFix.command()
     assert command.graph == nil
     assert command.inputs == [picture, sound]
@@ -102,10 +102,10 @@ defmodule FFix.CommandValidationTest do
       source = FFix.input("in.mp4")
 
       assert_raise ArgumentError, ~r/invalid output/, fn ->
-        FFix.output(FFix.video(source), invalid)
+        FFix.output(FFix.video(source, 0), invalid)
       end
 
-      output = FFix.output(FFix.video(source), "out.mp4")
+      output = FFix.output(FFix.video(source, 0), "out.mp4")
       bad_input = %{source | source: invalid}
       command = Command.new(inputs: [bad_input], outputs: [output])
       assert_raise ArgumentError, ~r/invalid input/, fn -> FFix.validate!(command) end
@@ -118,7 +118,7 @@ defmodule FFix.CommandValidationTest do
 
   test "duplicate configuration controls cannot silently disappear" do
     source = FFix.input("in.mp4")
-    video = FFix.video(source)
+    video = FFix.video(source, 0)
 
     for options <- [
           [demuxer: Demuxer.new("mov"), demuxer: Demuxer.new("matroska")],
@@ -147,15 +147,15 @@ defmodule FFix.CommandValidationTest do
       FFix.input("in.mp4", [{"future_option", "value"}, metadata: "first", metadata: "second"])
 
     input = source
-    command = FFix.command(FFix.output(FFix.video(input), "out.mp4"))
+    command = FFix.command(FFix.output(FFix.video(input, 0), "out.mp4"))
     assert "-future_option" in FFix.to_argv(command)
     assert Enum.count(FFix.to_argv(command), &(&1 == "-metadata")) == 2
   end
 
   test "known media mismatches are caught, but generic names still bypass metadata" do
     source = FFix.input("in.mp4")
-    video = FFix.video(source)
-    audio = FFix.audio(source)
+    video = FFix.video(source, 0)
+    audio = FFix.audio(source, 0)
     assert_raise ArgumentError, ~r/expects audio/, fn -> Encoder.aac(video) end
     assert_raise ArgumentError, ~r/expects video/, fn -> Encoder.libx264(audio) end
     assert_raise ArgumentError, ~r/expects video/, fn -> Filter.scale(audio) end
@@ -168,7 +168,7 @@ defmodule FFix.CommandValidationTest do
     first = FFix.input("same.mp4")
     second = FFix.input("same.mp4")
     refute first.id == second.id
-    mapping = Encoder.encode(FFix.video(first), "mpeg4")
+    mapping = Encoder.encode(FFix.video(first, 0), "mpeg4")
 
     output =
       FFix.output([main: mapping], "out.mp4",
@@ -185,7 +185,7 @@ defmodule FFix.CommandValidationTest do
 
   test "output-first materialization agrees with explicit low-level canonical exports" do
     input = FFix.input("in.mp4")
-    picture = FFix.Filter.scale(FFix.video(input), w: 16, h: 16)
+    picture = FFix.Filter.scale(FFix.video(input, 0), w: 16, h: 16)
     output = FFix.output(picture, "out.mp4")
     expected = FFix.command(output) |> FFix.to_argv()
     graph = FFix.graph(output: picture)
@@ -211,7 +211,7 @@ defmodule FFix.CommandValidationTest do
     input = FFix.Demuxer.mov("in.mp4", input_options: [ss: 2])
     command = Command.new() |> Command.add_input(input)
     assert command.inputs == [input]
-    command = Command.add_output(command, FFix.output(FFix.video(input), "out.mp4"))
+    command = Command.add_output(command, FFix.output(FFix.video(input, 0), "out.mp4"))
     assert "0:v:0" in FFix.to_argv(command)
   end
 
@@ -221,7 +221,7 @@ defmodule FFix.CommandValidationTest do
 
     command =
       FFix.command(
-        FFix.output(FFix.video(source), "out.mp4",
+        FFix.output(FFix.video(source, 0), "out.mp4",
           metadata: fn _streams ->
             send(parent, :resolved)
             "bad\0text"
@@ -243,7 +243,7 @@ defmodule FFix.CommandValidationTest do
   test "conflict aliases are canonicalized in both directions" do
     for {structured, raw} <- [ab: :b, b: :ab, vb: :b, b: :vb] do
       source = FFix.input("in.mp4")
-      mapping = Encoder.encode(FFix.audio(source), "vendor", [{structured, "64k"}])
+      mapping = Encoder.encode(FFix.audio(source, 0), "vendor", [{structured, "64k"}])
 
       assert_raise ArgumentError, ~r/cannot be combined/, fn ->
         FFix.command(FFix.output(mapping, "out.mkv", [{raw, "128k"}]))

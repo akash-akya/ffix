@@ -5,19 +5,11 @@ defmodule FFix.Command.Input do
   `new/2` stores raw input CLI options, an optional `FFix.Demuxer`, and indexed
   `FFix.Decoder` configurations. Options render before this input's `-i`.
 
-  `select/2` returns a filterable or directly mappable stream that captures the
-  complete declaration. Configure decoding before selecting streams: changing
-  an input later does not mutate existing references. Conflicting snapshots of
-  the same declaration cannot be used in one command.
-
-      input = FFix.Command.Input.new("input.mp4", ss: "00:00:03")
-      FFix.Command.Input.select(input, {:video, 0})
-      FFix.Command.Input.select(input, {:audio, :all})
-
-  Selectors are `:all`, `{media, index}`, `{media, :all}`, `{:index, index}` for
-  an absolute stream index, and `{:raw, selector}` for an FFmpeg selector string.
-  Media types are `:video`, `:audio`, `:subtitle`, `:data`, and `:attachment`.
-  Broad and raw selections are not assumed to select exactly one stream.
+  `select/3` accepts an absolute stream index, `:all`, or a raw FFmpeg selector
+  string. Use `FFix.video/3`, `FFix.audio/3`, or `FFix.subtitle/3` for media-relative
+  indexes. Broad, raw, and optional selections return `FFix.Selection`, not a
+  filterable reference. Configure inputs before selecting; captured snapshots
+  cannot be updated by reassigning a variable.
   """
 
   alias FFix.Command
@@ -25,16 +17,14 @@ defmodule FFix.Command.Input do
   alias FFix.Graph.InputRef
   alias FFix.Graph.StreamRef
   alias FFix.Options
+  alias FFix.Selection
 
   @type source :: String.t() | :stdin | {:pipe, non_neg_integer()} | {:url, String.t()}
   @type option :: {atom() | String.t(), term()}
   @type media :: :video | :audio | :subtitle | :data | :attachment
   @type decoder_selector :: {media(), non_neg_integer()} | {:index, non_neg_integer()}
-  @type selector ::
-          :all
-          | {media(), non_neg_integer() | :all}
-          | {:index, non_neg_integer()}
-          | {:raw, String.t()}
+  @type selector :: non_neg_integer() | :all | String.t()
+  @type selection_option :: {:optional, boolean()}
 
   @type t :: %__MODULE__{
           source: source(),
@@ -67,21 +57,58 @@ defmodule FFix.Command.Input do
     Command.validate_input!(input)
   end
 
-  @doc "Selects streams while capturing this input's complete configuration."
-  @spec select(t(), selector()) :: StreamRef.t()
-  def select(%__MODULE__{} = input, selector) do
-    case selector do
-      :all ->
-        :ok
+  @doc "Selects an absolute input index, all streams, or a raw selector; optional selections may match nothing."
+  @spec select(t(), selector(), [selection_option()]) :: StreamRef.t() | Selection.t()
+  def select(%__MODULE__{} = input, selector, options \\ []) do
+    selector =
+      case selector do
+        index when is_integer(index) and index >= 0 ->
+          {:index, index}
 
-      {_kind, _value} ->
-        InputRef.normalize_selector!(selector)
+        :all ->
+          :all
 
-      _other ->
-        raise ArgumentError,
-              "invalid input selector: #{inspect(selector)}; use :all or an explicit indexed, media-wide, or raw selector"
-    end
+        raw when is_binary(raw) ->
+          {:raw, raw}
 
-    Builder.input(input, selector)
+        other ->
+          raise ArgumentError,
+                "invalid input selector: #{inspect(other)}; use an absolute index, :all, or a raw string"
+      end
+
+    selection(input, selector, selection_options!(options, [:optional]))
+  end
+
+  @doc false
+  def select_media(%__MODULE__{} = input, media, index, options \\ []) do
+    allowed = if media == :video, do: [:optional, :attached_pictures], else: [:optional]
+    options = selection_options!(options, allowed)
+
+    media =
+      if media == :video and not Keyword.get(options, :attached_pictures, true),
+        do: :video_only,
+        else: media
+
+    selection(input, {media, index}, options)
+  end
+
+  defp selection(input, selector, options) do
+    selector = InputRef.normalize_selector!(selector)
+    optional = Keyword.get(options, :optional, false)
+
+    if InputRef.single?(selector) and not optional,
+      do: Builder.input(input, selector),
+      else: Selection.new(input, selector, optional)
+  end
+
+  defp selection_options!(options, allowed) do
+    {controls, unknown} = Options.split!(options, allowed)
+    if unknown != [], do: raise(ArgumentError, "unknown selection options: #{inspect(unknown)}")
+
+    Enum.each(controls, fn {name, value} ->
+      unless is_boolean(value), do: raise(ArgumentError, "#{name} must be a boolean")
+    end)
+
+    controls
   end
 end

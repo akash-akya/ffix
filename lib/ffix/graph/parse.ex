@@ -259,6 +259,7 @@ defmodule FFix.Graph.Parse do
 
   @media_prefixes %{
     "v" => :video,
+    "V" => :video_only,
     "a" => :audio,
     "s" => :subtitle,
     "d" => :data,

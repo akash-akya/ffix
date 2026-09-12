@@ -177,13 +177,23 @@ defmodule FFix.Graph.InvariantsTest do
       assert input.input_ref.selector == {:raw, selector}
       assert FFix.to_filtergraph(parsed) == rendered
 
+      source = FFix.input("in.mp4")
+
       command =
         Command.new(
-          inputs: [FFix.input("in.mp4")],
-          outputs: [FFix.output(Graph.input(0, {:raw, selector}), "out.mp4")]
+          inputs: [source],
+          outputs: [FFix.output(FFix.select(source, selector), "out.mp4")]
         )
 
       assert "0:#{selector}" in FFix.to_argv(command)
+
+      assert_raise ArgumentError, fn ->
+        Command.new(
+          inputs: [source],
+          outputs: [FFix.output(Graph.input(0, {:raw, selector}), "out.mp4")]
+        )
+        |> FFix.to_argv()
+      end
     end
   end
 

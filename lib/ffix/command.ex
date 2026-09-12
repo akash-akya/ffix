@@ -16,7 +16,7 @@ defmodule FFix.Command do
   ## Examples
 
       input = FFix.Command.Input.new("input.mp4", ss: "00:00:03", stream_loop: -1)
-      video = FFix.Command.Input.select(input, {:video, :all})
+      video = FFix.video(input, :all)
 
       command =
         FFix.Command.new(
@@ -64,6 +64,7 @@ defmodule FFix.Command do
   alias __MODULE__.Input
   alias __MODULE__.Mapping
   alias __MODULE__.Output
+  alias __MODULE__.Encoding
   alias FFix.Decoder
   alias FFix.Demuxer
   alias FFix.Encoder
@@ -73,6 +74,7 @@ defmodule FFix.Command do
   alias FFix.Graph.Export
   alias FFix.Graph.InputRef
   alias FFix.Graph.StreamRef
+  alias FFix.Selection
 
   @type option :: {atom() | String.t(), term()}
   @type av_value :: String.t() | atom() | number()
@@ -81,7 +83,7 @@ defmodule FFix.Command do
   @type streams :: %{atom() => stream_info()}
   @type option_callback :: (streams() -> term())
   @type output_av_option :: {atom() | String.t(), av_value() | option_callback()}
-  @type source :: Export.t() | StreamRef.t()
+  @type source :: Export.t() | StreamRef.t() | Selection.t()
   @type mapping :: Mapping.t() | source()
   @type binding :: mapping() | {atom(), mapping()}
 
@@ -117,7 +119,7 @@ defmodule FFix.Command do
   exports from the explicit `:graph`; no dependency inference occurs.
 
       src = FFix.Command.Input.new("input.mp4")
-      video = FFix.Command.Input.select(src, {:video, 0})
+      video = FFix.video(src, 0)
 
       FFix.Command.new(
         inputs: [src],
@@ -409,10 +411,13 @@ defmodule FFix.Command do
       end
 
     direct_refs =
-      for output <- outputs,
-          %Mapping{source: %StreamRef{plan: %{kind: :input, input_ref: input_ref}}} <-
-            output.mappings,
-          do: input_ref
+      Enum.flat_map(outputs, fn output ->
+        Enum.flat_map(output.mappings, fn
+          %Mapping{source: %Selection{input_ref: input_ref}} -> [input_ref]
+          %Mapping{source: %StreamRef{plan: %{kind: :input, input_ref: input_ref}}} -> [input_ref]
+          _mapping -> []
+        end)
+      end)
 
     Enum.each(graph_refs ++ direct_refs, fn
       %InputRef{declaration: nil} ->
@@ -456,12 +461,7 @@ defmodule FFix.Command do
     encodings = Enum.map(output.mappings, & &1.encoding)
 
     if Enum.any?(encodings, &(&1 != nil)) do
-      Enum.each(output.mappings, fn mapping ->
-        unless single_source?(mapping.source, graph) do
-          raise ArgumentError,
-                "configured encoding requires every output mapping to select one stream; use indexed inputs or filtered exports"
-        end
-      end)
+      encoding_plan!(output.mappings, graph)
 
       configured_options = component_option_names(encodings)
       reserved = @codec_selection_options ++ @mapping_options ++ configured_options
@@ -573,7 +573,20 @@ defmodule FFix.Command do
     streams
   end
 
+  defp source_media(%Selection{} = selection, _graph), do: Selection.media(selection)
   defp source_media(source, _graph), do: source.media
+
+  defp encoding_plan!(mappings, graph) do
+    mappings
+    |> Enum.map(fn mapping ->
+      %{
+        single: single_source?(mapping.source, graph),
+        media: source_media(mapping.source, graph),
+        encoding: mapping.encoding
+      }
+    end)
+    |> Encoding.plan!()
+  end
 
   defp validate_encoding!(encoding, source, graph) do
     case encoding do
@@ -581,7 +594,7 @@ defmodule FFix.Command do
         :ok
 
       :copy ->
-        if source_node(source, graph).kind == :filter do
+        if not is_struct(source, Selection) and source_node(source, graph).kind == :filter do
           raise ArgumentError, "cannot copy a filtered source; use an encoder"
         end
 
@@ -592,6 +605,8 @@ defmodule FFix.Command do
         raise ArgumentError, "invalid encoding configuration: #{inspect(other)}"
     end
   end
+
+  defp single_source?(%Selection{}, _graph), do: false
 
   defp single_source?(source, graph) do
     case source_node(source, graph) do
@@ -612,7 +627,8 @@ defmodule FFix.Command do
 
   @doc false
   def validate_decoder!(selector, decoder) do
-    unless InputRef.single?(selector) do
+    unless InputRef.single?(selector) and
+             elem(selector, 0) in [:video, :audio, :subtitle, :data, :attachment, :index] do
       raise ArgumentError,
             "decoder selector must be {media, nonnegative_index} or {:index, nonnegative_index}, got: #{inspect(selector)}"
     end
@@ -718,6 +734,17 @@ defmodule FFix.Command do
       raise ArgumentError,
             "graph export #{inspect(export.name || export.ref)} is not exported by the command graph"
     end
+
+    case Map.fetch!(graph.nodes, export.ref.node_id) do
+      %{kind: :input, input_ref: input_ref} -> validate_mapped_input!(input_ref)
+      _filter -> :ok
+    end
+  end
+
+  defp validate_source!(%Selection{} = selection, _graph, input_count, input_index_map) do
+    Selection.validate!(selection)
+    resolve_input_ref!(selection.input_ref, input_count, input_index_map)
+    :ok
   end
 
   defp validate_source!(%StreamRef{context: context}, _graph, _input_count, _input_index_map)
@@ -773,6 +800,7 @@ defmodule FFix.Command do
   end
 
   defp mapped_filter_export(%StreamRef{}, %Graph{}), do: nil
+  defp mapped_filter_export(%Selection{}, %Graph{}), do: nil
 
   defp filter_export?(%Graph{} = graph, %Export{ref: ref}) do
     case Map.fetch!(graph.nodes, ref.node_id) do
@@ -822,13 +850,11 @@ defmodule FFix.Command do
 
     encoding_options =
       mappings
-      |> Enum.with_index()
-      |> Enum.flat_map(fn {mapping, index} ->
-        case mapping.encoding do
-          nil -> []
-          :copy -> ["-c:#{index}", "copy"]
-          %Encoder{} = encoder -> component_to_argv(encoder, Integer.to_string(index))
-        end
+      |> encoding_plan!(graph)
+      |> Enum.flat_map(fn
+        {:copy, nil} -> ["-c", "copy"]
+        {:copy, selector} -> ["-c:#{selector}", "copy"]
+        {%Encoder{} = encoder, selector} -> component_to_argv(encoder, selector)
       end)
 
     maps ++
@@ -870,6 +896,12 @@ defmodule FFix.Command do
       unconfigured ->
         unconfigured
     end
+  end
+
+  defp map_source(%Selection{} = selection, _graph, _render, input_count, input_index_map) do
+    reference = resolve_input_ref!(selection.input_ref, input_count, input_index_map)
+    source = encode_input_ref(reference)
+    if selection.optional and not String.ends_with?(source, "?"), do: source <> "?", else: source
   end
 
   defp map_source(%StreamRef{} = stream, _graph, _render, input_count, input_index_map) do
@@ -968,12 +1000,23 @@ defmodule FFix.Command do
     unless media == InputRef.media(selector),
       do: raise(ArgumentError, "input stream media does not match its selector")
 
-    resolve_input_ref!(input_ref, input_count, input_index_map)
+    resolved = resolve_input_ref!(input_ref, input_count, input_index_map)
+    validate_mapped_input!(resolved)
+    resolved
   end
 
   defp resolve_stream_source!(%StreamRef{} = stream, _input_count, _input_index_map) do
     raise ArgumentError,
           "invalid output source: #{inspect(stream)}; only direct input streams can be mapped, export graph outputs instead"
+  end
+
+  defp validate_mapped_input!(input_ref) do
+    unless InputRef.single?(input_ref.selector),
+      do:
+        raise(
+          ArgumentError,
+          "graph input matchers are not single output streams; use an indexed reference or an input selection"
+        )
   end
 
   defp component_to_argv(component, selector) do

@@ -9,8 +9,8 @@ defmodule FFix.OutputCallbackTest do
       output: 3,
       command: 1,
       command: 2,
-      video: 1,
-      audio: 1
+      video: 2,
+      audio: 2
     ]
 
   import FFix.Filter
@@ -54,7 +54,7 @@ defmodule FFix.OutputCallbackTest do
     end
 
     source = FFix.input("in.mp4")
-    built = command(output([main: video(source)], "out.mp4", metadata: callback))
+    built = command(output([main: video(source, 0)], "out.mp4", metadata: callback))
     Command.validate!(built)
     refute_received {:called, _info}
 
@@ -69,7 +69,7 @@ defmodule FFix.OutputCallbackTest do
 
   test "unnamed mappings affect indexes but do not acquire implicit names" do
     source = FFix.input("in.mp4")
-    mappings = [audio(source), video(source), main: video(source)]
+    mappings = [audio(source, 0), video(source, 0), main: video(source, 0)]
 
     built =
       command(
@@ -91,13 +91,13 @@ defmodule FFix.OutputCallbackTest do
 
     built =
       command([
-        output([sound: audio(source), main: video(source)], "first.mp4",
+        output([sound: audio(source, 0), main: video(source, 0)], "first.mp4",
           metadata: fn streams ->
             assert streams.main == %{index: 1, specifier: "v:0"}
             "title=first"
           end
         ),
-        output([main: video(source)], "second.mp4",
+        output([main: video(source, 0)], "second.mp4",
           metadata: fn streams ->
             assert streams == %{main: %{index: 0, specifier: "v:0"}}
             "title=second"
@@ -110,7 +110,7 @@ defmodule FFix.OutputCallbackTest do
 
   test "named bindings also work without callbacks and do not mutate reusable mappings" do
     source = input("in.mp4")
-    mapping = Encoder.libx264(video(source))
+    mapping = Encoder.libx264(video(source, 0))
     output = FFix.output([first: mapping, second: mapping], "out.mp4")
     assert mapping.name == nil
     assert Enum.map(output.mappings, & &1.name) == [:first, :second]
@@ -124,7 +124,7 @@ defmodule FFix.OutputCallbackTest do
     source = FFix.input("in.mp4")
 
     mapping =
-      Encoder.libx264(video(source),
+      Encoder.libx264(video(source, 0),
         threads: fn streams -> streams.main.index + 1 end,
         fastfirstpass: fn _streams -> false end
       )
@@ -153,7 +153,7 @@ defmodule FFix.OutputCallbackTest do
   test "dynamic names, standalone configurations, and raw metadata escapes work too" do
     source = input("in.mp4")
     encoder = Encoder.new("vendor", custom: fn streams -> streams.main.specifier end)
-    mapping = Mapping.new(video(source), encoder)
+    mapping = Mapping.new(video(source, 0), encoder)
     muxer = Muxer.new("vendor_muxer", custom: fn streams -> streams.main.index end)
     output = FFix.output([main: mapping], "out.bin", muxer: muxer)
     built = Command.new(inputs: [source], outputs: [output])
@@ -162,7 +162,7 @@ defmodule FFix.OutputCallbackTest do
 
     built =
       command(
-        Muxer.mp4([main: video(source)], "out.mp4",
+        Muxer.mp4([main: video(source, 0)], "out.mp4",
           raw: [future: fn streams -> streams.main.specifier end]
         )
       )
@@ -175,12 +175,12 @@ defmodule FFix.OutputCallbackTest do
     callback = fn _streams -> raise "should not run" end
 
     assert_raise ArgumentError, ~r/unknown libx264 encoder option/, fn ->
-      Encoder.libx264(video(source), crrf: callback)
+      Encoder.libx264(video(source, 0), crrf: callback)
     end
 
     built =
       command(
-        output([main: Encoder.libx264(video(source), crf: fn _streams -> true end)], "out.mp4")
+        output([main: Encoder.libx264(video(source, 0), crf: fn _streams -> true end)], "out.mp4")
       )
 
     Command.validate!(built)
@@ -191,7 +191,7 @@ defmodule FFix.OutputCallbackTest do
 
     built =
       command(
-        Muxer.mp4([main: video(source)], "out.mp4",
+        Muxer.mp4([main: video(source, 0)], "out.mp4",
           movflags: fn _streams -> [:misspelled_flag] end
         )
       )
@@ -202,19 +202,19 @@ defmodule FFix.OutputCallbackTest do
   test "bad callback results and arities are rejected without executing nested callbacks" do
     for callback <- [fn _streams -> %{} end, fn _streams -> fn _nested -> "bad" end end] do
       source = FFix.input("in.mp4")
-      built = command(output([main: video(source)], "out.mp4", metadata: callback))
+      built = command(output([main: video(source, 0)], "out.mp4", metadata: callback))
       assert_raise ArgumentError, fn -> FFix.to_argv(built) end
     end
 
     source = FFix.input("in.mp4")
 
     assert_raise ArgumentError, ~r/must accept one streams argument/, fn ->
-      command(output([main: video(source)], "out.mp4", metadata: fn -> "bad" end))
+      command(output([main: video(source, 0)], "out.mp4", metadata: fn -> "bad" end))
     end
 
     for value <- [nil, %{}, [:not_a_scalar]] do
       source = FFix.input("in.mp4")
-      mapping = Encoder.encode(video(source), "vendor", custom: fn _streams -> value end)
+      mapping = Encoder.encode(video(source, 0), "vendor", custom: fn _streams -> value end)
       built = command(output([main: mapping], "out.mp4"))
 
       assert_raise ArgumentError, ~r/component option values must be/, fn ->
@@ -228,7 +228,7 @@ defmodule FFix.OutputCallbackTest do
 
     built =
       command(
-        output([main: video(source)], "out.mp4",
+        output([main: video(source, 0)], "out.mp4",
           metadata: fn streams -> streams.missing.specifier end
         )
       )
@@ -238,7 +238,7 @@ defmodule FFix.OutputCallbackTest do
 
     built =
       command(
-        output([main: video(source)], "out.mp4",
+        output([main: video(source, 0)], "out.mp4",
           metadata: fn _streams -> raise "application error" end
         )
       )
@@ -251,7 +251,7 @@ defmodule FFix.OutputCallbackTest do
     callback = fn _streams -> flunk("must not run") end
 
     output =
-      FFix.output([main: video(source), main: audio(source)], "out.mp4", metadata: callback)
+      FFix.output([main: video(source, 0), main: audio(source, 0)], "out.mp4", metadata: callback)
 
     built = Command.new(inputs: [source], outputs: [output])
 
@@ -262,7 +262,7 @@ defmodule FFix.OutputCallbackTest do
     for name <- ["main", true, false, 1] do
       output =
         FFix.output(
-          %Mapping{source: video(source), name: name},
+          %Mapping{source: video(source, 0), name: name},
           "out.mp4",
           metadata: callback
         )
@@ -272,25 +272,26 @@ defmodule FFix.OutputCallbackTest do
     end
   end
 
-  test "callbacks reject broad and raw selections, including unnamed and exported selections" do
+  test "callbacks reject broad and raw selections, which cannot become graph exports" do
     source = input("in.mp4")
 
-    for selector <- [{:video, :all}, {:audio, :all}, :all, raw: "v:0", raw: "a:0?"] do
-      broad = FFix.select(source, selector)
+    for broad <- [
+          FFix.video(source, :all),
+          FFix.audio(source, :all),
+          FFix.select(source, :all),
+          FFix.select(source, "v:0"),
+          FFix.select(source, "a:0?")
+        ] do
       callback = fn _streams -> flunk("must not run") end
-      output = FFix.output([video(source), broad: broad], "out.mp4", metadata: callback)
+      output = FFix.output([video(source, 0), broad: broad], "out.mp4", metadata: callback)
       built = Command.new(inputs: [source], outputs: [output])
 
       assert_raise ArgumentError, ~r/callbacks require every mapping to select one stream/, fn ->
         FFix.to_argv(built)
       end
 
-      graph = FFix.graph(outputs: [broad: broad])
-      output = FFix.output(hd(graph.exports), "out.mp4", metadata: callback)
-      built = Command.new(inputs: [source], graph: graph, outputs: [output])
-
-      assert_raise ArgumentError, ~r/callbacks require every mapping to select one stream/, fn ->
-        FFix.to_argv(built)
+      assert_raise ArgumentError, fn ->
+        FFix.graph(outputs: [broad: broad])
       end
     end
   end
@@ -300,7 +301,7 @@ defmodule FFix.OutputCallbackTest do
 
     for name <- [:map, :an, :attach, :filter_complex] do
       output =
-        FFix.output([main: video(source)], "out.mp4", [
+        FFix.output([main: video(source, 0)], "out.mp4", [
           {name, fn _streams -> flunk("must not run") end}
         ])
 
@@ -312,7 +313,7 @@ defmodule FFix.OutputCallbackTest do
     end
 
     output =
-      FFix.output([main: video(source)], "out.mp4",
+      FFix.output([main: video(source, 0)], "out.mp4",
         metadata: fn _streams -> flunk("must not run") end
       )
 
@@ -343,13 +344,13 @@ defmodule FFix.OutputCallbackTest do
 
     assert_raise ArgumentError, ~r/only supported on outputs/, fn ->
       source = input("in.mp4", ss: callback)
-      command(output(video(source), "out.mp4"))
+      command(output(video(source, 0), "out.mp4"))
     end
 
     source = input("in.mp4")
 
     assert_raise ArgumentError, ~r/only supported on outputs/, fn ->
-      command(output(video(source), "out.mp4"), global: [loglevel: callback])
+      command(output(video(source, 0), "out.mp4"), global: [loglevel: callback])
     end
   end
 
@@ -363,7 +364,10 @@ defmodule FFix.OutputCallbackTest do
       "title=mixed"
     end
 
-    build_streams = fn source -> concat([video(source), audio(source)], n: 1, v: 1, a: 1) end
+    build_streams = fn source ->
+      concat([video(source, 0), audio(source, 0)], n: 1, v: 1, a: 1)
+    end
+
     source = FFix.input("in.mp4")
     [picture, sound] = build_streams.(source)
     built = command(output([sound: sound, picture: picture], "out.mp4", metadata: check))
@@ -393,7 +397,7 @@ defmodule FFix.OutputCallbackTest do
 
   test "unknown output media is rejected rather than guessed" do
     source = FFix.input("in.mp4")
-    unknown = source |> video() |> FFix.Filter.filter("null", [:unknown])
+    unknown = source |> video(0) |> FFix.Filter.filter("null", [:unknown])
 
     assert_raise ArgumentError, ~r/require known.*media/, fn ->
       command(
@@ -405,7 +409,7 @@ defmodule FFix.OutputCallbackTest do
   defp hls_command do
     source = input("in.mp4")
     other = input("other.mp4")
-    [high, low] = split(video(source), outputs: 2)
+    [high, low] = split(video(source, 0), outputs: 2)
 
     high =
       high
@@ -417,7 +421,7 @@ defmodule FFix.OutputCallbackTest do
       |> scale(w: -2, h: 360)
       |> Encoder.libx264(b: "400k", maxrate: "400k", bufsize: "800k", g: 12)
 
-    sound = Encoder.aac(audio(source), b: "64k")
+    sound = Encoder.aac(audio(source, 0), b: "64k")
 
     command(
       Muxer.hls([v720: high, v360: low, aud: sound], "out/%v.m3u8",

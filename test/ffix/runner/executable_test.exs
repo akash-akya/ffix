@@ -19,7 +19,7 @@ defmodule FFix.Runner.ExecutableTest do
 
   test "Command execution resolves explicit option, environment, then ffmpeg at enumeration" do
     source = FFix.input("ffix-missing-input")
-    command = FFix.command(FFix.output(FFix.video(source), "-", f: "null"))
+    command = FFix.command(FFix.output(FFix.video(source, 0), "-", f: "null"))
 
     ["ffmpeg" | serialized_args] = Command.to_argv(command)
     stream = Runner.stream(command)

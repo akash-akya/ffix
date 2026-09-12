@@ -7,9 +7,9 @@ defmodule FFix do
 
       alias FFix.{Encoder, Filter, Muxer}
       source = FFix.input("input.mp4")
-      picture = source |> FFix.video() |> Filter.scale(w: 1280, h: -2)
+      picture = source |> FFix.video(0) |> Filter.scale(w: 1280, h: -2)
       output = Muxer.mp4(
-        [main: Encoder.libx264(picture, crf: 23), sound: FFix.stream_copy(FFix.audio(source))],
+        [main: Encoder.libx264(picture, crf: 23), sound: FFix.stream_copy(FFix.audio(source, 0))],
         "out.mp4"
       )
       command = FFix.command(output, global: [y: :flag])
@@ -48,11 +48,13 @@ defmodule FFix do
                "Validation"
              ]
 
-  alias FFix.{Command, Filter, Graph, Runner}
+  alias FFix.{Command, Filter, Graph, Runner, Selection}
   alias FFix.Command.{Build, Input, Mapping, Output}
   alias FFix.Graph.{Builder, StreamRef, Terminal}
 
   @type output_media :: :audio | :video | :unknown
+  @type stream_index :: non_neg_integer() | :all
+  @type video_option :: Input.selection_option() | {:attached_pictures, boolean()}
 
   @doc group: "Inputs and outputs"
   @doc "Declares an input. Raw CLI controls precede `-i`; demuxer and decoder configurations belong to this declaration."
@@ -60,32 +62,34 @@ defmodule FFix do
   def input(source, options \\ []), do: Input.new(source, options)
 
   @doc group: "Inputs and outputs"
-  @doc "Selects one video stream by media-relative index; defaults to the first video stream."
-  @spec video(Input.t(), non_neg_integer()) :: StreamRef.t()
-  def video(input, index \\ 0), do: Input.select(input, {:video, index})
+  @doc "Selects a required video index or :all. Use attached_pictures: false for FFmpeg's V selector; optional: true permits missing output matches."
+  @spec video(Input.t(), stream_index(), [video_option()]) :: StreamRef.t() | Selection.t()
+  def video(input, index, options \\ []), do: Input.select_media(input, :video, index, options)
 
   @doc group: "Inputs and outputs"
-  @doc "Selects one audio stream by media-relative index; defaults to the first audio stream."
-  @spec audio(Input.t(), non_neg_integer()) :: StreamRef.t()
-  def audio(input, index \\ 0), do: Input.select(input, {:audio, index})
+  @doc "Selects a required audio stream index or :all; an audio stream may contain several channels."
+  @spec audio(Input.t(), stream_index(), [Input.selection_option()]) ::
+          StreamRef.t() | Selection.t()
+  def audio(input, index, options \\ []), do: Input.select_media(input, :audio, index, options)
 
   @doc group: "Inputs and outputs"
-  @doc "Selects one subtitle stream for mapping or encoding, not for burning text into video."
-  @spec subtitle(Input.t(), non_neg_integer()) :: StreamRef.t()
-  def subtitle(input, index \\ 0), do: Input.select(input, {:subtitle, index})
+  @doc "Selects a required subtitle index or :all for mapping, not burning text into video."
+  @spec subtitle(Input.t(), stream_index(), [Input.selection_option()]) ::
+          StreamRef.t() | Selection.t()
+  def subtitle(input, index, options \\ []),
+    do: Input.select_media(input, :subtitle, index, options)
 
   @doc group: "Inputs and outputs"
   @doc """
   Declares a stream selection without inspecting the input.
 
-  Use `{media, index}` for video, audio, subtitle, data, or attachment streams;
-  `{:index, index}` for an absolute input stream index; `:all` or `{media, :all}`
-  for broad mappings; and `{:raw, \"s?\"}` for literal FFmpeg selector syntax.
-  Broad/optional selections cannot supply known single-stream callback indexes.
-  Selecting an existing attachment is not adding a new attachment file.
+  An integer selects one absolute input stream index. `:all`, raw strings such
+  as `\"a:m:language:eng\"`, and `optional: true` return an unresolved `FFix.Selection`.
+  Selections are output sources, not filter inputs or enumerable lists.
   """
-  @spec select(Input.t(), term()) :: StreamRef.t()
-  def select(input, selector), do: Input.select(input, selector)
+  @spec select(Input.t(), Input.selector(), [Input.selection_option()]) ::
+          StreamRef.t() | Selection.t()
+  def select(input, selector, options \\ []), do: Input.select(input, selector, options)
 
   @doc group: "Inputs and outputs"
   @doc "Declares packet copy for one mapping. Filtered sources require an encoder; this is not the video filter named copy."

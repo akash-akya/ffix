@@ -35,8 +35,8 @@ defmodule FFix.Graph.ReuseTest do
   test "each binding instantiates fresh template filters, not fresh input declarations" do
     source = FFix.input("in.mp4")
     template = preview_template()
-    first = Graph.bind(template, picture: FFix.video(source))
-    second = Graph.bind(template, picture: FFix.video(source))
+    first = Graph.bind(template, picture: FFix.video(source, 0))
+    second = Graph.bind(template, picture: FFix.video(source, 0))
     refute first.id == second.id
     refute first[:preview].plan.id == second[:preview].plan.id
 
@@ -55,7 +55,7 @@ defmodule FFix.Graph.ReuseTest do
 
   test "bound external producers retain identity and still require explicit splits" do
     source = FFix.input("in.mp4")
-    shared = source |> FFix.video() |> Filter.scale(w: 16, h: 16)
+    shared = source |> FFix.video(0) |> Filter.scale(w: 16, h: 16)
     instance = Graph.bind(preview_template(), picture: shared)
 
     assert_raise ArgumentError, ~r/is used 2 times/, fn ->
@@ -76,7 +76,7 @@ defmodule FFix.Graph.ReuseTest do
   test "a selected export cannot discard independent instance branches" do
     port = Graph.input(:picture, :video)
     template = FFix.graph(outputs: [first: Filter.hflip(port), second: Filter.vflip(port)])
-    instance = Graph.bind(template, picture: FFix.video(FFix.input("in.mp4")))
+    instance = Graph.bind(template, picture: FFix.video(FFix.input("in.mp4"), 0))
 
     assert_raise ArgumentError, ~r/unconnected filter output/, fn ->
       instance[:first] |> FFix.output("out.mp4") |> FFix.command()
@@ -95,7 +95,7 @@ defmodule FFix.Graph.ReuseTest do
     port = Graph.input(:picture, :video)
     outer = FFix.graph(outputs: [first: Filter.hflip(port), second: Filter.vflip(port)])
     source = FFix.input("in.mp4")
-    outer = Graph.bind(outer, picture: FFix.video(source))
+    outer = Graph.bind(outer, picture: FFix.video(source, 0))
     inner = Graph.bind(preview_template(), picture: outer[:first])
 
     assert_raise ArgumentError, ~r/unconnected filter output/, fn ->
@@ -125,7 +125,7 @@ defmodule FFix.Graph.ReuseTest do
       )
 
     source = FFix.input("in.mkv")
-    instance = Graph.bind(template, sound: FFix.audio(source))
+    instance = Graph.bind(template, sound: FFix.audio(source, 0))
     assert [%Terminal{}] = Graph.terminals(instance)
 
     command =
@@ -145,11 +145,11 @@ defmodule FFix.Graph.ReuseTest do
       )
 
     source = FFix.input("in.mp4")
-    instance = Graph.bind(terminal_graph, picture: FFix.video(source))
+    instance = Graph.bind(terminal_graph, picture: FFix.video(source, 0))
     assert Graph.exports(instance) == []
 
     command =
-      FFix.command(FFix.output(FFix.audio(source), "audio.mka"),
+      FFix.command(FFix.output(FFix.audio(source, 0), "audio.mka"),
         terminals: Graph.terminals(instance)
       )
 
@@ -170,12 +170,12 @@ defmodule FFix.Graph.ReuseTest do
 
     first =
       Graph.bind(%{preview_template() | settings: [sws_flags: "bilinear"]},
-        picture: FFix.video(source)
+        picture: FFix.video(source, 0)
       )
 
     second =
       Graph.bind(%{preview_template() | settings: [sws_flags: "lanczos"]},
-        picture: FFix.video(source)
+        picture: FFix.video(source, 0)
       )
 
     assert_raise ArgumentError, ~r/conflicting graph setting/, fn ->
@@ -189,8 +189,8 @@ defmodule FFix.Graph.ReuseTest do
   test "exact parsed ports can bind independently to filtered video and audio" do
     template = Graph.parse!("[0:v]hflip[picture];[0:a]anull[sound]")
     source = FFix.input("in.mkv")
-    picture = Filter.scale(FFix.video(source), w: 16, h: 16)
-    sound = Filter.volume(FFix.audio(source), volume: 0.5)
+    picture = Filter.scale(FFix.video(source, 0), w: 16, h: 16)
+    sound = Filter.volume(FFix.audio(source, 0), volume: 0.5)
     instance = Graph.bind(template, %{{0, :video} => picture, {0, :audio} => sound})
     command = FFix.command(FFix.output(Graph.exports(instance), "out.mkv"))
     assert command.inputs == [source]
@@ -211,20 +211,20 @@ defmodule FFix.Graph.ReuseTest do
     assert_raise ArgumentError, ~r/unbound graph input/, fn -> Graph.bind(template, []) end
 
     assert_raise ArgumentError, ~r/unknown graph input bindings/, fn ->
-      Graph.bind(template, picture: FFix.video(source), typo: FFix.video(source))
+      Graph.bind(template, picture: FFix.video(source, 0), typo: FFix.video(source, 0))
     end
 
     assert_raise ArgumentError, ~r/expects video, got: audio/, fn ->
-      Graph.bind(template, picture: FFix.audio(source))
+      Graph.bind(template, picture: FFix.audio(source, 0))
     end
 
-    assert_raise ArgumentError, ~r/one stream/, fn ->
-      Graph.bind(template, picture: FFix.select(source, {:video, :all}))
+    assert_raise ArgumentError, ~r/graph inputs bind to Input declarations or StreamRefs/, fn ->
+      Graph.bind(template, picture: FFix.video(source, :all))
     end
 
-    first = Graph.bind(template, picture: FFix.video(source))
+    first = Graph.bind(template, picture: FFix.video(source, 0))
     changed = %{source | options: [ss: 2]}
-    second = Graph.bind(template, picture: FFix.video(changed))
+    second = Graph.bind(template, picture: FFix.video(changed, 0))
 
     assert_raise ArgumentError, ~r/conflicting input snapshots/, fn ->
       FFix.command([
@@ -236,7 +236,7 @@ defmodule FFix.Graph.ReuseTest do
 
   test "model edits cannot silently change a producer shared with an earlier snapshot" do
     source = FFix.input("in.mp4")
-    picture = FFix.video(source) |> Filter.scale(w: 16, h: 16) |> Filter.hflip()
+    picture = FFix.video(source, 0) |> Filter.scale(w: 16, h: 16) |> Filter.hflip()
     graph = FFix.graph(output: picture)
     scale = Enum.find(Graph.nodes(graph), &(&1.name == :scale))
     changed = Graph.update_node(graph, scale.id, &%{&1 | args: [w: 32, h: 32]})
@@ -274,7 +274,7 @@ defmodule FFix.Graph.ReuseTest do
   @tag skip: is_nil(@ffmpeg)
   test "FFmpeg sees the resized producer on both bound and external branches" do
     source = FFix.Demuxer.lavfi("testsrc2=size=32x32:rate=1")
-    shared = source |> FFix.video() |> Filter.scale(w: 16, h: 16)
+    shared = source |> FFix.video(0) |> Filter.scale(w: 16, h: 16)
     [inside, outside] = Filter.split(shared)
     instance = Graph.bind(preview_template(), picture: inside)
 

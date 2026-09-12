@@ -9,7 +9,7 @@ defmodule FFix.Graph do
       port = Graph.input(:picture, :video)
       template = FFix.graph(outputs: [preview: Filter.scale(port, w: 320, h: -2)])
       source = FFix.input("input.mp4")
-      instance = Graph.bind(template, picture: FFix.video(source))
+      instance = Graph.bind(template, picture: FFix.video(source, 0))
       output = FFix.output(Filter.hflip(instance[:preview]), "out.mp4")
       command = FFix.command(output)
 
@@ -33,7 +33,13 @@ defmodule FFix.Graph do
   @type node_id :: pos_integer()
   @type setting :: {atom() | String.t(), term()}
   @type input_id :: non_neg_integer() | atom() | String.t() | reference()
-  @type input_selector :: FFix.Command.Input.selector() | FFix.Command.Input.media() | :input
+  @type input_selector ::
+          :input
+          | FFix.Command.Input.media()
+          | :video_only
+          | {FFix.Command.Input.media() | :video_only, non_neg_integer()}
+          | {:index, non_neg_integer()}
+          | {:raw, String.t()}
   @type t :: %__MODULE__{
           id: reference(),
           nodes: %{node_id() => term()},
@@ -58,7 +64,7 @@ defmodule FFix.Graph do
   def input(input, selector), do: Builder.input(input, selector)
 
   @doc group: "Inputs"
-  @doc "Builds an explicit input reference from syntax such as `\"0:v\"` or `\"1:s?\"`."
+  @doc "Builds a low-level graph input matcher such as `\"0:v\"`; it supplies one filter pad, not an output selection."
   @spec input_raw(String.t()) :: StreamRef.t()
   def input_raw(spec), do: Builder.input_raw(spec)
 

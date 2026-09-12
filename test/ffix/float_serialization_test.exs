@@ -21,7 +21,7 @@ defmodule FFix.FloatSerializationTest do
     assert FFix.to_filtergraph(graph) == "sine=duration=0.2[out0];"
 
     source = FFix.input("in.wav", ss: 0.2)
-    mapping = FFix.Encoder.encode(FFix.audio(source), "aac", q: 1.0e-20)
+    mapping = FFix.Encoder.encode(FFix.audio(source, 0), "aac", q: 1.0e-20)
     output = FFix.output(mapping, "out.mka", t: 1.0e-6)
     argv = Command.new(inputs: [source], outputs: [output]) |> FFix.to_argv()
     assert Enum.chunk_every(argv, 2, 1, :discard) |> Enum.member?(["-ss", "0.2"])

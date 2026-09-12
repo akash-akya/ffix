@@ -38,7 +38,7 @@ defmodule FFix.FFmpegIntegrationTest do
     sample_video: sample_video
   }) do
     src = FFix.input(sample_video)
-    scaled = FFix.video(src) |> Filter.scale(w: 96, h: -1)
+    scaled = FFix.video(src, 0) |> Filter.scale(w: 96, h: -1)
     [left, right] = Filter.split(scaled, outputs: 2)
     stacked = Filter.hstack([left, Filter.hflip(right)])
     output_pattern = Path.join(tmp_dir, "stacked-%03d.jpg")
@@ -73,7 +73,7 @@ defmodule FFix.FFmpegIntegrationTest do
     command =
       FFix.command(
         source
-        |> FFix.video()
+        |> FFix.video(0)
         |> Filter.filter("scale", [:video], w: 80, h: -2)
         |> Filter.filter("hflip", [:video])
         |> Encoder.png(threads: 1)
@@ -123,7 +123,7 @@ defmodule FFix.FFmpegIntegrationTest do
     sample_video: sample_video
   }) do
     src = FFix.input(sample_video)
-    [master, preview] = Filter.split(FFix.video(src), outputs: 2)
+    [master, preview] = Filter.split(FFix.video(src, 0), outputs: 2)
 
     graph =
       FFix.graph(
@@ -172,19 +172,11 @@ defmodule FFix.FFmpegIntegrationTest do
     assert ["video"] == probe_codec_types!(thumb_path)
   end
 
-  test("omits filter_complex for graphs that only export direct input streams", %{
+  test("omits filter_complex for direct broad input selections", %{
     tmp_dir: tmp_dir,
     sample_video: sample_video
   }) do
     src = FFix.input(sample_video)
-
-    graph =
-      FFix.graph(
-        outputs: [
-          video: FFix.select(src, {:video, :all}),
-          audio: FFix.select(src, {:audio, :all})
-        ]
-      )
 
     output_path = Path.join(tmp_dir, "copy.mp4")
 
@@ -192,10 +184,8 @@ defmodule FFix.FFmpegIntegrationTest do
       FFix.command(
         [
           FFix.output(
-            [graph[:video], graph[:audio]],
-            output_path,
-            vcodec: :copy,
-            acodec: :copy
+            [FFix.stream_copy(FFix.video(src, :all)), FFix.stream_copy(FFix.audio(src, :all))],
+            output_path
           )
         ],
         global: ffmpeg_globals(),
@@ -301,14 +291,17 @@ defmodule FFix.FFmpegIntegrationTest do
     main_path = Path.join(tmp_dir, "shortcuts.mp4")
     preview_path = Path.join(tmp_dir, "shortcuts-preview.mkv")
     source = input
-    [main, preview] = Filter.split(FFix.video(source), outputs: 2)
+    [main, preview] = Filter.split(FFix.video(source, 0), outputs: 2)
     preview = Filter.scale(preview, w: 80, h: 48)
 
     command =
       FFix.command(
         [
           Muxer.mp4(
-            [Encoder.mpeg4(main, b: 300_000, threads: 1), FFix.stream_copy(FFix.audio(source))],
+            [
+              Encoder.mpeg4(main, b: 300_000, threads: 1),
+              FFix.stream_copy(FFix.audio(source, 0))
+            ],
             main_path,
             movflags: [:faststart],
             empty_hdlr_name: true,
@@ -342,7 +335,7 @@ defmodule FFix.FFmpegIntegrationTest do
     source = input
 
     command =
-      FFix.command(Muxer.image2([Encoder.png(FFix.video(source))], png_path, update: true),
+      FFix.command(Muxer.image2([Encoder.png(FFix.video(source, 0))], png_path, update: true),
         global: ffmpeg_globals()
       )
 
@@ -355,10 +348,10 @@ defmodule FFix.FFmpegIntegrationTest do
     sample_video: sample_video
   }) do
     source = FFix.input(sample_video)
-    [high, low] = Filter.split(FFix.video(source), outputs: 2)
+    [high, low] = Filter.split(FFix.video(source, 0), outputs: 2)
     high = Encoder.mpeg4(high, b: "300k", g: 1, threads: 1)
     low = low |> Filter.scale(w: 80, h: 48) |> Encoder.mpeg4(b: "150k", g: 1, threads: 1)
-    sound = Encoder.aac(FFix.audio(source), b: "64k", threads: 1)
+    sound = Encoder.aac(FFix.audio(source, 0), b: "64k", threads: 1)
 
     command =
       FFix.command(
@@ -518,7 +511,7 @@ output:
     FFix.command(
       [
         FFix.output(
-          FFix.Graph.input(0, :video),
+          FFix.Graph.input(0, {:video, 0}),
           "-",
           f: :null
         )
