@@ -8,6 +8,7 @@ defmodule FFix.Command.Build do
   alias FFix.Graph.Builder
   alias FFix.Graph.Export
   alias FFix.Graph.StreamRef
+  alias FFix.Selection
 
   @command_keys [:global, :inputs, :terminals, :settings]
 
@@ -15,20 +16,21 @@ defmodule FFix.Command.Build do
   def command(output_or_outputs, options \\ []) do
     validate_options!(options)
     outputs = normalize_outputs!(output_or_outputs)
-    streams = mapped_streams!(outputs)
+    sources = mapped_sources!(outputs)
+    streams = Enum.filter(sources, &is_struct(&1, StreamRef))
+    terminals = Keyword.get(options, :terminals, [])
+    settings = Keyword.get(options, :settings, [])
 
     candidate =
-      Builder.graph(
-        outputs: streams,
-        terminals: Keyword.get(options, :terminals, []),
-        settings: Keyword.get(options, :settings, [])
-      )
+      if streams != [] or terminals != [] or settings != [] do
+        Builder.graph(outputs: streams, terminals: terminals, settings: settings)
+      end
 
     input_refs =
-      candidate.order
-      |> Enum.map(&Map.fetch!(candidate.nodes, &1))
-      |> Enum.filter(&(&1.kind == :input))
-      |> Enum.map(& &1.input_ref)
+      Enum.flat_map(sources, fn
+        %Selection{input_ref: input_ref} -> [input_ref]
+        %StreamRef{} = stream -> Builder.input_refs([stream])
+      end) ++ Builder.input_refs(terminals)
 
     captured_inputs =
       input_refs
@@ -37,13 +39,15 @@ defmodule FFix.Command.Build do
       |> unique_inputs!()
 
     inputs = resolve_inputs!(captured_inputs, input_refs, options)
-    filters? = Enum.any?(candidate.nodes, fn {_id, node} -> node.kind == :filter end)
+
+    filters? =
+      candidate != nil and Enum.any?(candidate.nodes, fn {_id, node} -> node.kind == :filter end)
 
     {graph, outputs} =
       if filters? do
         {candidate, lower_outputs(outputs, candidate.exports)}
       else
-        if candidate.settings != [] do
+        if candidate != nil and candidate.settings != [] do
           raise ArgumentError,
                 "graph settings require filter nodes; cannot discard settings from a direct mapping command"
         end
@@ -94,11 +98,14 @@ defmodule FFix.Command.Build do
     outputs
   end
 
-  defp mapped_streams!(outputs) do
+  defp mapped_sources!(outputs) do
     Enum.flat_map(outputs, fn output ->
       Enum.map(output.mappings, fn
         %Mapping{source: %StreamRef{} = stream} ->
           stream
+
+        %Mapping{source: %Selection{} = selection} ->
+          Selection.validate!(selection)
 
         %Mapping{source: %Export{}} ->
           raise ArgumentError,
@@ -106,7 +113,7 @@ defmodule FFix.Command.Build do
 
         other ->
           raise ArgumentError,
-                "expected a mapping with a StreamRef source, got: #{inspect(other)}"
+                "expected a mapping with a stream reference or selection, got: #{inspect(other)}"
       end)
     end)
   end
@@ -176,8 +183,12 @@ defmodule FFix.Command.Build do
   defp direct_outputs(outputs) do
     Enum.map(outputs, fn output ->
       mappings =
-        Enum.map(output.mappings, fn mapping ->
-          %{mapping | source: %{mapping.source | context: nil}}
+        Enum.map(output.mappings, fn
+          %{source: %StreamRef{} = source} = mapping ->
+            %{mapping | source: %{source | context: nil}}
+
+          mapping ->
+            mapping
         end)
 
       %{output | mappings: mappings}
@@ -188,8 +199,9 @@ defmodule FFix.Command.Build do
     {outputs, _remaining} =
       Enum.map_reduce(outputs, exports, fn output, remaining ->
         {mappings, remaining} =
-          Enum.map_reduce(output.mappings, remaining, fn mapping, [export | rest] ->
-            {%{mapping | source: export}, rest}
+          Enum.map_reduce(output.mappings, remaining, fn
+            %{source: %Selection{}} = mapping, remaining -> {mapping, remaining}
+            mapping, [export | rest] -> {%{mapping | source: export}, rest}
           end)
 
         {%{output | mappings: mappings}, remaining}

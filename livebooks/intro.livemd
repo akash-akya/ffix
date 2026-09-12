@@ -178,7 +178,7 @@ Declare the source and output first, then build a command from the output:
 
 ```text
 source = FFix.input(path, input_options)
-video = FFix.video(source)
+video = FFix.video(source, 0)
 output = FFix.output(video, target, output_options)
 command = FFix.command(output, global: global_options)
 ```
@@ -186,16 +186,18 @@ command = FFix.command(output, global: global_options)
 In this first version there is no filtergraph yet:
 
 * `FFix.input(source_path, t: "2")` declares an ffmpeg input and asks ffmpeg to read only two seconds
-* `FFix.video(source)` selects the first video stream (index 0)
+* `FFix.video(source, 0)` selects the first video stream (index 0)
 * `FFix.output(video, :stdout, ...)` writes a tiny MP4 to stdout, so Livebook can render it without creating a file
 * `FFix.command/2` infers inputs from the output's stream dependencies
+
+An explicit index returns one filterable reference. `FFix.video(source, :all)` returns an output-only selection query, not a list of references. Use an ordinary list to order individual references.
 
 Configure input options, demuxers, and decoders before selecting streams: selections capture immutable declarations. Reusing a declaration opens it once per command; separate declarations of the same file remain separate inputs. Use separate declarations when you need different decoder or seek settings. Raw CLI switches use `:flag`, while raw booleans emit `1` or `0`.
 
 ```elixir
 # Input options render before `-i`; this becomes roughly `-t 2 -i source.mp4`.
 preview_source = FFix.input(source_path, t: "2")
-preview_video = FFix.video(preview_source)
+preview_video = FFix.video(preview_source, 0)
 
 preview_output =
   FFix.output(preview_video, :stdout,
@@ -235,7 +237,7 @@ source = FFix.input(source_path)
 
 normalized_video =
   source
-  |> FFix.video()
+  |> FFix.video(0)
   # `trim` cuts frames, but it keeps the original timestamps.
   |> Filter.trim(duration: "3")
   # Reset timestamps so the filtered preview starts at t=0.
@@ -293,7 +295,7 @@ titled_path = Path.join(work_dir, "01-titled-video.mp4")
 
 titled_video =
   source
-  |> FFix.video()
+  |> FFix.video(0)
   |> Filter.trim(duration: duration)
   |> Filter.setpts(expr: "PTS-STARTPTS")
   |> Filter.fps(fps: 30)
@@ -355,7 +357,7 @@ thumbnail_source = FFix.input(source_path, ss: "00:00:01")
 
 thumbnail_image =
   thumbnail_source
-  |> FFix.video()
+  |> FFix.video(0)
   |> Filter.scale(w: 1280, h: 720, force_original_aspect_ratio: :increase)
   |> Filter.crop(w: 1280, h: 720)
   |> Filter.drawtext(
@@ -405,7 +407,7 @@ phone_path = Path.join(work_dir, "03-phone-friendly.mp4")
 
 phone_video =
   source
-  |> FFix.video()
+  |> FFix.video(0)
   |> Filter.trim(duration: duration)
   |> Filter.setpts(expr: "PTS-STARTPTS")
   |> Filter.fps(fps: 30)
@@ -473,7 +475,7 @@ sheet_path = Path.join(work_dir, "04-review-sheet.jpg")
 # Normalize once before splitting, so each branch starts from the same clean base.
 base =
   source
-  |> FFix.video()
+  |> FFix.video(0)
   |> Filter.trim(duration: duration)
   |> Filter.setpts(expr: "PTS-STARTPTS")
   |> Filter.fps(fps: 30)

@@ -80,7 +80,7 @@ defmodule FFix.CommandConfigurationTest do
         outputs: [
           FFix.output(
             [
-              FFix.video(first),
+              FFix.video(first, 0),
               FFix.video(
                 second,
                 0
@@ -315,14 +315,14 @@ defmodule FFix.CommandConfigurationTest do
   test "prebuilt outputs retain input configuration and accept configured graph exports" do
     input = FFix.input("source.mkv")
     input = %{input | decoders: %{{:video, 0} => %Decoder{name: "h264"}}}
-    graph = FFix.graph(outputs: [video: Filter.scale(FFix.video(input), w: 320, h: -1)])
+    graph = FFix.graph(outputs: [video: Filter.scale(FFix.video(input, 0), w: 320, h: -1)])
 
     command =
       FFix.command(
         FFix.output(
           [
             %Mapping{source: graph[:video], encoding: %Encoder{name: "libx264"}},
-            %Mapping{source: FFix.audio(input), encoding: :copy}
+            %Mapping{source: FFix.audio(input, 0), encoding: :copy}
           ],
           "out.mkv"
         )
@@ -370,45 +370,74 @@ defmodule FFix.CommandConfigurationTest do
            ]
   end
 
-  test "configured outputs reject broad or raw selectors even in unconfigured mappings" do
+  test "configured outputs reject unknown media and ambiguous same-media groups" do
     input = FFix.input("source.mkv")
 
-    for selector <- [:all, video: :all, audio: :all, raw: "a:0?", raw: "v:0"] do
+    for source <- [
+          FFix.select(input, :all),
+          FFix.video(input, :all),
+          FFix.select(input, "v:0"),
+          FFix.select(input, "a:0?")
+        ] do
       output = %Output{
         target: "out.mkv",
         mappings: [
           %Mapping{source: FFix.video(input, 0), encoding: %Encoder{name: "libx264"}},
-          %Mapping{source: FFix.select(input, selector)}
+          %Mapping{source: source}
         ]
       }
 
       command = %Command{inputs: [input], outputs: [output]}
 
-      assert_raise ArgumentError, ~r/every output mapping to select one stream/, fn ->
+      assert_raise ArgumentError, ~r/ambiguous|known media/, fn ->
         Command.to_argv(command)
       end
     end
   end
 
-  test "a graph export of a broad input is not mistaken for one filtered stream" do
+  test "configured video and broad audio use independent media scopes" do
     input = FFix.input("source.mkv")
-    graph = FFix.graph(outputs: [audio: FFix.select(input, {:audio, :all})])
-    mapping = %Mapping{source: hd(graph.exports), encoding: :copy}
 
-    command = %Command{
-      inputs: [input],
-      graph: graph,
-      outputs: [
+    for audio <- [FFix.audio(input, :all), FFix.audio(input, 0, optional: true)] do
+      video = Encoder.libx264(FFix.video(input, 0))
+      unconfigured = FFix.output([video, audio], "out.mkv")
+      argv = unconfigured |> FFix.command() |> Command.to_argv()
+      assert Enum.chunk_every(argv, 2, 1, :discard) |> Enum.member?(["-c:v", "libx264"])
+      refute "-c:a" in argv
+
+      output =
         FFix.output(
-          mapping,
-          "out.mka"
+          [video, FFix.stream_copy(audio)],
+          "out.mkv"
         )
-      ]
-    }
 
-    assert_raise ArgumentError, ~r/every output mapping to select one stream/, fn ->
-      Command.to_argv(command)
+      argv = output |> FFix.command() |> Command.to_argv()
+      assert Enum.chunk_every(argv, 2, 1, :discard) |> Enum.member?(["-c:v", "libx264"])
+      assert Enum.chunk_every(argv, 2, 1, :discard) |> Enum.member?(["-c:a", "copy"])
+      refute "-filter_complex" in argv
     end
+  end
+
+  test "broad input copy maps directly without fabricating a graph export" do
+    input = FFix.input("source.mkv")
+    audio = FFix.audio(input, :all)
+    mapping = FFix.stream_copy(audio)
+    command = FFix.command(FFix.output(mapping, "out.mka"))
+
+    assert command.graph == nil
+
+    assert Command.to_argv(command) == [
+             "ffmpeg",
+             "-i",
+             "source.mkv",
+             "-map",
+             "0:a",
+             "-c",
+             "copy",
+             "out.mka"
+           ]
+
+    assert_raise ArgumentError, fn -> FFix.graph(outputs: [audio: audio]) end
   end
 
   test "copy rejects canonical filter exports" do

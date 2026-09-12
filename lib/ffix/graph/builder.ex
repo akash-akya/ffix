@@ -46,7 +46,7 @@ defmodule FFix.Graph.Builder do
   @spec input(input_id(), input_selector()) :: StreamRef.t()
   def input(index, selector) do
     input_ref = InputRef.new(index, selector)
-    selector = input_ref.selector
+    selector = validate_graph_selector!(input_ref.selector)
 
     plan = %Plan{
       id: make_ref(),
@@ -127,6 +127,13 @@ defmodule FFix.Graph.Builder do
         raise ArgumentError,
               "unresolved filter output shape: #{reason}; use FFix.Filter.filter/4 with explicit output media"
     end
+  end
+
+  @doc false
+  def input_refs(roots) do
+    {streams, terminals} = Enum.split_with(roots, &is_struct(&1, StreamRef))
+    {plans, _contexts} = collect_plans(Enum.map(streams, &{nil, &1}), terminals)
+    for %Plan{kind: :input, input_ref: input_ref} <- plans, do: input_ref
   end
 
   @doc false
@@ -302,6 +309,19 @@ defmodule FFix.Graph.Builder do
     graph
   end
 
+  defp validate_graph_selector!(selector) do
+    selector = InputRef.normalize_selector!(selector)
+
+    if selector == :all or match?({_media, :all}, selector),
+      do:
+        raise(
+          ArgumentError,
+          "graph inputs require one stream; use a selection for broad output mappings"
+        )
+
+    selector
+  end
+
   defp validate_node!(%Node{id: node_id} = node, node_id)
        when is_integer(node_id) and node_id > 0 do
     unless node.kind in [:input, :filter] and is_list(node.inputs) and
@@ -315,10 +335,12 @@ defmodule FFix.Graph.Builder do
         do: raise(ArgumentError, "invalid graph input node #{node_id}")
 
       InputRef.normalize_input_id!(node.input_ref.input)
-      selector = InputRef.normalize_selector!(node.input_ref.selector)
+      selector = validate_graph_selector!(node.input_ref.selector)
 
       unless node.output_media == [selector_media(selector)],
         do: raise(ArgumentError, "graph input media does not match its selector")
+
+      validate_input_binding!(node.input_ref.binding, selector_media(selector))
     else
       Enum.each(node.output_media, &normalize_output_media!/1)
       normalize_filter_name!(node.name)
@@ -329,6 +351,18 @@ defmodule FFix.Graph.Builder do
 
   defp validate_node!(_node, node_id),
     do: raise(ArgumentError, "invalid graph node #{inspect(node_id)}")
+
+  defp validate_input_binding!(nil, _expected), do: :ok
+
+  defp validate_input_binding!(%StreamRef{media: actual} = stream, expected) do
+    validate_streams!([stream])
+
+    if expected != :unknown and actual not in [:unknown, expected],
+      do: raise(ArgumentError, "graph input expects #{expected}, got: #{actual}")
+  end
+
+  defp validate_input_binding!(_binding, _expected),
+    do: raise(ArgumentError, "graph input bindings require one stream reference, not a selection")
 
   defp validate_node_inputs!(%Node{kind: :filter, name: name} = node, nodes) when is_atom(name) do
     if Map.has_key?(FFix.Filter.Metadata.filters(), name) do
@@ -430,6 +464,9 @@ defmodule FFix.Graph.Builder do
 
       %StreamRef{} ->
         :ok
+
+      %FFix.Selection{} ->
+        raise ArgumentError, "filter inputs require one stream, not an unresolved selection"
 
       other ->
         raise ArgumentError, "expected FFix.Graph.StreamRef, got: #{inspect(other)}"

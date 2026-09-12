@@ -41,8 +41,8 @@ those outputs to `FFix.command/2`; it collects their input dependencies.
 
 ```elixir
 source = FFix.input("input.mp4")
-cropped = source |> FFix.video() |> Filter.crop(w: 720, h: 720)
-output = FFix.output([cropped, FFix.audio(source)], "square.mp4")
+cropped = source |> FFix.video(0) |> Filter.crop(w: 720, h: 720)
+output = FFix.output([cropped, FFix.audio(source, 0)], "square.mp4")
 cmd = FFix.command(output)
 
 FFix.to_argv(cmd)
@@ -52,7 +52,7 @@ FFix.to_argv(cmd)
 
 ```elixir
 image = FFix.input(:stdin, f: :image2pipe)
-scaled = image |> FFix.video() |> Filter.scale(w: 640, h: -1)
+scaled = image |> FFix.video(0) |> Filter.scale(w: 640, h: -1)
 output = FFix.output(scaled, :stdout, f: :image2pipe, vcodec: :png)
 cmd = FFix.command(output)
 
@@ -72,13 +72,13 @@ source = FFix.input("input.mp4")
 
 short =
   source
-  |> FFix.video()
+  |> FFix.video(0)
   |> Filter.scale(w: 1080, h: 1920, force_original_aspect_ratio: :increase)
   |> Filter.crop(w: 1080, h: 1920)
   |> Filter.fps(fps: 30)
   |> Filter.drawtext(text: "Launch Day", x: "(w-tw)/2", y: "(h-th)/2")
 
-output = FFix.output([short, FFix.audio(source)], "short.mp4")
+output = FFix.output([short, FFix.audio(source, 0)], "short.mp4")
 FFix.command(output)
 ```
 
@@ -109,7 +109,7 @@ filter with explicit ordered media in that case. For example,
 `Graph.parse!/1` still needs known-filter metadata; text does not retain declared
 output media for unknown filters.
 
-Graph values live under `FFix.Graph`: `StreamRef` identifies an input selection or
+Graph values live under `FFix.Graph`: `StreamRef` identifies one input stream or
 filter output, and `Terminal` ends a branch. The helpers construct these values
 for you. Output `Mapping` values remain under `FFix.Command` and describe how an
 output uses a reference, including its encoding.
@@ -120,8 +120,8 @@ Command-level options are the final argument:
 
 ```elixir
 source = FFix.input("input.mp4")
-video = source |> FFix.video() |> Filter.scale(w: 1280, h: -1)
-output = FFix.output([video, FFix.audio(source)], "scaled.mp4")
+video = source |> FFix.video(0) |> Filter.scale(w: 1280, h: -1)
+output = FFix.output([video, FFix.audio(source, 0)], "scaled.mp4")
 cmd = FFix.command(output, global: [y: :flag])
 ```
 
@@ -152,11 +152,11 @@ source =
   Demuxer.mov("input.mp4")
   |> Decoder.h264({:video, 0}, threads: 2)
 
-scaled = Filter.scale(FFix.video(source), w: 1280, h: -2)
+scaled = Filter.scale(FFix.video(source, 0), w: 1280, h: -2)
 
 output =
   Muxer.mp4(
-    [Encoder.libx264(scaled, crf: 18, preset: "slow"), FFix.stream_copy(FFix.audio(source))],
+    [Encoder.libx264(scaled, crf: 18, preset: "slow"), FFix.stream_copy(FFix.audio(source, 0))],
     "main.mp4",
     movflags: [:faststart],
     output_options: [t: 10]
@@ -179,7 +179,7 @@ order make inference unsuitable.
 
 | Helper | Returns |
 | --- | --- |
-| `FFix.video(input, index \\ 0)`, `FFix.audio(input, index \\ 0)`, `FFix.subtitle(input, index \\ 0)` | One input stream reference |
+| `FFix.video(input, index)`, `FFix.audio(input, index)`, `FFix.subtitle(input, index)` | One input stream reference |
 | `Encoder.libx264(stream, options)` | One configured output mapping |
 | `FFix.stream_copy(stream)` | One packet-copy mapping, not the `copy` video filter |
 | `Muxer.mp4(sources, target, options)` | An output declaration |
@@ -208,9 +208,9 @@ source = FFix.input("input.mp4")
 output =
   Muxer.matroska(
     [
-      FFix.stream_copy(FFix.audio(source)),
-      web_video(FFix.video(source)),
-      web_video(FFix.video(source), crf: 28)
+      FFix.stream_copy(FFix.audio(source, 0)),
+      web_video(FFix.video(source, 0)),
+      web_video(FFix.video(source, 0), crf: 28)
     ],
     "qualities.mkv"
   )
@@ -222,14 +222,19 @@ The audio becomes output stream 0, and the two independent video encodes become
 streams 1 and 2. Encoder options receive those indexes automatically. Indexes
 restart for each output. Reusing a mapping does not share encoded packets.
 
-Use `FFix.video/2`, `FFix.audio/2`, or `FFix.subtitle/2` for indexed selections
-(default index 0). `FFix.select/2` accepts `:all`, `{media, :all}`, `{media, index}`,
-`{:index, n}`, and `{:raw, "s?"}`. Media can be `:video`, `:audio`, `:subtitle`,
-`:data`, or `:attachment`. Broad selectors such as
-`FFix.select(source, {:audio, :all})` can select several streams and retain
-that meaning. If an output contains configured encoding, all its mappings must
-select individual streams. Actual filtered outputs cannot use stream copy and
-must be mapped exactly once; use `split` or `asplit` for multiple consumers.
+Pass an explicit index to `FFix.video/2`, `FFix.audio/2`, or `FFix.subtitle/2`
+for one filterable stream reference. Passing `:all`, such as
+`FFix.audio(source, :all)`, returns an output-only `FFix.Selection` query, not a
+list or filter input. `FFix.select/2` accepts an absolute integer index, `:all`,
+or a raw FFmpeg suffix such as `"a:m:language:eng"`. Raw suffixes and
+`optional: true` always return queries; use an ordinary list for ordered references.
+`FFix.video(source, 0, attached_pictures: false)` excludes attached pictures
+with FFmpeg's `V` selector, not all image codecs or still-image inputs.
+
+Queries support stream copy and unambiguous media-wide encoding. Conflicting
+encoding policies within an unknown-size media group require explicit references.
+Actual filtered outputs cannot use stream copy and must be mapped exactly once;
+use `split` or `asplit` for multiple consumers.
 
 Configure inputs and decoders before selecting streams, for example
 `Decoder.aac(input, {:audio, 0}, threads: 2)`. Selections capture immutable input
@@ -245,7 +250,7 @@ selectors, not both: their targets can overlap without media probing.
 port = Graph.input(:picture, :video)
 template = FFix.graph(outputs: [preview: Filter.scale(port, w: 320, h: -2)])
 source = FFix.input("input.mp4")
-instance = Graph.bind(template, picture: FFix.video(source))
+instance = Graph.bind(template, picture: FFix.video(source, 0))
 flipped = Filter.hflip(instance[:preview])
 output = FFix.output(flipped, "preview.mp4")
 FFix.command(output)
@@ -320,7 +325,7 @@ mappings does not leave stale indexes inside strings:
 
 ```elixir
 source = FFix.input("input.mp4")
-[high, low] = Filter.split(FFix.video(source), outputs: 2)
+[high, low] = Filter.split(FFix.video(source, 0), outputs: 2)
 
 video_720 =
   high
@@ -332,7 +337,7 @@ video_360 =
   |> Filter.scale(w: -2, h: 360)
   |> Encoder.libx264(b: "400k", maxrate: "400k", bufsize: "800k", g: 12)
 
-audio_track = Encoder.aac(FFix.audio(source), b: "64k")
+audio_track = Encoder.aac(FFix.audio(source, 0), b: "64k")
 
 output =
   Muxer.hls(

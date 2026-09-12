@@ -2,7 +2,7 @@ defmodule FFix.FunctionAPITest do
   use ExUnit.Case, async: true
 
   defmodule Example do
-    import FFix, only: [input: 1, input: 2, output: 3, command: 1, video: 1, audio: 1, audio: 2]
+    import FFix, only: [input: 1, input: 2, output: 3, command: 1, video: 2, audio: 2]
     import FFix.Filter
 
     def variants(video) do
@@ -17,43 +17,46 @@ defmodule FFix.FunctionAPITest do
     def inline_command do
       source = input("input.mp4", ss: "00:00:03")
       music = input("music.mp3")
-      graph = variants(video(source))
+      graph = variants(video(source, 0))
 
       command([
-        output([graph[:master], audio(source)], "master.mp4", vcodec: :libx264, acodec: :aac),
+        output([graph[:master], audio(source, 0)], "master.mp4", vcodec: :libx264, acodec: :aac),
         output(graph[:preview], "thumb-%03d.jpg", f: :image2, vsync: 0),
-        output([audio(source, 0), audio(music)], "podcast.mka", acodec: :copy)
+        output([audio(source, 0), audio(music, 0)], "podcast.mka", acodec: :copy)
       ])
     end
 
     def graph_value_command do
       source = input("input.mp4")
-      graph = variants(video(source))
+      graph = variants(video(source, 0))
 
       command([
-        output([graph[:master], audio(source)], "master.mp4", vcodec: :libx264, acodec: :aac),
+        output([graph[:master], audio(source, 0)], "master.mp4", vcodec: :libx264, acodec: :aac),
         output(graph[:preview], "thumb-%03d.jpg", f: :image2, vsync: 0)
       ])
     end
 
     def sources_output_command do
       source = input("input.mp4")
-      graph = FFix.graph(outputs: [preview: scale(video(source), w: 320, h: -1)])
+      graph = FFix.graph(outputs: [preview: scale(video(source, 0), w: 320, h: -1)])
 
       command(
-        output([graph[:preview], audio(source)], "preview.mkv", vcodec: :libx264, acodec: :copy)
+        output([graph[:preview], audio(source, 0)], "preview.mkv",
+          vcodec: :libx264,
+          acodec: :copy
+        )
       )
     end
 
     def graph_only_output_command do
       source = input("input.mp4")
-      graph = FFix.graph(outputs: [preview: scale(video(source), w: 320, h: -1)])
+      graph = FFix.graph(outputs: [preview: scale(video(source, 0), w: 320, h: -1)])
       command(output(graph[:preview], "thumb-%03d.jpg", f: :image2, vsync: 0))
     end
 
     def graph_export_named_outputs_command do
       source = input("input.mp4")
-      graph = FFix.graph(outputs: [outputs: video(source)])
+      graph = FFix.graph(outputs: [outputs: video(source, 0)])
       command(output(graph[:outputs], "out.mp4", vcodec: :copy))
     end
   end
@@ -172,8 +175,8 @@ defmodule FFix.FunctionAPITest do
 
   test "output sources preserve order without media grouping" do
     source = FFix.input("input.mp4")
-    sound = FFix.audio(source)
-    picture = FFix.video(source)
+    sound = FFix.audio(source, 0)
+    picture = FFix.video(source, 0)
     sources = [{:sound, sound}, picture, {:main, picture}]
     output = FFix.output(sources, "out.mp4", t: 2)
     assert Enum.map(output.mappings, & &1.source) == [sound, picture, picture]
@@ -183,7 +186,7 @@ defmodule FFix.FunctionAPITest do
   end
 
   test "output accepts a single source, mapping, or named binding" do
-    source = FFix.input("input.mp4") |> FFix.video()
+    source = FFix.input("input.mp4") |> FFix.video(0)
     mapping = FFix.stream_copy(source)
 
     assert source |> FFix.output("out.mp4") |> Map.fetch!(:mappings) == [
@@ -215,8 +218,8 @@ defmodule FFix.FunctionAPITest do
 
   test "append operations accept existing declarations" do
     source = FFix.input("input.mp4", ss: 1)
-    picture = FFix.video(source)
-    sound = FFix.audio(source)
+    picture = FFix.video(source, 0)
+    sound = FFix.audio(source, 0)
 
     command =
       FFix.Command.new()
@@ -247,7 +250,7 @@ defmodule FFix.FunctionAPITest do
   end
 
   test "output-first commands reject graph specs and callback options" do
-    output = FFix.input("input.mp4") |> FFix.video() |> FFix.output("out.mp4")
+    output = FFix.input("input.mp4") |> FFix.video(0) |> FFix.output("out.mp4")
 
     assert_raise ArgumentError, ~r/unknown command keys/, fn ->
       FFix.command(output, graph: [video: FFix.Graph.input(0, :video)])

@@ -243,7 +243,7 @@ defmodule FFix.RunnerTest do
 
     command =
       FFix.command(
-        FFix.output(FFix.video(source), "out.mp4",
+        FFix.output(FFix.video(source, 0), "out.mp4",
           metadata: fn _ ->
             send(parent, :serialized)
             "title=test"

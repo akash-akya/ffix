@@ -4,7 +4,8 @@ defmodule FFix.Encoder do
 
   Named helpers return `FFix.Command.Mapping` values, not filterable streams or
   running encoder instances. Use them after filtering, as sources in output
-  declarations passed to `FFix.command/2`.
+  declarations passed to `FFix.command/2`. A selection requests the same encoding
+  for each matched stream; ambiguous output scopes are rejected.
 
       FFix.Encoder.libx264(video, crf: 18, preset: "slow")
 
@@ -47,6 +48,9 @@ defmodule FFix.Encoder do
   end
 
   @doc false
+  def validate_source_media!(%FFix.Selection{} = selection, expected),
+    do: validate_source_media!(%{media: FFix.Selection.media(selection)}, expected)
+
   def validate_source_media!(%{media: media}, expected)
       when media != :unknown and expected != nil and media != expected do
     raise ArgumentError, "encoder expects #{expected} source, got: #{media}"

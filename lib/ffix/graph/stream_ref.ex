@@ -1,10 +1,10 @@
 defmodule FFix.Graph.StreamRef do
   @moduledoc """
-  Opaque reference to an input selection or a filter output.
+  Opaque reference to one required input stream or one filter output.
 
-  References describe connections, not running streams or encoded tracks.
-  Select inputs with `FFix.video/2`, `FFix.audio/2`, or `FFix.select/2`; filters
-  consume references and return new ones. Reusable graph exports also carry
+  Indexed input helpers return references; broad or optional selections do not.
+  Low-level graph inputs can also match one filter pad without naming an index.
+  Filters consume references and return new ones. Reusable graph exports carry
   their graph's other roots and settings so composing one cannot lose a branch.
   """
 

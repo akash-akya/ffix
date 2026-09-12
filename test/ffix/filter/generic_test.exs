@@ -6,7 +6,7 @@ defmodule FFix.Filter.GenericTest do
 
   test "graph references, terminals, and plans share a namespace without expression wrappers" do
     source = FFix.input("in.mp4")
-    assert %StreamRef{} = video = FFix.video(source)
+    assert %StreamRef{} = video = FFix.video(source, 0)
     assert %Graph.Builder.Plan{} = video.plan
     refute function_exported?(FFix, :expr, 1)
     refute Code.ensure_loaded?(FFix.Graph.Expr)
@@ -81,7 +81,7 @@ defmodule FFix.Filter.GenericTest do
 
   test "generic output media reaches encoders, muxers, and output callbacks" do
     source = FFix.input("in.mp4")
-    [picture, sound] = Filter.filter(FFix.video(source), "vendor_mixed", [:video, :audio])
+    [picture, sound] = Filter.filter(FFix.video(source, 0), "vendor_mixed", [:video, :audio])
 
     command =
       FFix.command(
@@ -104,7 +104,7 @@ defmodule FFix.Filter.GenericTest do
 
   test "unnamed unknown media still rejects output-index callbacks" do
     source = FFix.input("in.mp4")
-    result = Filter.filter(FFix.video(source), "vendor", [:unknown])
+    result = Filter.filter(FFix.video(source, 0), "vendor", [:unknown])
 
     assert_raise ArgumentError, ~r/require known.*media/, fn ->
       FFix.command(

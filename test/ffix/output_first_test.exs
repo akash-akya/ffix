@@ -11,6 +11,8 @@ defmodule FFix.OutputFirstTest do
   alias FFix.Graph
   alias FFix.Graph.Builder
   alias FFix.Graph.InputRef
+  alias FFix.Graph.StreamRef
+  alias FFix.Selection
 
   test "direct mappings infer declaration order and do not emit an empty graph" do
     first = Input.new("same.mp4")
@@ -19,9 +21,9 @@ defmodule FFix.OutputFirstTest do
     output =
       Output.new(
         [
-          Input.select(second, {:audio, 0}),
-          Input.select(first, {:video, 0}),
-          Input.select(second, {:video, 0})
+          FFix.audio(second, 0),
+          FFix.video(first, 0),
+          FFix.video(second, 0)
         ],
         "out.mkv"
       )
@@ -53,7 +55,7 @@ defmodule FFix.OutputFirstTest do
     first = Input.new("first.mp4")
     second = Input.new("second.mp4")
     metadata = Input.new("metadata.txt")
-    output = Output.new(Input.select(second, {:video, 0}), "out.mp4")
+    output = Output.new(FFix.video(second, 0), "out.mp4")
     command = Build.command(output, inputs: [first, metadata, second, second])
 
     assert command.inputs == [first, metadata, second]
@@ -63,8 +65,8 @@ defmodule FFix.OutputFirstTest do
   test "captured configurations must agree with each other and explicit declarations" do
     original = Input.new("in.mp4")
     configured = Decoder.decode(original, "h264", {:video, 0}, threads: 2)
-    old_stream = Input.select(original, {:video, 0})
-    new_stream = Input.select(configured, {:audio, 0})
+    old_stream = FFix.video(original, 0)
+    new_stream = FFix.audio(configured, 0)
 
     assert_raise ArgumentError, ~r/conflicting input snapshots/, fn ->
       Build.command(Output.new([old_stream, new_stream], "out.mkv"))
@@ -103,21 +105,28 @@ defmodule FFix.OutputFirstTest do
   test "selectors capture complete immutable declarations and preserve FFmpeg suffixes" do
     input = Input.new("in.mkv")
 
-    selectors = [
-      :all,
-      {:video, :all},
-      {:audio, 2},
-      {:subtitle, 1},
-      {:data, 0},
-      {:attachment, 0},
-      {:index, 4},
-      {:raw, "s?"}
+    streams = [
+      Input.select(input, :all),
+      FFix.video(input, :all),
+      FFix.audio(input, 2),
+      FFix.subtitle(input, 1),
+      Input.select_media(input, :data, 0),
+      Input.select_media(input, :attachment, 0),
+      Input.select(input, 4),
+      Input.select(input, "s?")
     ]
 
-    streams = Enum.map(selectors, &Input.select(input, &1))
-    assert Enum.all?(streams, &(&1.plan.input_ref.declaration == input))
+    input_refs =
+      Enum.map(streams, fn stream ->
+        case stream do
+          %Selection{input_ref: input_ref} -> input_ref
+          %StreamRef{plan: %{input_ref: input_ref}} -> input_ref
+        end
+      end)
 
-    assert Enum.map(selectors, &InputRef.selector_string/1) == [
+    assert Enum.all?(input_refs, &(&1.declaration == input))
+
+    assert Enum.map(input_refs, &InputRef.selector_string(&1.selector)) == [
              "",
              "v",
              "a:2",
@@ -128,7 +137,7 @@ defmodule FFix.OutputFirstTest do
              "s?"
            ]
 
-    assert Enum.map(selectors, &InputRef.single?/1) == [
+    assert Enum.map(streams, &match?(%StreamRef{}, &1)) == [
              false,
              false,
              true,
@@ -168,7 +177,17 @@ defmodule FFix.OutputFirstTest do
   test "public input selection rejects legacy and invalid selectors" do
     input = Input.new("in.mp4")
 
-    for selector <- [:video, :input, {:video, -1}, {:index, -1}, {:raw, ""}, {:raw, "v\0"}] do
+    for selector <- [
+          :video,
+          :input,
+          -1,
+          "",
+          "v\0",
+          {:video, 0},
+          {:audio, :all},
+          {:index, 0},
+          {:raw, "v:0"}
+        ] do
       assert_raise ArgumentError, fn -> Input.select(input, selector) end
     end
 
@@ -183,7 +202,7 @@ defmodule FFix.OutputFirstTest do
       |> Decoder.decode("new", {:subtitle, 0}, threads: 3)
 
     assert input.decoders[{:subtitle, 0}] == Decoder.new("new", [{"threads", 3}])
-    output = input |> Input.select({:video, 0}) |> Encoder.encode("h264") |> Output.new("out.mkv")
+    output = input |> FFix.video(0) |> Encoder.encode("h264") |> Output.new("out.mkv")
     argv = output |> Build.command() |> Command.to_argv()
     assert "-c:s:0" in argv
     assert "new" in argv
@@ -199,12 +218,12 @@ defmodule FFix.OutputFirstTest do
     input = Input.new("in.mkv")
 
     sources = [
-      Input.select(input, {:audio, 0}),
-      {:captions, Input.select(input, {:subtitle, 0})},
-      {:sound, Input.select(input, {:audio, 1})},
-      {:data, Input.select(input, {:data, 0})},
-      {:cover, Input.select(input, {:attachment, 0})},
-      {:main, Input.select(input, {:video, 0})}
+      FFix.audio(input, 0),
+      {:captions, FFix.subtitle(input, 0)},
+      {:sound, FFix.audio(input, 1)},
+      {:data, Input.select_media(input, :data, 0)},
+      {:cover, Input.select_media(input, :attachment, 0)},
+      {:main, FFix.video(input, 0)}
     ]
 
     callback = fn streams ->
@@ -235,11 +254,14 @@ defmodule FFix.OutputFirstTest do
   test "callbacks reject plural, optional, and unknown-media absolute selections without evaluation" do
     input = Input.new("in.mkv")
 
-    for selector <- [:all, {:audio, :all}, {:raw, "a?"}, {:index, 0}] do
+    for source <- [
+          Input.select(input, :all),
+          FFix.audio(input, :all),
+          Input.select(input, "a?"),
+          Input.select(input, 0)
+        ] do
       output =
-        Output.new(Input.select(input, selector), "out.mkv",
-          metadata: fn _ -> flunk("must not run") end
-        )
+        Output.new(source, "out.mkv", metadata: fn _ -> flunk("must not run") end)
 
       assert_raise ArgumentError, ~r/output option callbacks require/, fn ->
         Build.command(output)
@@ -248,7 +270,7 @@ defmodule FFix.OutputFirstTest do
   end
 
   test "callback errors propagate and nil callback results are invalid" do
-    source = Input.new("in.mp4") |> Input.select({:video, 0})
+    source = Input.new("in.mp4") |> FFix.video(0)
 
     command =
       Build.command(
@@ -264,7 +286,7 @@ defmodule FFix.OutputFirstTest do
   end
 
   test "raw switches and booleans have distinct serialization" do
-    source = Input.new("in.mp4", enabled: true) |> Input.select({:video, 0})
+    source = Input.new("in.mp4", enabled: true) |> FFix.video(0)
     command = Build.command(Output.new(source, "out.mp4", enabled: false), global: [y: :flag])
 
     assert Command.to_argv(command) == [
@@ -291,7 +313,7 @@ defmodule FFix.OutputFirstTest do
   end
 
   test "filtered sources infer dependencies and must be consumed exactly once" do
-    source = Input.new("in.mp4") |> Input.select({:video, 0})
+    source = Input.new("in.mp4") |> FFix.video(0)
     filtered = Builder.filter(source, "null", [:video], [])
     command = Build.command(Output.new(filtered, "out.mp4"))
     assert command.graph != nil
@@ -308,8 +330,8 @@ defmodule FFix.OutputFirstTest do
   end
 
   test "terminal dependencies and graph settings survive command construction" do
-    source = Input.new("main.mp4") |> Input.select({:video, 0})
-    terminal_source = Input.new("sink.mp4") |> Input.select({:audio, 0})
+    source = Input.new("main.mp4") |> FFix.video(0)
+    terminal_source = Input.new("sink.mp4") |> FFix.audio(0)
     terminal = Builder.filter(terminal_source, "anullsink", [], [])
 
     command =
@@ -329,7 +351,7 @@ defmodule FFix.OutputFirstTest do
 
   test "bare canonical exports are reserved for low-level explicit graph commands" do
     input = Input.new("in.mp4")
-    source = Input.select(input, {:video, 0})
+    source = FFix.video(input, 0)
     graph = Builder.graph(outputs: [source])
     output = Output.new(hd(graph.exports), "out.mp4")
 
@@ -344,7 +366,7 @@ defmodule FFix.OutputFirstTest do
 
   test "low-level appenders accept existing declarations and old mapping shortcuts are gone" do
     input = Input.new("in.mp4")
-    output = Output.new(Input.select(input, {:video, 0}), "out.mp4")
+    output = Output.new(FFix.video(input, 0), "out.mp4")
     command = Command.new() |> Command.add_input(input) |> Command.add_output(output)
     assert command.inputs == [input]
     assert command.outputs == [output]
@@ -357,8 +379,8 @@ defmodule FFix.OutputFirstTest do
   end
 
   test "direct references retain context terminal dependencies and settings" do
-    direct = Input.new("main.mp4") |> Input.select({:video, 0})
-    sink_source = Input.new("sink.mp4") |> Input.select({:audio, 0})
+    direct = Input.new("main.mp4") |> FFix.video(0)
+    sink_source = Input.new("sink.mp4") |> FFix.audio(0)
     terminal = Builder.filter(sink_source, "anullsink", [], [])
     context = %{id: make_ref(), roots: [direct, terminal], settings: [sws_flags: "bicubic"]}
     contextual = %{direct | context: context}
@@ -375,7 +397,7 @@ defmodule FFix.OutputFirstTest do
   end
 
   test "mapped stream occurrences do not hide conflicting producer definitions" do
-    source = Input.new("in.mp4") |> Input.select({:video, 0})
+    source = Input.new("in.mp4") |> FFix.video(0)
     filtered = Builder.filter(source, "null", [:video], [])
     conflicting = %{filtered | plan: %{filtered.plan | name: "hflip"}}
 
@@ -385,7 +407,7 @@ defmodule FFix.OutputFirstTest do
   end
 
   test "encoder and muxer callbacks resolve once each per serialization" do
-    source = Input.new("in.mp4") |> Input.select({:video, 0})
+    source = Input.new("in.mp4") |> FFix.video(0)
 
     mapping =
       Encoder.encode(source, "h264",

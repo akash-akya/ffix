@@ -3,7 +3,7 @@ defmodule FFix.Command.Output do
   One ffmpeg output declaration.
 
   `mappings` is an ordered list of `FFix.Command.Mapping` values. Each mapping
-  selects a source and optionally configures encoding or stream copy. `muxer`
+  selects one stream or an unresolved set and configures encoding or copy. `muxer`
   configures the output container independently of those mappings.
 
   `options` retains raw output CLI options. Do not mix raw codec selections or
@@ -43,8 +43,8 @@ defmodule FFix.Command.Output do
   rendering. Named helpers defer their metadata value checks, not name checks.
 
   An output with callbacks requires every mapping, named or not, to select one
-  stream of known video/audio/subtitle/data/attachment media. Broad/raw selectors
-  and absolute input indexes cannot supply media-relative callback information.
+  required stream of known media. Selections (including optional ones) and
+  unknown-media absolute indexes cannot provide a complete callback index map.
   Use `FFix.Filter.filter/4` with explicit media for unknown filter outputs.
   No media-file probing occurs.
   Callback results cannot change mappings or return more callbacks. Input/global

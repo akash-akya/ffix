@@ -2,13 +2,15 @@ defmodule FFix.Graph.InputRef do
   @moduledoc false
 
   @media [:video, :audio, :subtitle, :data, :attachment]
+  @selector_media @media ++ [:video_only]
   @type input_id :: non_neg_integer() | String.t() | reference()
   @type media :: :video | :audio | :subtitle | :data | :attachment
   @type selector ::
           :input
           | :all
           | media()
-          | {media(), non_neg_integer() | :all}
+          | :video_only
+          | {media() | :video_only, non_neg_integer() | :all}
           | {:index, non_neg_integer()}
           | {:raw, String.t()}
 
@@ -55,11 +57,12 @@ defmodule FFix.Graph.InputRef do
   end
 
   @spec normalize_selector!(term()) :: selector()
-  def normalize_selector!(selector) when selector in [:input, :all] or selector in @media,
-    do: selector
+  def normalize_selector!(selector)
+      when selector in [:input, :all] or selector in @selector_media,
+      do: selector
 
   def normalize_selector!({media, index} = selector)
-      when media in @media and ((is_integer(index) and index >= 0) or index == :all),
+      when media in @selector_media and ((is_integer(index) and index >= 0) or index == :all),
       do: selector
 
   def normalize_selector!({:index, index} = selector) when is_integer(index) and index >= 0,
@@ -78,6 +81,8 @@ defmodule FFix.Graph.InputRef do
   @spec media(selector()) :: media() | :unknown
   def media(selector) do
     case selector do
+      :video_only -> :video
+      {:video_only, _index} -> :video
       media when media in @media -> media
       {media, _index} when media in @media -> media
       _selector -> :unknown
@@ -87,7 +92,7 @@ defmodule FFix.Graph.InputRef do
   @spec single?(selector()) :: boolean()
   def single?(selector) do
     case selector do
-      {media, index} when media in @media and is_integer(index) and index >= 0 -> true
+      {media, index} when media in @selector_media and is_integer(index) and index >= 0 -> true
       {:index, index} when is_integer(index) and index >= 0 -> true
       _selector -> false
     end
@@ -97,13 +102,16 @@ defmodule FFix.Graph.InputRef do
   def selector_string(selector) do
     case normalize_selector!(selector) do
       whole when whole in [:input, :all] -> ""
-      media when media in @media -> media_prefix(media)
-      {media, :all} when media in @media -> media_prefix(media)
-      {media, index} when media in @media -> "#{media_prefix(media)}:#{index}"
+      media when media in @selector_media -> selector_prefix(media)
+      {media, :all} when media in @selector_media -> selector_prefix(media)
+      {media, index} when media in @selector_media -> "#{selector_prefix(media)}:#{index}"
       {:index, index} -> Integer.to_string(index)
       {:raw, value} -> value
     end
   end
+
+  defp selector_prefix(:video_only), do: "V"
+  defp selector_prefix(media), do: media_prefix(media)
 
   @spec media_prefix(media()) :: String.t()
   def media_prefix(media) do
