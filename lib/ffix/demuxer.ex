@@ -33,7 +33,7 @@ defmodule FFix.Demuxer do
   @doc "Builds an unbound demuxer configuration without a metadata schema."
   @spec new(String.t() | nil, [Command.av_option()]) :: t()
   def new(name, options \\ []) do
-    Command.validate_component!(%__MODULE__{name: name, options: options})
+    Options.validate_component!(%__MODULE__{name: name, options: options})
   end
 
   @doc "Builds an input for a dynamic demuxer name; extra CLI controls go in input_options."

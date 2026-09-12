@@ -12,7 +12,8 @@ defmodule FFix.Command.Input do
   cannot be updated by reassigning a variable.
   """
 
-  alias FFix.Command
+  alias FFix.Decoder
+  alias FFix.Demuxer
   alias FFix.Graph.Builder
   alias FFix.Graph.InputRef
   alias FFix.Graph.StreamRef
@@ -39,7 +40,6 @@ defmodule FFix.Command.Input do
   @doc "Builds an input declaration without probing or evaluating callbacks."
   @spec new(source(), [option()]) :: t()
   def new(source, options \\ []) do
-    Command.validate_endpoint!(source, :input)
     {configuration, raw_options} = Options.split!(options, [:demuxer, :decoders])
 
     if List.keymember?(raw_options, :label, 0) do
@@ -54,7 +54,69 @@ defmodule FFix.Command.Input do
       decoders: Keyword.get(configuration, :decoders, %{})
     }
 
-    Command.validate_input!(input)
+    validate!(input)
+  end
+
+  @doc false
+  def validate!(%__MODULE__{} = input) do
+    Options.validate_endpoint!(input.source, :input)
+    Options.validate_cli!(input.options)
+
+    unless is_nil(input.id) or is_reference(input.id) do
+      raise ArgumentError, "input identity must be a reference or nil"
+    end
+
+    case input.demuxer do
+      nil ->
+        :ok
+
+      %Demuxer{} = demuxer ->
+        Options.validate_component!(demuxer)
+        Options.reject_conflicts!(input.options, :demuxer, [demuxer])
+
+      other ->
+        raise ArgumentError, "invalid demuxer configuration: #{inspect(other)}"
+    end
+
+    unless is_map(input.decoders) and not is_struct(input.decoders) do
+      raise ArgumentError, "input decoders must be a map of indexed selectors to Decoder values"
+    end
+
+    namespaces =
+      Enum.map(input.decoders, fn {selector, decoder} ->
+        validate_decoder!(selector, decoder)
+
+        case selector do
+          {:index, _index} -> :absolute
+          {_media, _index} -> :media_relative
+        end
+      end)
+
+    if length(Enum.uniq(namespaces)) > 1 do
+      raise ArgumentError, "cannot mix absolute and media-relative decoder selectors on one input"
+    end
+
+    if map_size(input.decoders) > 0 do
+      Options.reject_conflicts!(input.options, :decoding, Map.values(input.decoders))
+    end
+
+    input
+  end
+
+  def validate!(other), do: raise(ArgumentError, "invalid command input: #{inspect(other)}")
+
+  @doc false
+  def validate_decoder!(selector, decoder) do
+    unless InputRef.single?(selector) and
+             elem(selector, 0) in [:video, :audio, :subtitle, :data, :attachment, :index] do
+      raise ArgumentError,
+            "decoder selector must be {media, nonnegative_index} or {:index, nonnegative_index}, got: #{inspect(selector)}"
+    end
+
+    case decoder do
+      %Decoder{} -> Options.validate_component!(decoder)
+      other -> raise ArgumentError, "invalid decoder configuration: #{inspect(other)}"
+    end
   end
 
   @doc "Selects an absolute input index, all streams, or a raw selector; optional selections may match nothing."
@@ -81,13 +143,21 @@ defmodule FFix.Command.Input do
 
   @doc false
   def select_media(%__MODULE__{} = input, media, index, options \\ []) do
-    allowed = if media == :video, do: [:optional, :attached_pictures], else: [:optional]
+    allowed =
+      if media == :video do
+        [:optional, :attached_pictures]
+      else
+        [:optional]
+      end
+
     options = selection_options!(options, allowed)
 
     media =
-      if media == :video and not Keyword.get(options, :attached_pictures, true),
-        do: :video_only,
-        else: media
+      if media == :video and not Keyword.get(options, :attached_pictures, true) do
+        :video_only
+      else
+        media
+      end
 
     selection(input, {media, index}, options)
   end
@@ -96,17 +166,24 @@ defmodule FFix.Command.Input do
     selector = InputRef.normalize_selector!(selector)
     optional = Keyword.get(options, :optional, false)
 
-    if InputRef.single?(selector) and not optional,
-      do: Builder.input(input, selector),
-      else: Selection.new(input, selector, optional)
+    if InputRef.single?(selector) and not optional do
+      Builder.input(input, selector)
+    else
+      Selection.new(input, selector, optional)
+    end
   end
 
   defp selection_options!(options, allowed) do
     {controls, unknown} = Options.split!(options, allowed)
-    if unknown != [], do: raise(ArgumentError, "unknown selection options: #{inspect(unknown)}")
+
+    if unknown != [] do
+      raise ArgumentError, "unknown selection options: #{inspect(unknown)}"
+    end
 
     Enum.each(controls, fn {name, value} ->
-      unless is_boolean(value), do: raise(ArgumentError, "#{name} must be a boolean")
+      unless is_boolean(value) do
+        raise ArgumentError, "#{name} must be a boolean"
+      end
     end)
 
     controls

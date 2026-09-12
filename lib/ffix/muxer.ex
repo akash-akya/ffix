@@ -39,7 +39,7 @@ defmodule FFix.Muxer do
   @doc "Builds an unbound muxer configuration without a metadata schema."
   @spec new(String.t() | nil, [Command.output_av_option()]) :: t()
   def new(name, options \\ []) do
-    Command.validate_component!(%__MODULE__{name: name, options: options})
+    Options.validate_component!(%__MODULE__{name: name, options: options})
   end
 
   @doc "Builds an output for a dynamic muxer name; extra CLI controls go in output_options."

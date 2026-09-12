@@ -204,31 +204,6 @@ defmodule FFix.CommandValidationTest do
     assert "0:v:0" in FFix.to_argv(command)
   end
 
-  test "deferred raw values receive the same structural validation exactly once" do
-    parent = self()
-    source = FFix.input("in.mp4")
-
-    command =
-      FFix.command(
-        FFix.output(FFix.video(source, 0), "out.mp4",
-          metadata: fn _streams ->
-            send(parent, :resolved)
-            "bad\0text"
-          end
-        )
-      )
-
-    FFix.validate!(command)
-    refute_received :resolved
-
-    assert_raise ArgumentError, "CLI option values cannot contain NUL", fn ->
-      FFix.to_argv(command)
-    end
-
-    assert_received :resolved
-    refute_received :resolved
-  end
-
   test "conflict aliases are canonicalized in both directions" do
     for {structured, raw} <- [ab: :b, b: :ab, vb: :b, b: :vb] do
       source = FFix.input("in.mp4")

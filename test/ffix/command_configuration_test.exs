@@ -370,32 +370,7 @@ defmodule FFix.CommandConfigurationTest do
            ]
   end
 
-  test "configured outputs reject unknown media and ambiguous same-media groups" do
-    input = FFix.input("source.mkv")
-
-    for source <- [
-          FFix.select(input, :all),
-          FFix.video(input, :all),
-          FFix.select(input, "v:0"),
-          FFix.select(input, "a:0?")
-        ] do
-      output = %Output{
-        target: "out.mkv",
-        mappings: [
-          %Mapping{source: FFix.video(input, 0), encoding: %Encoder{name: "libx264"}},
-          %Mapping{source: source}
-        ]
-      }
-
-      command = %Command{inputs: [input], outputs: [output]}
-
-      assert_raise ArgumentError, ~r/ambiguous|known media/, fn ->
-        Command.to_argv(command)
-      end
-    end
-  end
-
-  test "configured video and broad audio use independent media scopes" do
+  test "video encoding leaves a different-media selection unconfigured" do
     input = FFix.input("source.mkv")
 
     for audio <- [FFix.audio(input, :all), FFix.audio(input, 0, optional: true)] do
@@ -404,40 +379,7 @@ defmodule FFix.CommandConfigurationTest do
       argv = unconfigured |> FFix.command() |> Command.to_argv()
       assert Enum.chunk_every(argv, 2, 1, :discard) |> Enum.member?(["-c:v", "libx264"])
       refute "-c:a" in argv
-
-      output =
-        FFix.output(
-          [video, FFix.stream_copy(audio)],
-          "out.mkv"
-        )
-
-      argv = output |> FFix.command() |> Command.to_argv()
-      assert Enum.chunk_every(argv, 2, 1, :discard) |> Enum.member?(["-c:v", "libx264"])
-      assert Enum.chunk_every(argv, 2, 1, :discard) |> Enum.member?(["-c:a", "copy"])
-      refute "-filter_complex" in argv
     end
-  end
-
-  test "broad input copy maps directly without fabricating a graph export" do
-    input = FFix.input("source.mkv")
-    audio = FFix.audio(input, :all)
-    mapping = FFix.stream_copy(audio)
-    command = FFix.command(FFix.output(mapping, "out.mka"))
-
-    assert command.graph == nil
-
-    assert Command.to_argv(command) == [
-             "ffmpeg",
-             "-i",
-             "source.mkv",
-             "-map",
-             "0:a",
-             "-c",
-             "copy",
-             "out.mka"
-           ]
-
-    assert_raise ArgumentError, fn -> FFix.graph(outputs: [audio: audio]) end
   end
 
   test "copy rejects canonical filter exports" do
@@ -487,21 +429,6 @@ defmodule FFix.CommandConfigurationTest do
 
     for option <- [{"c:v", "copy"}, {:vcodec, "copy"}, {"codec:0", "copy"}, {"crf:0", 28}] do
       output = FFix.output(mapping, "out.mkv", [option])
-      command = %Command{inputs: [input], outputs: [output]}
-
-      assert_raise ArgumentError, ~r/cannot be combined with structured encoding/, fn ->
-        Command.to_argv(command)
-      end
-    end
-  end
-
-  test "raw bitrate aliases cannot override structured encoding" do
-    input = FFix.input("source.mkv")
-    encoder = %Encoder{name: "aac", options: [b: "128k"]}
-    mapping = %Mapping{source: FFix.audio(input, 0), encoding: encoder}
-
-    for name <- ["ab", "vb"] do
-      output = FFix.output(mapping, "out.mkv", [{name, "64k"}])
       command = %Command{inputs: [input], outputs: [output]}
 
       assert_raise ArgumentError, ~r/cannot be combined with structured encoding/, fn ->

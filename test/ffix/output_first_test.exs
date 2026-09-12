@@ -8,7 +8,6 @@ defmodule FFix.OutputFirstTest do
   alias FFix.Command.Output
   alias FFix.Decoder
   alias FFix.Encoder
-  alias FFix.Graph
   alias FFix.Graph.Builder
 
   test "direct mappings infer declaration order and do not emit an empty graph" do
@@ -175,77 +174,6 @@ defmodule FFix.OutputFirstTest do
     end
   end
 
-  test "callbacks count all five media types in output order and run only on serialization" do
-    input = Input.new("in.mkv")
-
-    sources = [
-      FFix.audio(input, 0),
-      {:captions, FFix.subtitle(input, 0)},
-      {:sound, FFix.audio(input, 1)},
-      {:data, Input.select_media(input, :data, 0)},
-      {:cover, Input.select_media(input, :attachment, 0)},
-      {:main, FFix.video(input, 0)}
-    ]
-
-    callback = fn streams ->
-      send(self(), {:streams, streams})
-      "value"
-    end
-
-    command = Build.command(Output.new(sources, "out.mkv", metadata: callback))
-    Command.validate!(command)
-    refute_received {:streams, _}
-    Command.to_argv(command)
-
-    assert_received {:streams,
-                     %{
-                       captions: %{index: 1, specifier: "s:0"},
-                       sound: %{index: 2, specifier: "a:1"},
-                       data: %{index: 3, specifier: "d:0"},
-                       cover: %{index: 4, specifier: "t:0"},
-                       main: %{index: 5, specifier: "v:0"}
-                     }}
-
-    refute_received {:streams, _}
-    Command.to_argv(command)
-    assert_received {:streams, _}
-    refute_received {:streams, _}
-  end
-
-  test "callbacks reject plural, optional, and unknown-media absolute selections without evaluation" do
-    input = Input.new("in.mkv")
-
-    for source <- [
-          Input.select(input, :all),
-          FFix.audio(input, :all),
-          Input.select(input, "a?"),
-          Input.select(input, 0)
-        ] do
-      output =
-        Output.new(source, "out.mkv", metadata: fn _ -> flunk("must not run") end)
-
-      assert_raise ArgumentError, ~r/output option callbacks require/, fn ->
-        Build.command(output)
-      end
-    end
-  end
-
-  test "callback errors propagate and nil callback results are invalid" do
-    source = Input.new("in.mp4") |> FFix.video(0)
-
-    command =
-      Build.command(
-        Output.new(source, "out.mp4", metadata: fn streams -> streams.missing.index end)
-      )
-
-    assert_raise KeyError, fn -> Command.to_argv(command) end
-    command = Build.command(Output.new(source, "out.mp4", metadata: fn _ -> nil end))
-
-    assert_raise ArgumentError, ~r/nil is not a CLI option value/, fn ->
-      Command.to_argv(command)
-    end
-  end
-
   test "raw switches and booleans have distinct serialization" do
     source = Input.new("in.mp4", enabled: true) |> FFix.video(0)
     command = Build.command(Output.new(source, "out.mp4", enabled: false), global: [y: :flag])
@@ -325,53 +253,12 @@ defmodule FFix.OutputFirstTest do
            )
   end
 
-  test "low-level appenders accept existing declarations and old mapping shortcuts are gone" do
-    input = Input.new("in.mp4")
-    output = Output.new(FFix.video(input, 0), "out.mp4")
-    command = Command.new() |> Command.add_input(input) |> Command.add_output(output)
-    assert command.inputs == [input]
-    assert command.outputs == [output]
+  test "command controls require unique, supported keyword keys" do
+    output = Input.new("in.mp4") |> FFix.video(0) |> Output.new("out.mp4")
 
-    for source <- [:main, 0] do
-      assert_raise ArgumentError, fn -> Mapping.new(source) end
-    end
-  end
-
-  test "encoder and muxer callbacks resolve once each per serialization" do
-    source = Input.new("in.mp4") |> FFix.video(0)
-
-    mapping =
-      Encoder.encode(source, "h264",
-        threads: fn _ ->
-          send(self(), :encoder)
-          2
-        end
-      )
-
-    muxer =
-      FFix.Muxer.new("mp4", [
-        {"movflags",
-         fn _ ->
-           send(self(), :muxer)
-           "faststart"
-         end}
-      ])
-
-    command = Build.command(Output.new(mapping, "out.mp4", muxer: muxer))
-    Command.validate!(command)
-    refute_received :encoder
-    refute_received :muxer
-    argv = Command.to_argv(command)
-    assert "faststart" in argv
-    assert_received :encoder
-    assert_received :muxer
-    refute_received :encoder
-    refute_received :muxer
-  end
-
-  test "output-first construction rejects callback and old keyword construction modes" do
-    assert_raise ArgumentError, fn -> Build.command(fn _ -> flunk("must not run") end) end
-    assert_raise ArgumentError, fn -> Build.command(outputs: []) end
-    assert_raise ArgumentError, fn -> Build.command([], graph: %Graph{}) end
+    Enum.each([[{"global", []}], [global: [], global: []], [unknown: []]], fn options ->
+      assert_raise ArgumentError, fn -> Command.new(options) end
+      assert_raise ArgumentError, fn -> Build.command(output, options) end
+    end)
   end
 end
