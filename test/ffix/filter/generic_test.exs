@@ -2,18 +2,7 @@ defmodule FFix.Filter.GenericTest do
   use ExUnit.Case, async: true
 
   alias FFix.{Encoder, Filter, Graph, Muxer}
-  alias FFix.Graph.{StreamRef, Terminal}
-
-  test "generic operations take inputs first with only options optional" do
-    video = Graph.input(0, :video)
-    direct = Filter.filter(video, "scale", [:video], w: 320, h: -2)
-    delegated = FFix.filter([video], :scale, [:video], w: 320, h: -2)
-    piped = video |> Filter.filter("scale", [:video], w: 320, h: -2)
-    assert render(direct) == "[0:v]scale=w=320:h=-2[out0];"
-    assert render(delegated) == render(direct)
-    assert render(piped) == render(direct)
-    assert %StreamRef{} = Filter.filter(video, "null", [:video])
-  end
+  alias FFix.Graph.Terminal
 
   test "unknown names and options serialize without creating atoms" do
     name = "vendor_filter_#{System.unique_integer([:positive])}"
@@ -78,17 +67,6 @@ defmodule FFix.Filter.GenericTest do
       )
 
     assert "title=mixed" in FFix.to_argv(command)
-  end
-
-  test "unnamed unknown media still rejects output-index callbacks" do
-    source = FFix.input("in.mp4")
-    result = Filter.filter(FFix.video(source, 0), "vendor", [:unknown])
-
-    assert_raise ArgumentError, ~r/require known.*media/, fn ->
-      FFix.command(
-        FFix.output(result, "out.mp4", metadata: fn _streams -> flunk("must not run") end)
-      )
-    end
   end
 
   test "generic values preserve expressions, positional arguments, and boundary escaping" do

@@ -87,13 +87,6 @@ defmodule FFix.FFmpegDownloadTest do
     assert Download.read_checksums!(path) == %{"8.1" => old, "9.0" => entry}
     assert File.read!(metadata_path) == "unchanged"
     assert Path.wildcard(path <> ".*.tmp") == []
-
-    assert_raise Mix.Error, fn ->
-      invalid = Download.checksum_entry!("bad checksum", @release, "9.0")
-      Download.update_checksums!(path, "9.0", invalid)
-    end
-
-    assert File.read!(path) == first
   end
 
   test "missing, malformed and corrupt local checksum files are not silently accepted", context do

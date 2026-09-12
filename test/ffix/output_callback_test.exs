@@ -18,7 +18,7 @@ defmodule FFix.OutputCallbackTest do
   alias FFix.Command.{Input, Mapping}
   alias FFix.{Decoder, Demuxer, Encoder, Muxer}
 
-  test "the issue's HLS references follow final mapping order, independently of input order" do
+  test "HLS rendition references follow final mapping order independently of input order" do
     built = hls_command()
 
     assert values(FFix.to_argv(built), "-var_stream_map") == [
@@ -124,17 +124,6 @@ defmodule FFix.OutputCallbackTest do
       ])
 
     assert values(FFix.to_argv(built), "-metadata") == ["title=first", "title=second"]
-  end
-
-  test "named bindings also work without callbacks and do not mutate reusable mappings" do
-    source = input("in.mp4")
-    mapping = Encoder.libx264(video(source, 0))
-    output = FFix.output([first: mapping, second: mapping], "out.mp4")
-    assert mapping.name == nil
-    assert Enum.map(output.mappings, & &1.name) == [:first, :second]
-    built = Command.new(inputs: [source], outputs: [output])
-    assert values(FFix.to_argv(built), "-c:0") == ["libx264"]
-    assert values(FFix.to_argv(built), "-c:1") == ["libx264"]
   end
 
   test "encoder, muxer, and raw output options all support callbacks with normal value rendering" do
@@ -394,12 +383,8 @@ defmodule FFix.OutputCallbackTest do
       "title=mixed"
     end
 
-    build_streams = fn source ->
-      concat([video(source, 0), audio(source, 0)], n: 1, v: 1, a: 1)
-    end
-
     source = FFix.input("in.mp4")
-    [picture, sound] = build_streams.(source)
+    [picture, sound] = concat([video(source, 0), audio(source, 0)], n: 1, v: 1, a: 1)
     built = command(output([sound: sound, picture: picture], "out.mp4", metadata: check))
     assert values(FFix.to_argv(built), "-metadata") == ["title=mixed"]
     graph = FFix.graph(outputs: [picture: picture, sound: sound])
@@ -425,14 +410,16 @@ defmodule FFix.OutputCallbackTest do
     assert values(FFix.to_argv(built), "-metadata") == ["v:0"]
   end
 
-  test "unknown output media is rejected rather than guessed" do
+  test "every mapping must have known media, including unnamed mappings" do
     source = FFix.input("in.mp4")
     unknown_filter = source |> video(0) |> FFix.Filter.filter("null", [:unknown])
 
     Enum.each([FFix.select(source, 0), unknown_filter], fn unknown ->
       assert_raise ArgumentError, ~r/require known.*media/, fn ->
         command(
-          output([main: unknown], "out.mp4", metadata: fn _streams -> flunk("must not run") end)
+          output([{:main, video(source, 0)}, unknown], "out.mp4",
+            metadata: fn _streams -> flunk("must not run") end
+          )
         )
       end
     end)

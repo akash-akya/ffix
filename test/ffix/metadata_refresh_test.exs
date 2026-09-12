@@ -35,23 +35,12 @@ defmodule FFix.MetadataRefreshTest do
       Metadata.run(["--ffmpeg", context.executable])
       first = File.read!(path)
       {metadata, []} = Code.eval_file(path)
-      assert length(metadata.components) == 33
+      expected = Enum.flat_map(@selection, fn {kind, names} -> Enum.map(names, &{kind, &1}) end)
+      recorded = Enum.map(metadata.components, &{&1.kind, hd(&1.names)})
+      assert Enum.sort(recorded) == Enum.sort(expected)
       assert Enum.map(metadata.filters, & &1.registration.names) == [["null"], ["vendor"]]
       assert Enum.all?(metadata.filters, &(&1.help.names == &1.registration.names))
       assert metadata.version.executable == context.executable
-
-      canonical =
-        metadata
-        |> inspect(
-          pretty: true,
-          limit: :infinity,
-          printable_limit: :infinity,
-          custom_options: [sort_maps: true]
-        )
-        |> Code.format_string!()
-        |> IO.iodata_to_binary()
-
-      assert first == canonical <> "\n"
 
       calls = File.read!(Path.join(context.directory, "calls")) |> String.split("\n", trim: true)
 

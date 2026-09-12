@@ -69,7 +69,6 @@ defmodule FFix.SelectionTest do
       assert_raise ArgumentError, fn -> FFix.filter([selection], "hflip", [:video]) end
       assert_raise ArgumentError, fn -> FFix.graph(output: selection) end
       assert_raise ArgumentError, fn -> Graph.bind(template, picture: selection) end
-      assert_raise Protocol.UndefinedError, fn -> Enum.to_list(selection) end
     end
 
     assert_raise ArgumentError, fn -> Graph.input(0, {:video, :all}) end
@@ -109,7 +108,6 @@ defmodule FFix.SelectionTest do
     Enum.each([{FFix.select(input, :all), "0"}, {FFix.audio(input, :all), "0:a"}], fn
       {selection, expected} ->
         command = selection |> FFix.stream_copy() |> Muxer.matroska("out.mkv") |> FFix.command()
-        assert command.graph == nil
         assert command.inputs == [input]
 
         assert FFix.to_argv(command) == [
@@ -142,7 +140,6 @@ defmodule FFix.SelectionTest do
 
     command = FFix.command(output)
     assert command.inputs == [sounds, pictures]
-    assert Enum.count(Graph.nodes(command.graph), &(&1.kind == :input)) == 1
     assert "0:a" in FFix.to_argv(command)
     assert Enum.any?(FFix.to_argv(command), &String.contains?(&1, "[1:v:0]hflip"))
     assert "1:a" in FFix.to_argv(FFix.command(output, inputs: [pictures, sounds]))

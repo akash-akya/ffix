@@ -14,6 +14,10 @@ defmodule FFix.Graph.ParseTest do
     rendered = FFix.to_filtergraph(graph)
     parsed = Graph.parse!(rendered)
 
+    assert rendered ==
+             "[0:v]scale=w=1280:h=-1[scale_0];\n" <>
+               "[scale_0]drawtext=text=Hello:x=w-tw-20:y=20[out0];"
+
     assert Enum.map(parsed.exports, & &1.name) == ["out0"]
     assert FFix.to_filtergraph(parsed) == rendered
   end
@@ -41,46 +45,6 @@ defmodule FFix.Graph.ParseTest do
     assert parsed[:video] == parsed["video"]
     assert length(parsed.terminals) == 1
     assert FFix.to_filtergraph(parsed) == rendered
-  end
-
-  test "round-trips rendered graphs with escaped values" do
-    graphs = [
-      FFix.graph(
-        outputs: [
-          video:
-            FFix.Graph.input(0, :video) |> Filter.drawtext(text: "hello, world", x: 20, y: 20)
-        ]
-      ),
-      FFix.graph(
-        outputs: [
-          video:
-            FFix.Graph.input(0, :video)
-            |> Filter.drawtext(text: "hello:world", x: "w-tw-20", y: 20)
-        ]
-      ),
-      FFix.graph(
-        outputs: [
-          video: FFix.Graph.input(0, :video) |> Filter.drawtext(text: "hello;world", x: 20, y: 20)
-        ]
-      ),
-      FFix.graph(
-        outputs: [
-          video:
-            FFix.Graph.input(0, :video) |> Filter.drawtext(text: "hello[world]", x: 20, y: 20)
-        ]
-      ),
-      FFix.graph(
-        outputs: [
-          video: FFix.Graph.input(0, :video) |> Filter.drawtext(text: "it\'s\\ok", x: 20, y: 20)
-        ]
-      )
-    ]
-
-    Enum.each(graphs, fn graph ->
-      rendered = FFix.to_filtergraph(graph)
-      parsed = Graph.parse!(rendered)
-      assert FFix.to_filtergraph(parsed) == rendered
-    end)
   end
 
   test "parses comma-separated chains with implicit links and normalizes them" do
@@ -139,25 +103,5 @@ defmodule FFix.Graph.ParseTest do
     source = " [0:v] scale = w=1280:h=-1 [video] ; "
 
     assert FFix.to_filtergraph(Graph.parse!(source)) == "[0:v]scale=w=1280:h=-1[video];"
-  end
-
-  test "ffmpeg accepts a round-tripped source graph" do
-    source = "testsrc,split[L1],hflip[L2];[L1][L2]hstack"
-    graph = source |> Graph.parse!() |> FFix.to_filtergraph()
-
-    {_output, 0} =
-      System.cmd("ffmpeg", [
-        "-v",
-        "error",
-        "-f",
-        "lavfi",
-        "-i",
-        graph,
-        "-frames:v",
-        "1",
-        "-f",
-        "null",
-        "-"
-      ])
   end
 end

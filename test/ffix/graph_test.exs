@@ -1,7 +1,24 @@
 defmodule FFix.GraphTest do
   use ExUnit.Case, async: true
 
-  alias FFix.Filter
+  alias FFix.{Filter, Graph}
+
+  test "named and positional access preserve export order and pad labels" do
+    [master, preview] = Filter.split(Graph.input(0, :video))
+    preview = preview |> Filter.fps(fps: 1) |> Filter.scale(w: 320, h: -1)
+    graph = FFix.graph(outputs: [master: master, preview: preview])
+
+    assert graph[:master] == Graph.export!(graph, :master)
+    assert graph[0] == graph[:master]
+    assert graph[1] == graph[:preview]
+    assert graph[:missing] == nil
+    assert graph[2] == nil
+    assert Enum.map(graph.exports, & &1.name) == [:master, :preview]
+
+    assert FFix.to_filtergraph(graph) ==
+             "[0:v]split[master][split_1];\n" <>
+               "[split_1]fps=fps=1[fps_0];\n[fps_0]scale=w=320:h=-1[preview];"
+  end
 
   test "builds a sink-only graph" do
     sink =
