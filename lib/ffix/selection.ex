@@ -1,9 +1,15 @@
 defmodule FFix.Selection do
   @moduledoc """
-  An unresolved input selection, not a filter pad or an enumerable list.
+  A query selecting input streams for an output.
 
-  Build selections with `FFix.select/3` or a media helper with `:all` or
-  `optional: true`. They retain the input declaration without probing it.
+  Media helpers return selections for `:all` or `optional: true`.
+  `FFix.select/3` also returns them for string stream specifiers. Pass a
+  selection to `FFix.output/3`, `FFix.Encoder`, or `FFix.stream_copy/1`.
+
+  FFmpeg determines the matching tracks when the command runs. For a filter
+  input, select a required index such as `FFix.audio(source, 0)` instead.
+  See `FFix.Command.Input` for examples and `FFix.Command.Mapping` for
+  applying encoding settings to multiple selected tracks.
   """
 
   alias FFix.Command.Input
@@ -33,7 +39,7 @@ defmodule FFix.Selection do
     selection
   end
 
-  @doc "Returns the known media type, or :unknown for whole-input and raw selections."
+  @doc "Returns the selected media type, or `:unknown` for whole-input and string queries."
   @spec media(t()) :: FFix.Graph.StreamRef.media()
   def media(%__MODULE__{input_ref: input_ref}), do: InputRef.media(input_ref.selector)
 end

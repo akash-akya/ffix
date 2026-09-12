@@ -1,17 +1,26 @@
 defmodule FFix.Discovery.Parser do
   @moduledoc """
-  Pure parsers for FFmpeg metadata output. These functions never start FFmpeg.
+  Parse saved FFmpeg capability listings and help text.
 
-  Results are `{:ok, metadata}` or `{:error, FFix.Discovery.Error.t()}`.
-  Names and raw flags stay strings. Registries preserve alias groups; help
-  preserves ordered option sections, properties, and notes. Property labels
-  remain strings so unfamiliar fields are retained without creating atoms.
+  Use `FFix.Discovery` to query an executable. Use these parsers when you
+  already have its output, for example from a saved deployment report:
 
-  Options include `name`, `type`, `flags`, `help`, `declared_default`, `ranges`,
-  and ordered `constants`. Defaults, bounds, and constant values retain their
-  printed spelling, including quotes. Unknown types are `{:unknown, name}`;
-  array types are `{:array, type}`. These declarations are not full validation
-  rules or effective runtime defaults.
+      text = File.read!("encoder-help.txt")
+      {:ok, details} = FFix.Discovery.Parser.help(:encoder, text)
+
+  Functions return `{:ok, metadata}` or `{:error, error}`. Catalog entries keep
+  alias groups in `names`. Component help keeps ordered option sections,
+  properties, and notes. Names, flags, and property labels remain strings.
+
+  ## Option records
+
+  Options contain `name`, `type`, `flags`, `help`, `declared_default`, `ranges`,
+  and ordered `constants`. Defaults, bounds, and constant values keep their
+  printed spelling, including quotes. Unknown types use `{:unknown, name}`;
+  array types use `{:array, type}`.
+
+  These fields describe FFmpeg's help. They are useful for reference displays;
+  actual accepted values can depend on other options and runtime conditions.
   """
 
   import NimbleParsec
@@ -78,7 +87,7 @@ defmodule FFix.Discovery.Parser do
     error in Error -> {:error, error}
   end
 
-  @doc "Parses version/build provenance, retaining the complete original text."
+  @doc "Parses `ffmpeg -version` output into version, configuration, and library fields, retaining the original text."
   @spec version(String.t()) :: result(map())
   def version(text) do
     {:ok, version_info(Lines.read(text), text)}

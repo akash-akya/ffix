@@ -3,11 +3,20 @@ defmodule Mix.Tasks.Ffix.Ffmpeg.Checksum do
 
   @shortdoc "Record checksums for a dated BtbN FFmpeg build"
   @moduledoc """
-  Records static GPL/LGPL archive checksums without downloading the binaries.
+  Record checksums for a dated BtbN release before downloading a different build.
 
-      mix ffix.ffmpeg.checksum --release autobuild-2026-09-07-15-39 [--branch 9.0]
+      mix ffix.ffmpeg.checksum --release autobuild-2026-09-07-15-39 --branch 9.0
 
-  Updates `priv/ffmpeg/checksums.exs`, preserving other branches.
+  Choose a dated tag from the [BtbN releases](https://github.com/BtbN/FFmpeg-Builds/releases).
+  `--release` is required; `--branch` defaults to `9.0`.
+
+  This updates `priv/ffmpeg/checksums.exs` with GPL and LGPL archive checksums for
+  supported platforms, preserving other branches. It downloads the checksum
+  listing only. Fetch the binaries afterward with `Mix.Tasks.Ffix.Ffmpeg.Fetch`.
+
+  Review and commit the manifest change when updating a project's pin. Checksums
+  verify downloaded bytes against the publisher's listing; they are not an
+  independent signature of the build.
   """
 
   alias Mix.FFix.FFmpegDownload, as: Download

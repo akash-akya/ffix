@@ -42,11 +42,12 @@ defmodule FFix.Filter.HelpersTest do
       assert List.keymember?(specs, {function_name, full_arity}, 0)
 
       assert {{:function, ^function_name, ^full_arity}, _annotation, _signature, %{"en" => doc},
-              %{defaults: 1}} =
+              %{defaults: 1, group: group}} =
                Enum.find(docs, &(elem(&1, 0) == {:function, function_name, full_arity}))
 
-      assert doc =~ "#{name}: #{registration.description}"
-      assert doc =~ "Metadata baseline: FFmpeg #{metadata.version.version}"
+      assert doc =~ registration.description
+      assert doc =~ "See `FFix.Filter`"
+      assert group in ["Video", "Audio", "Sources and sinks", "Other filters"]
     end
 
     normalized = Schema.normalize!(metadata.filters)
@@ -167,6 +168,28 @@ defmodule FFix.Filter.HelpersTest do
     assert Macro.to_string(Helpers.build_options_typespec(%{})) == "keyword()"
   end
 
+  test "option and constant descriptions only add separators when present" do
+    Enum.each(["", " \t\n", nil], fn blank ->
+      options = %{
+        mode: %{
+          type: :int,
+          desc: blank,
+          sub: [
+            %{enum: "dc_luma", num: "0", desc: blank},
+            %{enum: "all", num: "", desc: "Run every test"}
+          ]
+        },
+        rate: %{type: :int, desc: "Set frame rate"}
+      }
+
+      assert Helpers.build_options_doc(options) ==
+               "- `mode` (int)\n" <>
+                 "    - `dc_luma` (0)\n" <>
+                 "    - `all` — Run every test\n" <>
+                 "- `rate` (int): Set frame rate"
+    end)
+  end
+
   test "literal metadata generates ordinary functions without source rewriting" do
     literal = ~S(Quotes """, interpolation #{not_code}, and a literal \n.)
     metadata = fixture_metadata(literal)
@@ -177,8 +200,8 @@ defmodule FFix.Filter.HelpersTest do
     docs = literal_docs(quoted)
     assert [doc] = docs
     assert doc =~ literal
-    assert doc =~ "`custom` (Fixture owner, :string): #{literal}"
-    assert doc =~ "Metadata baseline: FFmpeg fixture"
+    assert doc =~ "`custom` (string): #{literal}"
+    assert doc =~ "See `FFix.Filter`"
 
     {:module, module, _bytecode, _result} =
       Module.create(__MODULE__.LiteralFilter, quoted, Macro.Env.location(__ENV__))

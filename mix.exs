@@ -36,7 +36,7 @@ defmodule FFix.MixProject do
   end
 
   defp description do
-    "Elixir data model and builder for ffmpeg filtergraphs and commands"
+    "Build and run FFmpeg commands for encoding, filtering, and packaging media in Elixir"
   end
 
   defp package do
@@ -53,7 +53,7 @@ defmodule FFix.MixProject do
 
   defp docs do
     [
-      main: "readme",
+      main: "FFix",
       source_ref: "v#{@version}",
       extras: [
         "README.md",
@@ -61,31 +61,24 @@ defmodule FFix.MixProject do
         "LICENSE"
       ],
       groups_for_modules: [
-        "Main API": [
-          FFix
+        "Building commands": [
+          FFix,
+          FFix.Command.Input,
+          FFix.Command.Output,
+          FFix.Encoder,
+          FFix.Muxer,
+          FFix.Demuxer,
+          FFix.Decoder,
+          FFix.Command.Mapping,
+          FFix.Selection,
+          FFix.Command
         ],
-        "Filters and Graphs": [
+        "Filters and graphs": [
           FFix.Filter,
           FFix.Graph,
-          FFix.Graph.Export,
-          FFix.Stream,
-          FFix.Terminal,
-          FFix.Expr
-        ],
-        Commands: [
-          FFix.Command,
-          FFix.Command.Input,
-          FFix.Command.Mapping,
-          FFix.Command.Output,
-          FFix.Decoder,
-          FFix.Demuxer,
-          FFix.Encoder,
-          FFix.Muxer
-        ],
-        Discovery: [
-          FFix.Discovery,
-          FFix.Discovery.Parser,
-          FFix.Discovery.Error
+          FFix.Graph.StreamRef,
+          FFix.Graph.Terminal,
+          FFix.Graph.Export
         ],
         Execution: [
           FFix.Runner,
@@ -93,6 +86,11 @@ defmodule FFix.MixProject do
           FFix.Runner.Progress,
           FFix.Runner.Log,
           FFix.Runner.Error
+        ],
+        Discovery: [
+          FFix.Discovery,
+          FFix.Discovery.Parser,
+          FFix.Discovery.Error
         ]
       ],
       nest_modules_by_prefix: [

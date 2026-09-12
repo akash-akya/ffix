@@ -1,64 +1,70 @@
 defmodule FFix.Runner do
   @moduledoc """
-  Thin execution layer for `%FFix.Command{}` values or raw argv lists.
+  Execute commands, collect results, and observe progress.
 
-  The core library models commands as data. `FFix.Runner` is the boundary that
-  starts an OS process and turns stdout, stderr, logs, progress, and exit status
-  into Elixir data.
+  The top-level `FFix.run/2`, `FFix.run!/2`, and `FFix.stream/2` functions use
+  this runner. Pass a command built with `FFix.command/2` and choose how to
+  handle its output.
 
-  ## Collected Execution
+  ## Run and handle errors
 
-      {:ok, result} =
-        FFix.run(command,
-          stdout: :discard,
-          stderr: :collect
-        )
+      case FFix.run(command) do
+        {:ok, result} -> IO.puts("Finished in \#{result.duration_ms} ms")
+        {:error, error} -> IO.puts(:stderr, error.message)
+      end
 
-      result.exit_status
-      result.stderr
+  Use `run!/2` in scripts when a failed command should raise. For diagnostics,
+  `FFix.Runner.Error` carries the execution result and captured stderr.
+  `FFix.Runner.Result` describes the available timings, logs, and output fields.
 
-  `run/2` returns `{:ok, result}` for exit status `0` and `{:error, error}` for
-  non-zero exits, spawn failures, or I/O failures. `run!/2` returns the result or raises
-  `FFix.Runner.Error`.
+  ## Follow progress
 
-  ## Streaming Events
-
-      FFix.stream(command, progress: true, stderr: :collect)
+      FFix.stream(command, progress: true)
       |> Enum.each(fn
+        {:progress, progress} -> IO.inspect({progress.out_time, progress.speed})
         {:log, log} -> IO.puts("[\#{log.level}] \#{log.message}")
-        {:progress, progress} -> IO.inspect(progress.status)
         {:exit, result} -> IO.inspect(result.exit_status)
         _event -> :ok
       end)
 
-  `stream/2` is lazy and emits:
+  Execution starts when the stream is enumerated. Use `stream!/2` to raise on a
+  failed process exit; plain `stream/2` reports the exit in its result event.
+  Halting enumeration cancels the process. Enumerating again starts a new run.
 
-    * `{:start, info}`
-    * `{:stdout, chunk}`
-    * `{:stderr, chunk}`
-    * `{:log, %FFix.Runner.Log{}}`
-    * `{:progress, %FFix.Runner.Progress{}}`
-    * `{:exit, %FFix.Runner.Result{}}`
-    * `{:error, %FFix.Runner.Error{}}` for spawn or I/O failures
+  ## Pipe an image
 
-  Each enumeration serializes and executes afresh. Start is emitted after spawn,
-  before reading output. Early halt cancels and reaps the child without reporting
-  its cancellation status. Application callbacks and consumers retain their
-  original exceptions. There is no execution deadline.
+  Supply bytes with `stdin:` and collect an output written to `:stdout`:
 
-  When running a `%FFix.Command{}`, the runner prepends a few quiet-by-default execution flags:
+      alias FFix.{Encoder, Filter, Muxer}
 
-    * `-hide_banner`
-    * `-nostats`
-    * `-loglevel level+warning`
+      command =
+        FFix.input(:stdin, f: "image2pipe")
+        |> FFix.video(0)
+        |> Filter.scale(w: 640, h: -2)
+        |> Encoder.png()
+        |> Muxer.mux("image2pipe", :stdout)
+        |> FFix.command()
 
-  Later command options still win, so callers can override log level or stats in
-  the command itself.
+      result = FFix.run!(command, stdin: File.stream!("photo.png", [], 65_536), stdout: :collect)
+      File.write!("small.png", result.stdout)
+
+  > #### Collect only what you need {: .warning}
+  > `stdout: :collect` and `stderr: :collect` retain their full output in memory.
+  > For large media, consume stdout chunks with `stream/2` and keep stdout's
+  > default `:discard` capture policy. Live chunks are still emitted.
+
+  ## Choose FFmpeg
+
+  Executable selection follows this order: the `ffmpeg:` runner option,
+  `FFMPEG_BIN`, then `ffmpeg` on `PATH`.
+
+      FFix.run(command, ffmpeg: "/usr/local/bin/ffmpeg")
+
+  For an existing argument list, `run/2` also accepts
+  `["ffmpeg", "-version"]`. Raw argv uses its own executable and arguments
+  unchanged. For setup, see [FFmpeg downloads](https://ffmpeg.org/download.html)
+  or the development download task `Mix.Tasks.Ffix.Ffmpeg.Fetch`.
   """
-  @moduledoc groups: [
-               "Collected execution",
-               "Streaming execution"
-             ]
 
   alias FFix.Command
   alias FFix.Runner.Error
@@ -89,29 +95,33 @@ defmodule FFix.Runner do
 
   @default_stderr_tail 65_536
 
-  @doc group: "Collected execution"
   @doc """
-  Runs a command and returns a collected result tuple.
+  Runs a command and returns `{:ok, result}` or `{:error, error}`.
 
-  Options:
+  A zero exit status succeeds. Spawn failures, non-zero exits, and process I/O
+  failures return `FFix.Runner.Error`. Invalid configuration and exceptions in
+  your option callbacks, event handler, or stdin producer propagate to the caller.
 
-    * `:stdin` - enumerable input for process stdin
-    * `:stdout` - `:discard` or `:collect`
-    * `:stderr` - `:discard`, `:collect`, or `{:tail, bytes}`
-    * `:ffmpeg` - executable for Command values; defaults to `FFMPEG_BIN`, then `ffmpeg`
-    * `:progress` - parses stderr progress; also adds `-progress pipe:2` for Command values
-    * `:on_event` - callback invoked with each emitted event
+  ## Options
 
-  By default stdout is discarded and only 65,536 trailing stderr bytes are kept.
-  Parsed logs use the stderr byte budget (counting raw and message bytes);
-  `:discard` retains no logs. Lines and progress records are limited to 65,536
-  bytes unless stderr is explicitly `:collect`, which retains all diagnostics.
-  Oversized records are dropped; result truncation flags report these omissions.
-  Capture policies never suppress live stdout, stderr, log, or progress events.
-  Progress parsing is opt-in, including for raw argv, which is always executed
-  literally without FFmpeg flags or executable substitution.
+  - `:stdin` — an enumerable of bytes, or a function receiving a writable
+    `Collectable` sink. For example, `fn sink -> Enum.into(chunks, sink) end`.
+  - `:stdout` — `:discard` (default) or `:collect`.
+  - `:stderr` — `:discard`, `:collect`, or `{:tail, bytes}`. The default keeps
+    the last 65,536 bytes.
+  - `:ffmpeg` — executable path/name for command values; see the module guide.
+  - `:progress` — parse FFmpeg progress records; defaults to `false`. For command
+    values, also adds `-progress pipe:2`. Raw argv must request progress itself.
+  - `:on_event` — a function called with every event described in `stream/2`.
 
-      FFix.run(command, stderr: :collect)
+  Command execution adds `-hide_banner`, `-nostats`, and `-loglevel level+warning`.
+  Override these through command `global:` options. There is no execution deadline;
+  use a supervised task when your application needs one.
+
+  Capture policies control retained data, independently of live events. Parsed
+  logs share stderr's byte budget, counting raw and message bytes. With bounded
+  capture, individual lines and progress records are limited to 65,536 bytes;
+  oversized records are omitted. See `FFix.Runner.Result` for truncation flags.
   """
   @spec run(Command.t() | nonempty_list(String.t()), [option()]) ::
           {:ok, Result.t()} | {:error, Error.t()}
@@ -132,10 +142,7 @@ defmodule FFix.Runner do
           "runner options must be a keyword list, got: #{inspect({command, options})}"
   end
 
-  @doc group: "Collected execution"
-  @doc """
-  Runs a command and raises `FFix.Runner.Error` on operational failure.
-  """
+  @doc "Like `run/2`, returning the result directly and raising `FFix.Runner.Error` on execution failure."
   @spec run!(Command.t() | nonempty_list(String.t()), [option()]) :: Result.t()
   def run!(command, options \\ []) do
     case run(command, options) do
@@ -144,20 +151,25 @@ defmodule FFix.Runner do
     end
   end
 
-  @doc group: "Streaming execution"
   @doc """
-  Runs a command as a lazy event stream.
+  Returns a lazy stream of process output, progress, and lifecycle events.
 
-  This is useful for progress reporting, log streaming, or large stdout streams
-  that should not be collected into memory.
+  Accepts the same options as `run/2`. Events are:
 
-      FFix.stream(command, progress: true, stdout: :collect)
-      |> Enum.each(fn
-        {:stdout, chunk} -> IO.binwrite(chunk)
-        {:progress, progress} -> IO.inspect(progress.frame)
-        {:exit, result} -> IO.inspect(result.exit_status)
-        _event -> :ok
-      end)
+  - `{:start, info}` — process started; `info` contains `command`, `argv`, and `shell`.
+  - `{:stdout, chunk}` and `{:stderr, chunk}` — raw bytes.
+  - `{:log, log}` — a parsed `FFix.Runner.Log`.
+  - `{:progress, progress}` — a `FFix.Runner.Progress`, when enabled.
+  - `{:exit, result}` — process finished; inspect its `exit_status`.
+  - `{:error, error}` — a spawn or process I/O failure.
+
+  `:start` is emitted after a successful spawn, before reading process output.
+  A non-zero exit is still an `:exit` event; use `stream!/2` to raise on failure.
+  Early halt cancels and cleans up the child, without emitting an exit event for
+  that cancellation. Exceptions from stream consumers propagate normally.
+
+  Consume large streams incrementally. Converting all events to a list retains
+  their payloads even when the runner's capture policy is `:discard`.
   """
   @spec stream(Command.t() | nonempty_list(String.t()), [option()]) :: term()
   def stream(command, options \\ [])
@@ -171,11 +183,7 @@ defmodule FFix.Runner do
           "runner options must be a keyword list, got: #{inspect({command, options})}"
   end
 
-  @doc group: "Streaming execution"
-  @doc """
-  Runs a command as a lazy event stream and raises `FFix.Runner.Error` on
-  operational failure. Early halt is cancellation, not a failed exit.
-  """
+  @doc "Like `stream/2`, raising `FFix.Runner.Error` for spawn, process I/O, or non-zero exit failures."
   @spec stream!(Command.t() | nonempty_list(String.t()), [option()]) :: term()
   def stream!(command, options \\ [])
 

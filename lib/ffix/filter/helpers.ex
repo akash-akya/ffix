@@ -14,11 +14,11 @@ defmodule FFix.Filter.Helpers do
         raise ArgumentError, "filter helper name conflicts with the generic filter operation"
       end
 
-      helper(name, filter, Map.fetch!(normalized.specs, name), metadata.version.version)
+      helper(name, filter, Map.fetch!(normalized.specs, name))
     end)
   end
 
-  defp helper(name, filter, option_specs, version) do
+  defp helper(name, filter, option_specs) do
     inputs = Enum.reject(filter.inputs, &(&1 == :|))
     outputs = Enum.reject(filter.outputs, &(&1 == :|))
     group = filter_group(inputs, outputs)
@@ -46,14 +46,24 @@ defmodule FFix.Filter.Helpers do
     output_spec = output_typespec(outputs)
     options_typespec = build_options_typespec(option_specs)
 
+    example = filter_example(name)
+
+    example =
+      if example do
+        "## Example\n\n    #{example}\n"
+      else
+        ""
+      end
+
     doc = """
-    #{name}: #{filter.desc}
+    #{filter.desc}
 
-    Metadata baseline: FFmpeg #{version}.
-
+    #{example}
     ## Options
 
     #{build_options_doc(option_specs)}
+
+    See `FFix.Filter` for pipelines, expressions, and output handling.
     """
 
     quote do
@@ -91,29 +101,30 @@ defmodule FFix.Filter.Helpers do
   end
 
   defp filter_group(inputs, outputs) do
+    media = inputs ++ outputs
+
     cond do
-      inputs == [] ->
-        "Source filters"
-
-      outputs == [] ->
-        "Sink filters"
-
-      :N in inputs or :N in outputs ->
-        "Multi-stream filters"
-
-      :A in inputs or :A in outputs ->
-        if :V in inputs or :V in outputs do
-          "Audio/video filters"
-        else
-          "Audio filters"
-        end
-
-      :V in inputs or :V in outputs ->
-        "Video filters"
-
-      true ->
-        "Other filters"
+      inputs == [] or outputs == [] -> "Sources and sinks"
+      :V in media and :A not in media -> "Video"
+      :A in media and :V not in media -> "Audio"
+      true -> "Other filters"
     end
+  end
+
+  defp filter_example(name) do
+    examples = %{
+      scale: ~s|FFix.Filter.scale(video, w: 1280, h: -2)|,
+      crop: ~s|FFix.Filter.crop(video, w: 720, h: 720)|,
+      overlay: ~s|FFix.Filter.overlay(background, logo, x: 20, y: 20)|,
+      split: ~s|[main, preview] = FFix.Filter.split(video, outputs: 2)|,
+      volume: ~s|FFix.Filter.volume(audio, volume: 0.5)|,
+      amix: ~s|FFix.Filter.amix([voice, music], inputs: 2, duration: :shortest)|,
+      sine: ~s|FFix.Filter.sine(frequency: 440, duration: 2)|,
+      testsrc2: ~s|FFix.Filter.testsrc2(size: "640x360", rate: 30, duration: 2)|,
+      ebur128: ~s|[meter, audio] = FFix.Filter.ebur128(audio, video: true)|
+    }
+
+    Map.get(examples, name)
   end
 
   @spec build_options_doc(map()) :: String.t()
@@ -121,12 +132,6 @@ defmodule FFix.Filter.Helpers do
     options
     |> Enum.sort_by(fn {name, _config} -> name end)
     |> Enum.map_join("\n", fn {name, config} ->
-      owner =
-        case config do
-          %{owner: owner} -> owner
-          %{implicit: :timeline} -> "implicit timeline"
-        end
-
       constants =
         config
         |> Map.get(:sub, [])
@@ -137,10 +142,13 @@ defmodule FFix.Filter.Helpers do
               value -> " (#{value})"
             end
 
-          "    - #{constant.enum}#{number} - #{constant.desc}"
+          "    - `#{constant.enum}`#{number}" <>
+            FFix.Helpers.description_suffix(constant.desc, " — ")
         end)
 
-      row = "  * `#{name}` (#{owner}, #{inspect(config.type)}): #{config.desc}"
+      row =
+        "- `#{name}` (#{FFix.Helpers.option_type(config.type)})" <>
+          FFix.Helpers.description_suffix(config.desc, ": ")
 
       case constants do
         "" -> row

@@ -1,45 +1,64 @@
 defmodule FFix.Command do
   @moduledoc """
-  Canonical representation of a full ffmpeg command.
+  The inputs, outputs, and options for one FFmpeg invocation.
 
-  A command stores global options, ordered inputs, an optional filtergraph, and
-  ordered outputs. It is still just data until `FFix.to_argv/1`, `FFix.run/1`, or
-  another boundary function serializes it.
+  Usually, build a command with `FFix.command/2`: it collects input dependencies
+  from your outputs. This module also supports constructing and editing command
+  data directly, which is useful for tools that already manage explicit inputs
+  and filtergraphs.
 
-  Prefer `FFix.command/2` for the output-first API. Use this module directly
-  when constructing or transforming `%FFix.Command{}` values in smaller steps.
-  Supply inputs explicitly and map direct input selections or canonical
-  `graph.exports` handles with their graph. This layer does not infer dependencies.
-  Captured input snapshots must match the supplied declarations.
+  ## FFmpeg options and their scope
 
-      input = FFix.Command.Input.new("input.mp4", ss: "00:00:03")
-      video = FFix.video(input, :all)
+  Put options on the thing they configure:
 
-      FFix.Command.new(
-        global: [y: :flag],
-        inputs: [input],
-        outputs: [FFix.Command.Output.new(FFix.stream_copy(video), "out.mp4")]
-      )
-      |> FFix.to_argv()
+  | Setting | Where it belongs | Example |
+  | --- | --- | --- |
+  | Invocation-wide control | `FFix.command/2`, under `global:` | `n: :flag` |
+  | Input seeking or limits | `FFix.input/2` | `ss: 30` |
+  | Decoding | `FFix.Decoder` | `threads: 2` |
+  | Output encoding | `FFix.Encoder` | `crf: 23` |
+  | Container settings | `FFix.Muxer` | `movflags: [:faststart]` |
+  | Output duration or metadata | `FFix.output/3` | `t: 10` |
 
-  Use `FFix.Decoder`, `FFix.Encoder`, `FFix.Muxer`, and `FFix.Command.Mapping`
-  for structured configuration. Decoder settings belong to input declarations;
-  encoding belongs to ordered output mappings; muxer settings belong to outputs.
-  This path assigns stream indexes without discovery or media probing.
+  Demuxer and muxer helpers take general input/output controls in
+  `input_options:` and `output_options:` respectively.
 
-  Raw option keys remain ffmpeg CLI option names. For raw options with stream
-  specifiers, use an atom or string key that already contains the specifier,
-  for example `:"c:v"` or `"metadata:s:a:0"`. Do not use raw options to override
-  structured configuration or alter the mapping order it relies on.
+  General CLI option names are atoms or strings without the leading dash.
+  Use `:flag` for a valueless switch; `true` and `false` are values, rendered as
+  `1` and `0`. Lists of values are joined with `+`. Strings can carry FFmpeg's
+  compound syntax, and floats are written as decimal numbers.
+
+      source = FFix.input("interview.mp4", ss: 30)
+      output = FFix.output(FFix.audio(source, 0), "excerpt.wav", t: 10)
+      FFix.command(output, global: [n: :flag])
+
+  Prefer encoder and muxer helpers for codec and format settings: they apply
+  the right stream scopes. If using raw scoped options, write the full name,
+  such as `"metadata:s:a:0"`. FFix rejects raw controls that conflict with
+  structured settings or change the mapping layout those settings depend on.
+  Raw option names can repeat where FFmpeg allows it; structured component
+  options must be specified once.
+
+  ## Explicit construction
+
+      alias FFix.Command
+      source = FFix.input("interview.mp4")
+      output = FFix.output(FFix.audio(source, 0), "interview.wav")
+
+      command =
+        Command.new(global: [n: :flag])
+        |> Command.add_input(source)
+        |> Command.add_output(output)
+
+      FFix.to_argv(command)
+
+  This path uses exactly the supplied inputs, in order. Repeated input
+  declarations are rejected. Selections must use the same input configuration
+  as the supplied declaration; see `FFix.Command.Input` for input reuse.
+
+  Commands may be incomplete while you assemble them. Call `validate!/1` to
+  check the finished command, or serialize it with `to_argv/1`.
   """
-  @moduledoc groups: [
-               "Construction",
-               "Inputs",
-               "Filtergraph",
-               "Outputs",
-               "Validation",
-               "Serialization"
-             ]
 
   alias __MODULE__.Input
   alias __MODULE__.Mapping
@@ -71,18 +90,25 @@ defmodule FFix.Command do
 
   defstruct global_options: [], inputs: [], graph: nil, outputs: []
 
-  @doc group: "Construction"
-  @doc "Returns an empty command for step-by-step construction."
+  @doc "Returns an empty command for use with `add_input/2`, `graph/2`, and `add_output/2`."
   @spec new() :: t()
   def new, do: %__MODULE__{}
 
-  @doc group: "Construction"
   @doc """
-  Builds a command from ordered input and output declarations.
+  Builds command data from `global:`, `inputs:`, `graph:`, and `outputs:`.
 
-  Filtered mappings require canonical exports from the explicit `:graph`.
-  No dependency inference occurs. Commands may be incomplete until `validate!/1`
-  or serialization; neither construction nor validation evaluates callbacks.
+  Inputs and outputs are ordered lists of declarations. All options are optional
+  during construction. For dependency collection, use `FFix.command/2` instead.
+
+  Filtered outputs use export handles from the supplied graph's `exports` field:
+
+      source = FFix.input("interview.mp4")
+      graph = FFix.Graph.parse!("[0:v:0]hflip[picture]")
+      output = FFix.output(hd(graph.exports), "mirrored.mp4")
+      FFix.Command.new(inputs: [source], graph: graph, outputs: [output])
+
+  Export handles belong to their graph. Use `graph[:picture]` for ordinary filter
+  composition through `FFix.command/2`, which collects the whole referenced graph.
   """
   @spec new(keyword()) :: t()
   def new(options) when is_list(options) do
@@ -103,39 +129,34 @@ defmodule FFix.Command do
     %__MODULE__{global_options: global, inputs: inputs, graph: graph, outputs: outputs}
   end
 
-  @doc group: "Construction"
-  @doc "Appends global ffmpeg options, rendered before inputs."
+  @doc "Appends invocation-wide options, rendered before inputs. For example, `global(command, n: :flag)`."
   @spec global(t(), [option()]) :: t()
   def global(%__MODULE__{} = command, options) when is_list(options) do
     %{command | global_options: command.global_options ++ options}
   end
 
-  @doc group: "Inputs"
-  @doc "Appends an existing input declaration to a low-level command."
+  @doc "Appends an input created with `FFix.input/2` or a `FFix.Demuxer` helper."
   @spec add_input(t(), Input.t()) :: t()
   def add_input(%__MODULE__{} = command, %Input{} = input) do
     %{command | inputs: command.inputs ++ [input]}
   end
 
-  @doc group: "Filtergraph"
-  @doc "Sets the filtergraph for a command."
+  @doc "Sets the command's filtergraph. See `new/1` for mapping its exports to outputs."
   @spec graph(t(), Graph.t()) :: t()
   def graph(%__MODULE__{} = command, %Graph{} = graph), do: %{command | graph: graph}
 
-  @doc group: "Outputs"
-  @doc "Appends an existing output declaration to a low-level command."
+  @doc "Appends an output created with `FFix.output/3` or a `FFix.Muxer` helper."
   @spec add_output(t(), Output.t()) :: t()
   def add_output(%__MODULE__{} = command, %Output{} = output) do
     %{command | outputs: command.outputs ++ [output]}
   end
 
-  @doc group: "Validation"
   @doc """
-  Checks inputs, graph ownership, mappings, encoding scopes, and callback layouts.
+  Checks the command's connections, input declarations, and option scopes.
 
-  Returns the original command without resolving its stored input identities,
-  running ffmpeg, probing media, or evaluating deferred option callbacks.
-  Callback results are checked during serialization.
+  Returns the original command or raises `ArgumentError`. Output callback
+  layouts are checked here; callback values are evaluated during serialization.
+  FFmpeg checks files, installed components, and format compatibility at execution.
   """
   @spec validate!(t()) :: t()
   def validate!(%__MODULE__{} = command) do
@@ -143,8 +164,7 @@ defmodule FFix.Command do
     command
   end
 
-  @doc group: "Serialization"
-  @doc "Serializes a command to literal ffmpeg argv, the canonical execution boundary."
+  @doc "Validates and returns FFmpeg arguments as a list, beginning with `\"ffmpeg\"`. See `FFix.to_argv/1`."
   @spec to_argv(t()) :: [String.t()]
   def to_argv(%__MODULE__{} = command) do
     command
@@ -153,8 +173,7 @@ defmodule FFix.Command do
     |> Render.to_argv()
   end
 
-  @doc group: "Serialization"
-  @doc "Serializes a command as a shell-escaped string for logs and debugging."
+  @doc "Returns shell-quoted command text for logs and debugging. See `FFix.to_shell_string/1`."
   @spec to_shell_string(t()) :: String.t()
   def to_shell_string(%__MODULE__{} = command) do
     command |> to_argv() |> Enum.map_join(" ", &Render.shell_escape/1)

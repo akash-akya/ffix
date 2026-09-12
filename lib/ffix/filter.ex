@@ -1,48 +1,92 @@
 defmodule FFix.Filter do
   @moduledoc """
-  Generated helpers for ffmpeg filters.
+  Transform pictures and sound with FFmpeg filters.
 
-  Each named function mirrors one filter in the recorded FFmpeg metadata snapshot.
-  Compilation and graph construction do not run FFmpeg. Function names and option
-  keys stay close to ffmpeg. Arguments are `FFix.Graph.StreamRef` values; the final
-  argument is a keyword list of ffmpeg filter options.
+  Filter functions take selected streams followed by options. Chain them with
+  Elixir's pipe operator, then choose an encoder and output.
 
-      video
-      |> scale(w: 1280, h: -1)
-      |> fps(fps: 30)
+  ## Resize and adjust frame rate
 
-  Zero outputs return `FFix.Graph.Terminal`, one returns `FFix.Graph.StreamRef`,
-  and multiple outputs always return an ordered list:
+      alias FFix.{Encoder, Filter, Muxer}
 
-      [left, right] = split(video, outputs: 2)
-      stacked = hstack([left, hflip(right)])
+      output =
+        FFix.input("interview.mp4")
+        |> FFix.video(0)
+        |> Filter.scale(w: 1280, h: -2)
+        |> Filter.fps(fps: 30)
+        |> Encoder.libx264(crf: 23)
+        |> Muxer.mp4("interview-small.mp4")
 
-  Supported option-dependent shapes follow their effective options, including
-  aliases and positional values. For example, `ebur128(audio_in, video: true)`
-  returns `[video, audio]`, while video disabled returns just the audio reference.
-  Unresolved shapes raise rather than guessing a pad count or media type.
+      FFix.command(output)
 
-  Use `filter/4` to supply a filter name, explicit output media, and options
-  without metadata lookup.
+  This selects video only. Add an audio selection to the output when you want
+  to retain sound, as shown in the `FFix` guide.
 
-  Reported defaults/ranges are metadata, not emitted defaults or complete
-  validation. Plain strings carry FFmpeg expressions and compound syntax;
-  repeated `:pos` options supply positional arguments.
+  ## Combine streams
 
-  Timeline-capable filters accept ffmpeg's implicit `enable:` option. Filters
-  backed by ffmpeg framesync also accept the common `eof_action:`, `shortest:`,
-  `repeatlast:`, and `ts_sync_mode:` options.
+  Filters with a fixed number of inputs take separate arguments. For example,
+  `overlay/3` places one video over another:
+
+      source = FFix.input("interview.mp4")
+      logo = FFix.input("logo.png")
+      picture = Filter.overlay(FFix.video(source, 0), FFix.video(logo, 0), x: 20, y: 20)
+
+  Filters accepting a variable number of streams take a list. This mixes two
+  audio recordings, stopping when the shorter one ends:
+
+      voice = FFix.input("voice.wav") |> FFix.audio(0)
+      music = FFix.input("music.wav") |> FFix.audio(0)
+      mixed = Filter.amix([voice, music], inputs: 2, duration: :shortest)
+
+  ## Branch a stream
+
+  Use `split/2` for video and `asplit/2` for audio when a filtered stream feeds
+  several branches. Here we compare a picture with its mirrored version:
+
+      picture = FFix.input("interview.mp4") |> FFix.video(0) |> Filter.scale(w: 640, h: -2)
+      [left, right] = Filter.split(picture, outputs: 2)
+      comparison = Filter.hstack([left, Filter.hflip(right)])
+      FFix.output(comparison, "comparison.mp4") |> FFix.command()
+
+  Each produced filter output must be connected or mapped once in the completed
+  command. Connect unwanted branches to a sink such as `nullsink/2` or
+  `anullsink/2`, and retain it with the command's `terminals:` option.
+
+  Most filters return one stream. Multi-output filters return an ordered list;
+  a sink returns `FFix.Graph.Terminal`. Options can change the result:
+  `split(video, outputs: 1)` returns one stream, while `outputs: 2` returns two.
+  `ebur128(audio, video: true)` returns `[video, audio]` in that order.
+
+  ## Generate media
+
+  Source filters create their own media and take options only:
+
+      output = Filter.testsrc2(size: "640x360", rate: 30, duration: 2)
+      FFix.output(output, "test-pattern.mp4") |> FFix.command()
+
+  Give generated sources a duration, or limit the output with `t:` or a frame
+  count, to keep the command finite.
+
+  ## Expressions and filter options
+
+  Use strings for FFmpeg expressions. FFix handles the escaping:
+
+      Filter.volume(voice, volume: 0.5, enable: "between(t,0,3)")
+
+  Timeline-capable filters accept `enable:`. Filters that synchronize several
+  inputs may also offer `eof_action:`, `shortest:`, `repeatlast:`, and
+  `ts_sync_mode:`; see their option lists below.
+
+  The helper catalog and option reference come from FFmpeg 7.1.5. Check
+  `FFix.Discovery` for availability in your installation. FFmpeg supplies
+  omitted defaults and performs final value checks when executing.
+  Use `filter/4` for another filter name or an explicit output layout.
+
+  See the [FFmpeg filter reference](https://ffmpeg.org/ffmpeg-filters.html) for
+  expressions and detailed filter behavior. To parse an existing filtergraph
+  or reuse a template, see `FFix.Graph`.
   """
-  @moduledoc groups: [
-               "Generic filters",
-               "Source filters",
-               "Video filters",
-               "Audio filters",
-               "Audio/video filters",
-               "Multi-stream filters",
-               "Sink filters",
-               "Other filters"
-             ]
+  @moduledoc groups: ["Video", "Audio", "Sources and sinks", "Other filters"]
 
   alias FFix.Graph.Builder
   alias FFix.Graph.StreamRef
@@ -50,29 +94,32 @@ defmodule FFix.Filter do
 
   @type option :: {atom() | String.t(), String.t() | atom() | number()}
 
-  @doc group: "Generic filters"
+  @doc group: "Other filters"
   @doc """
-  Builds a filter from explicit inputs, a name, output media, and optional values.
+  Builds a filter using its FFmpeg name, explicit output media, and options.
 
-      video |> FFix.Filter.filter("scale", [:video], w: 1280, h: -2)
+      FFix.Filter.filter(video, "scale", [:video], w: 1280, h: -2)
       FFix.Filter.filter([background, foreground], "overlay", [:video], x: 10)
-      FFix.Filter.filter([], "vendor_source", [:audio], frequency: 440)
+      FFix.Filter.filter([], "sine", [:audio], frequency: 440, duration: 2)
       FFix.Filter.filter(video, "nullsink", [])
 
-  Inputs are a stream reference or a flat ordered list. Use `[]` for source
-  filters. Output media is an ordered list of `:video`, `:audio`, or `:unknown`.
-  Zero outputs return a terminal, one returns a reference, and multiple outputs
-  return a list. This shape is graph information, not an emitted FFmpeg option;
-  the caller must ensure it agrees with the actual filter configuration.
+  Inputs are one stream or a flat ordered list. Use `[]` for a source filter.
+  Output media lists `:video`, `:audio`, or `:unknown` for each produced stream.
+  An empty list returns a terminal, one element returns a stream, and several
+  elements return an ordered stream list.
 
-  Names and options pass through without registry or option-schema lookup, even
-  for known filters. No defaults, flags, or array delimiters are inferred. Use
-  scalar values or strings for compound syntax. Repeated `:pos`
-  pairs supply positional arguments. Values are escaped during serialization.
+  This explicit layout lets FFix connect filters whose output count or media
+  cannot be determined from the named helper. It must agree with the actual
+  FFmpeg options. For example, a two-output split needs both declarations:
 
-  Named helpers retain metadata checks and shape inference. `FFix.Graph.parse!/1`
-  still requires known filters: serialized text does not preserve media shapes
-  supplied to this function.
+      FFix.Filter.filter(video, "split", [:video, :video], outputs: 2)
+
+  Names and option values go directly to FFmpeg, including for known filters.
+  Use strings for compound syntax; repeated `:pos` pairs supply positional
+  arguments. Escaping is handled during serialization.
+
+  Text filtergraphs do not carry this output-media information, so
+  `FFix.Graph.parse!/1` requires filters and layouts it can recognize.
   """
   @spec filter(StreamRef.t() | [StreamRef.t()], atom() | String.t(), [FFix.output_media()], [
           option()

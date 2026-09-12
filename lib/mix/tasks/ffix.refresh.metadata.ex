@@ -3,14 +3,30 @@ defmodule Mix.Tasks.Ffix.Refresh.Metadata do
 
   @shortdoc "Refreshes recorded FFmpeg codec, format, and filter metadata"
   @moduledoc """
-  Updates `priv/ffmpeg/metadata.exs` from the selected FFmpeg build.
+  Update the bundled FFmpeg option reference and generated helper catalog.
+
+  This is a maintenance task for FFix's recorded reference. Running application
+  commands with a different FFmpeg executable normally needs no refresh.
 
       mix ffix.refresh.metadata --ffmpeg /usr/bin/ffmpeg
 
-  Captures the selected codecs/formats and every registered filter. The build
-  must retain previously recorded filters; intentional removals require editing
-  the recorded baseline first. Capture or validation failures leave it unchanged.
-  Helpers, docs, and typespecs update on the next compilation.
+  The task captures selected codecs and formats, every registered filter, shared
+  options, and build information in `priv/ffmpeg/metadata.exs`. Compilation then
+  regenerates helper functions, docs, and typespecs from that reference.
+
+  ## Maintaining the reference
+
+  - Use the same FFmpeg build to reproduce a capture.
+  - Review reported filter signature changes and the resulting helper API.
+  - Missing previously recorded filters cause a failure. Intentional removals
+    require updating the existing reference first.
+  - Capture and validation finish before replacing the file, so failures leave
+    the recorded reference intact.
+
+  Private, child, and framesync option sections remain separate in the capture.
+  Filter helpers expose primary and framesync options; codec/format helpers also
+  expose applicable shared options. For querying a build without updating the
+  reference, use `FFix.Discovery`.
   """
 
   alias FFix.Discovery

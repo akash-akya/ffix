@@ -1,30 +1,61 @@
 defmodule FFix.Encoder do
   @moduledoc """
-  Source-taking encoder shortcuts and low-level encoder configuration.
+  Choose how output streams are compressed.
 
-  Named helpers return `FFix.Command.Mapping` values, not filterable streams or
-  running encoder instances. Use them after filtering, as sources in output
-  declarations passed to `FFix.command/2`. A selection requests the same encoding
-  for each matched stream; ambiguous output scopes are rejected.
+  Apply an encoder to an input stream or to the end of a filter pipeline, then
+  pass the result to `FFix.output/3` or a `FFix.Muxer` helper.
 
-      FFix.Encoder.libx264(video, crf: 18, preset: "slow")
+  ## Video quality
 
-  Each mapping is an independent output use. Reusing a mapping in two output
-  declarations does not share encoded packets. Stream copy is expressed with
-  `FFix.stream_copy/1`, not an encoder named `"copy"`.
+  `libx264/2` encodes H.264 video. CRF is a quality setting: lower values give
+  higher quality and usually larger files. Start around 23 and compare a short
+  sample. The preset trades encoding time for compression efficiency.
 
-  Named helpers use a recorded metadata baseline, not the installed executable.
-  They check option names and basic value shapes, but do not infer defaults or
-  guarantee installation, hardware usability, or codec/container compatibility.
-  Strings remain open FFmpeg values. Flag lists are normalized to FFmpeg strings.
-  `raw: [{"new_option", "value"}]` bypasses metadata checks for individual options.
+      alias FFix.{Encoder, Muxer}
 
-  `encode/3` forwards codec or encoder names and options without a metadata schema.
-  FFmpeg selects the implementation when given a codec name such as `"h264"`. `new/2`
-  constructs a standalone configuration for the lower-level command model.
-  All component option names are unscoped and have no leading dash. Values may
-  also be callbacks receiving the output's named stream information; see
-  `FFix.Command.Output`. Their metadata checks run when the command is serialized.
+      command =
+        FFix.input("interview.mp4")
+        |> FFix.video(0)
+        |> Encoder.libx264(crf: 23, preset: "medium")
+        |> Muxer.mp4("interview-video.mp4")
+        |> FFix.command()
+
+  For a bitrate-based delivery target, use `b: "2M"`. Options such as `maxrate`
+  and `bufsize` give finer control over bitrate variation; consult the selected
+  encoder's reference before combining rate-control settings.
+
+  ## Audio and multiple tracks
+
+      source = FFix.input("interview.mp4")
+      audio = source |> FFix.audio(:all) |> Encoder.aac(b: "128k")
+      output = FFix.output(audio, "audio.m4a")
+
+  This applies AAC encoding to each selected audio track. Use explicit indexes
+  when tracks need different settings. `FFix.Command.Mapping` explains how
+  encoding settings follow mapping order, including selections of several tracks.
+
+  Apply filters before the encoder. To keep existing encoded media, use
+  `FFix.stream_copy/1`. Reusing an encoder configuration in several mappings
+  requests a separate encode for each output use.
+
+  ## Options
+
+  Write option names without a leading dash or a stream suffix:
+  `b: "128k"`, rather than `"-b:a:0"`. FFix adds the correct output-stream scope.
+  Strings carry FFmpeg expressions and compound values; supported flag options
+  also accept lists of names. Output options can use callbacks to refer to named
+  streams; see `FFix.Command.Output`.
+
+  Named helpers check options against a reference recorded from FFmpeg 7.1.5.
+  FFmpeg supplies defaults for omitted options. Check `FFix.Discovery` when an
+  encoder needs to be available in a particular deployment.
+
+  Use `encode/3` for other encoders. For a named helper's newer options,
+  `raw: [{name, value}]` skips the recorded option lookup while retaining the
+  usual value and command-option checks.
+
+  See the [FFmpeg codec reference](https://ffmpeg.org/ffmpeg-codecs.html) and
+  [H.264 encoding guide](https://trac.ffmpeg.org/wiki/Encode/H.264) for more detail.
   """
 
   alias FFix.Command
@@ -34,13 +65,31 @@ defmodule FFix.Encoder do
   @type t :: %__MODULE__{name: String.t() | nil, options: [Command.output_av_option()]}
   defstruct [:name, options: []]
 
-  @doc "Builds an unbound configuration without metadata lookup; nil leaves selection to FFmpeg."
+  @doc """
+  Builds a reusable encoder configuration for `FFix.Command.Mapping.new/2`.
+
+      encoder = FFix.Encoder.new("libx264", crf: 20)
+      FFix.Command.Mapping.new(video, encoder)
+
+  A `nil` name lets FFmpeg choose the encoder while applying the supplied options.
+  For a pipeline, prefer a named helper or `encode/3`.
+  """
   @spec new(String.t() | nil, [Command.output_av_option()]) :: t()
   def new(name, options \\ []) do
     Options.validate_component!(%__MODULE__{name: name, options: options})
   end
 
-  @doc "Maps a source using a codec or encoder name and unscoped options, without a metadata schema."
+  @doc """
+  Encodes a source using an FFmpeg codec or encoder name and its options.
+
+      source = FFix.input("recording.wav")
+      audio = FFix.Encoder.encode(FFix.audio(source, 0), "flac", compression_level: 8)
+      FFix.output(audio, "recording.flac")
+
+  Names and options are passed to FFmpeg. A codec name such as `"h264"` lets
+  FFmpeg select an implementation. Use `"libx264"` or `libx264/2` when you need
+  that implementation and its particular options.
+  """
   @spec encode(Command.source(), String.t(), list()) :: Mapping.t()
   def encode(source, name, options \\ []) do
     options = Options.normalize!(options, nil, "#{name} encoder")

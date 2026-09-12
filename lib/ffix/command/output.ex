@@ -1,54 +1,84 @@
 defmodule FFix.Command.Output do
   @moduledoc """
-  One ffmpeg output declaration.
+  Choose the streams, encoding, and destination for one output.
 
-  `mappings` is an ordered list of `FFix.Command.Mapping` values. Each mapping
-  selects one stream or an unresolved set and configures encoding or copy. `muxer`
-  configures the output container independently of those mappings.
+  Create outputs with `FFix.output/3`, `new/3`, or a `FFix.Muxer` helper. Pass
+  them to `FFix.command/2` to assemble the invocation.
 
-  `options` retains raw output CLI options. Do not mix raw codec selections or
-  matching codec option names with structured encoding, or raw format selections
-  or matching format option names with a structured muxer. These combinations
-  are rejected rather than silently overridden.
+      source = FFix.input("interview.mp4")
 
-  Maps, encoding configuration, muxer configuration, and raw options are rendered
-  before the target. Output-stream indexes start at zero for each output.
+      output =
+        FFix.output(
+          [FFix.video(source, 0), FFix.audio(source, 0)],
+          "excerpt.mp4",
+          t: 30
+        )
 
-  `FFix.output/3` and `new/3` take sources first, followed by a
-  target and optional CLI options. Both wrap bare sources in unconfigured
-  mappings and accept configured mappings directly.
+  The source list determines mapping order. Bare streams use FFmpeg's default
+  encoders; `FFix.Encoder` and `FFix.stream_copy/1` choose encoding explicitly.
+  General output options, such as `t`, apply to this destination. See
+  `FFix.Command.Mapping` for encoding several tracks and `FFix.Muxer` for
+  container options.
 
-  ## Named Mappings And Deferred Options
+  ## Named mappings and callbacks
 
-  `[main: video_mapping, sound: audio_mapping]` as the sources argument binds
-  output-local names without changing track order. Unnamed mappings remain
-  supported, including mixed named/unnamed lists. Names are atoms, unique within each output; they are
-  not graph export labels and are never inferred from Elixir variable names.
+  Some FFmpeg options refer to output-stream positions. Give mappings names
+  and use an option callback to build those references from the final order.
+  This is useful for an HLS master playlist with two video renditions sharing
+  one audio rendition:
 
-  Encoder, muxer, and raw output option values can be one-argument callbacks.
-  They receive a map containing only the named mappings, for example:
+      alias FFix.{Encoder, Filter, Muxer}
+      source = FFix.input("interview.mp4")
+      [high, low] = source |> FFix.video(0) |> Filter.fps(fps: 24) |> Filter.split(outputs: 2)
 
-      %{main: %{index: 0, specifier: "v:0"}, sound: %{index: 1, specifier: "a:0"}}
+      high = high |> Filter.scale(w: -2, h: 720) |> Encoder.libx264(b: "1800k", g: 48)
+      low = low |> Filter.scale(w: -2, h: 360) |> Encoder.libx264(b: "600k", g: 48)
+      sound = Encoder.aac(FFix.audio(source, 0), b: "128k")
 
-  `index` counts all output tracks. `specifier` counts within the media type.
-  Unnamed tracks participate in both counts. Both are calculated from the final
-  mapping order and restart for each output. The source collection's order is
-  preserved, regardless of media type.
+      output =
+        Muxer.hls([high: high, low: low, sound: sound], "hls/%v.m3u8",
+          hls_time: 4,
+          master_pl_name: "master.m3u8",
+          var_stream_map: fn streams ->
+            Enum.join([
+              "\#{streams.high.specifier},agroup:audio,name:720p",
+              "\#{streams.low.specifier},agroup:audio,name:360p",
+              "\#{streams.sound.specifier},agroup:audio,name:audio,default:yes"
+            ], " ")
+          end
+        )
 
-  Callbacks run once per supplied option per serialization, after graph and
-  mapping validation, not during construction or `FFix.Command.validate!/1`.
-  Keep them pure and repeatable: printing a command and then running it performs
-  two serializations. Errors in callbacks propagate; a missing map key is a
-  normal `KeyError`. Returned values undergo the usual option validation and
-  rendering. Named helpers defer their metadata value checks, not name checks.
+      FFix.command(output)
 
-  An output with callbacks requires every mapping, named or not, to select one
-  required stream of known media. Selections (including optional ones) and
-  unknown-media absolute indexes cannot provide a complete callback index map.
-  Use `FFix.Filter.filter/4` with explicit media for unknown filter outputs.
-  No media-file probing occurs.
-  Callback results cannot change mappings or return more callbacks. Input/global
-  option callbacks are not supported.
+  Create the `hls` directory before executing. The callback receives:
+
+      %{
+        high: %{index: 0, specifier: "v:0"},
+        low: %{index: 1, specifier: "v:1"},
+        sound: %{index: 2, specifier: "a:0"}
+      }
+
+  `index` counts every output stream. `specifier` counts within its media type.
+  Reordering the mappings updates these values automatically. Counts restart
+  for each output, and names must be unique atoms within that output. Unnamed
+  mappings count toward positions but have no entry in the callback map.
+
+  Callbacks are accepted as encoder, muxer, and general output option values.
+  Every mapping in that output must identify one required stream of known media
+  so the positions can be calculated. Use indexed media selections or filter
+  outputs rather than `:all`, optional selections, or raw queries.
+
+  > #### Keep callbacks repeatable {: .tip}
+  > Each option callback runs once per serialization. Inspecting a command and
+  > then executing it calls the callbacks twice. Keep them free of side effects.
+
+  Callback results undergo normal option-value checks. They must be values,
+  rather than another callback. Missing names raise `KeyError`; exceptions from
+  your callback propagate to the caller. Construction and `FFix.validate!/1`
+  check the layout while leaving callbacks unevaluated.
+
+  See the [HLS muxer reference](https://ffmpeg.org/ffmpeg-formats.html#hls-2)
+  for playlist and rendition options.
   """
 
   alias FFix.Command
@@ -69,7 +99,19 @@ defmodule FFix.Command.Output do
 
   defstruct [:target, :muxer, mappings: [], options: []]
 
-  @doc "Builds an ordered output declaration without evaluating option callbacks."
+  @doc """
+  Declares an output from a source or ordered source list, a target, and options.
+
+      FFix.Command.Output.new([main: video, sound: audio], "interview.mp4", t: 30)
+
+  Sources may be stream references, selections, or configured mappings. For
+  explicit low-level commands, graph export handles are also accepted; see
+  `FFix.Command.new/1`.
+
+  Targets can be path/URL strings, `{:url, url}`, `:stdout`, or `{:pipe, descriptor}`.
+  The `muxer:` option accepts a `FFix.Muxer` configuration. Remaining options are
+  general FFmpeg output controls; see `FFix.Command` for option syntax.
+  """
   @spec new(Command.binding() | [Command.binding()], target(), [option()]) :: t()
   def new(sources, target, options \\ []) do
     Options.validate_endpoint!(target, :output)

@@ -3,14 +3,33 @@ defmodule Mix.Tasks.Ffix.Ffmpeg.Fetch do
 
   @shortdoc "Download a checksum-pinned static FFmpeg build"
   @moduledoc """
-  Downloads the recorded build for the current platform. Variant is required.
+  Download a pinned static FFmpeg build for development.
 
       mix ffix.ffmpeg.fetch --variant gpl
-      mix ffix.ffmpeg.fetch --variant lgpl --branch 8.1
 
-  Branch defaults to 9.0. Extracts under `.ffmpeg/<archive-name>/` without changing
-  the environment.
-  BtbN supports Windows and glibc Linux; Linux extraction requires tar/xz.
+  Archives come from [BtbN FFmpeg builds](https://github.com/BtbN/FFmpeg-Builds).
+  The task checks the archive's SHA-256 against `priv/ffmpeg/checksums.exs`, then
+  extracts it under `.ffmpeg/<archive-name>/` and prints the executable paths.
+  Select the downloaded binary with `FFMPEG_BIN` or `FFix.run/2`'s `ffmpeg:` option.
+
+  ## Options
+
+  - `--variant gpl|lgpl` — required. GPL builds include encoders such as libx264
+    and libx265; LGPL builds omit them. Review the build's licenses before redistribution.
+  - `--branch VERSION` — defaults to `9.0`; the branch must have recorded checksums.
+
+  Windows and glibc Linux builds are supported on x86_64 and ARM64. Linux requires
+  glibc 2.28+, kernel 4.18+, and `tar` with xz support. For macOS, use an installation
+  method listed on [FFmpeg's download page](https://ffmpeg.org/download.html).
+
+  > #### Keep builds explicit {: .info}
+  > Downloading leaves your environment and FFix's helper reference unchanged.
+  > Choose the executable explicitly when testing a different FFmpeg build.
+
+  An existing destination is left untouched; remove it yourself before fetching
+  the same archive again. BtbN archives may expire, and release-branch builds may
+  include commits after a point release. To record another dated build, see
+  `Mix.Tasks.Ffix.Ffmpeg.Checksum`.
   """
 
   alias Mix.FFix.FFmpegDownload, as: Download
