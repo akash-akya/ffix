@@ -15,7 +15,7 @@ defmodule FFix.OutputCallbackTest do
 
   import FFix.Filter
   alias FFix.Command
-  alias FFix.Command.Mapping
+  alias FFix.Command.{Input, Mapping}
   alias FFix.{Decoder, Demuxer, Encoder, Muxer}
 
   test "the issue's HLS references follow final mapping order, independently of input order" do
@@ -45,45 +45,63 @@ defmodule FFix.OutputCallbackTest do
     assert "1:a:0" in values(argv, "-map")
   end
 
-  test "callbacks are deferred, evaluated once per option per serialization, and never cached" do
-    parent = self()
-
+  test "callbacks run once per option occurrence per serialization, even in reused mappings and outputs" do
     callback = fn streams ->
-      send(parent, {:called, streams.main})
+      send(self(), {:called, streams.main})
       "title=#{streams.main.specifier}"
     end
 
     source = FFix.input("in.mp4")
-    built = command(output([main: video(source, 0)], "out.mp4", metadata: callback))
-    Command.validate!(built)
+    mapping = Encoder.encode(video(source, 0), "vendor", custom: callback)
+    muxer = Muxer.new("vendor", custom: callback)
+    output = output([main: mapping, other: mapping], "out.mp4", muxer: muxer, metadata: callback)
+    built = command([output, output])
+    assert Command.validate!(built) == built
     refute_received {:called, _info}
 
-    for _pass <- 1..2 do
-      assert values(FFix.to_argv(built), "-metadata") == ["title=v:0"]
-      assert_received {:called, %{index: 0, specifier: "v:0"}}
+    Enum.each(1..2, fn _pass ->
+      argv = FFix.to_argv(built)
+      assert values(argv, "-metadata") == ["title=v:0", "title=v:0"]
+      assert values(argv, "-custom:0") == ["title=v:0", "title=v:0"]
+      assert values(argv, "-custom:1") == ["title=v:0", "title=v:0"]
+      assert values(argv, "-custom") == ["title=v:0", "title=v:0"]
+      Enum.each(1..8, fn _call -> assert_received {:called, %{index: 0, specifier: "v:0"}} end)
       refute_received {:called, _info}
-    end
+    end)
 
     assert is_function(hd(built.outputs).options[:metadata], 1)
   end
 
-  test "unnamed mappings affect indexes but do not acquire implicit names" do
-    source = FFix.input("in.mp4")
-    mappings = [audio(source, 0), video(source, 0), main: video(source, 0)]
+  test "unnamed mappings count toward indexes across all media without acquiring names" do
+    source = FFix.input("in.mkv")
+
+    mappings = [
+      audio(source, 0),
+      {:captions, FFix.subtitle(source, 0)},
+      {:sound, audio(source, 1)},
+      {:data, Input.select_media(source, :data, 0)},
+      {:cover, Input.select_media(source, :attachment, 0)},
+      {:main, FFix.video(source, 0, attached_pictures: false)}
+    ]
 
     built =
       command(
-        output(
-          mappings,
-          "out.mp4",
+        output(mappings, "out.mkv",
           metadata: fn streams ->
-            assert streams == %{main: %{index: 2, specifier: "v:1"}}
+            assert streams == %{
+                     captions: %{index: 1, specifier: "s:0"},
+                     sound: %{index: 2, specifier: "a:1"},
+                     data: %{index: 3, specifier: "d:0"},
+                     cover: %{index: 4, specifier: "t:0"},
+                     main: %{index: 5, specifier: "v:0"}
+                   }
+
             "title=track-#{streams.main.index}"
           end
         )
       )
 
-    assert values(FFix.to_argv(built), "-metadata") == ["title=track-2"]
+    assert values(FFix.to_argv(built), "-metadata") == ["title=track-5"]
   end
 
   test "names and indexes are local to each output" do
@@ -200,11 +218,21 @@ defmodule FFix.OutputCallbackTest do
   end
 
   test "bad callback results and arities are rejected without executing nested callbacks" do
-    for callback <- [fn _streams -> %{} end, fn _streams -> fn _nested -> "bad" end end] do
+    Enum.each([nil, %{}, "bad\0text", fn _nested -> flunk("must not run") end], fn result ->
       source = FFix.input("in.mp4")
+
+      callback = fn _streams ->
+        send(self(), :resolved)
+        result
+      end
+
       built = command(output([main: video(source, 0)], "out.mp4", metadata: callback))
+      Command.validate!(built)
+      refute_received :resolved
       assert_raise ArgumentError, fn -> FFix.to_argv(built) end
-    end
+      assert_received :resolved
+      refute_received :resolved
+    end)
 
     source = FFix.input("in.mp4")
 
@@ -253,7 +281,8 @@ defmodule FFix.OutputCallbackTest do
     output =
       FFix.output([main: video(source, 0), main: audio(source, 0)], "out.mp4", metadata: callback)
 
-    built = Command.new(inputs: [source], outputs: [output])
+    valid = FFix.output([main: video(source, 0)], "first.mp4", metadata: callback)
+    built = Command.new(inputs: [source], outputs: [valid, output])
 
     assert_raise ArgumentError, ~r/duplicate output mapping name: :main/, fn ->
       FFix.to_argv(built)
@@ -272,7 +301,7 @@ defmodule FFix.OutputCallbackTest do
     end
   end
 
-  test "callbacks reject broad and raw selections, which cannot become graph exports" do
+  test "callbacks reject unresolved layouts before evaluation in both command APIs" do
     source = input("in.mp4")
 
     for broad <- [
@@ -280,18 +309,19 @@ defmodule FFix.OutputCallbackTest do
           FFix.audio(source, :all),
           FFix.select(source, :all),
           FFix.select(source, "v:0"),
-          FFix.select(source, "a:0?")
+          FFix.select(source, "a:0?"),
+          FFix.audio(source, 0, optional: true)
         ] do
       callback = fn _streams -> flunk("must not run") end
-      output = FFix.output([video(source, 0), broad: broad], "out.mp4", metadata: callback)
+      output = FFix.output([video(source, 0), broad], "out.mp4", metadata: callback)
       built = Command.new(inputs: [source], outputs: [output])
 
       assert_raise ArgumentError, ~r/callbacks require every mapping to select one stream/, fn ->
         FFix.to_argv(built)
       end
 
-      assert_raise ArgumentError, fn ->
-        FFix.graph(outputs: [broad: broad])
+      assert_raise ArgumentError, ~r/callbacks require every mapping to select one stream/, fn ->
+        FFix.command(output)
       end
     end
   end
@@ -397,13 +427,15 @@ defmodule FFix.OutputCallbackTest do
 
   test "unknown output media is rejected rather than guessed" do
     source = FFix.input("in.mp4")
-    unknown = source |> video(0) |> FFix.Filter.filter("null", [:unknown])
+    unknown_filter = source |> video(0) |> FFix.Filter.filter("null", [:unknown])
 
-    assert_raise ArgumentError, ~r/require known.*media/, fn ->
-      command(
-        output([main: unknown], "out.mp4", metadata: fn _streams -> flunk("must not run") end)
-      )
-    end
+    Enum.each([FFix.select(source, 0), unknown_filter], fn unknown ->
+      assert_raise ArgumentError, ~r/require known.*media/, fn ->
+        command(
+          output([main: unknown], "out.mp4", metadata: fn _streams -> flunk("must not run") end)
+        )
+      end
+    end)
   end
 
   defp hls_command do

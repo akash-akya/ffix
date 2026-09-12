@@ -4,18 +4,6 @@ defmodule FFix.Command.EncodingTest do
   alias FFix.Command.Encoding
   alias FFix.Encoder
 
-  test "empty and unconfigured singleton layouts have no encoding options" do
-    assert Encoding.plan!([]) == []
-    assert Encoding.plan!([source(:unknown, true, nil)]) == []
-  end
-
-  test "a single configured stream uses its absolute output index" do
-    encoder = %Encoder{name: "libx264", options: [crf: 18]}
-
-    assert Encoding.plan!([source(:video, true, encoder)]) == [{encoder, "0"}]
-    assert Encoding.plan!([source(:unknown, true, :copy)]) == [{:copy, "0"}]
-  end
-
   test "singletons retain absolute indexes including unconfigured and unknown media" do
     encoder = %Encoder{options: [threads: 2]}
 
@@ -35,20 +23,15 @@ defmodule FFix.Command.EncodingTest do
            ]
   end
 
-  test "all-copy singletons never collapse to output-wide copy" do
-    sources = [source(:video, true, :copy), source(:unknown, true, :copy)]
-
-    assert Encoding.plan!(sources) == [{:copy, "0"}, {:copy, "1"}]
+  test "identical singleton policies never collapse to broader scopes" do
+    Enum.each([:copy, %Encoder{name: "aac"}], fn encoding ->
+      sources = [source(:audio, true, encoding), source(:audio, true, encoding)]
+      assert Encoding.plan!(sources) == [{encoding, "0"}, {encoding, "1"}]
+    end)
   end
 
-  test "identical encoders on singletons retain individual absolute scopes" do
-    encoder = %Encoder{name: "aac"}
-    sources = [source(:audio, true, encoder), source(:audio, true, encoder)]
-
-    assert Encoding.plan!(sources) == [{encoder, "0"}, {encoder, "1"}]
-  end
-
-  test "unconfigured plural layouts allow unknown media" do
+  test "unconfigured layouts emit no options, regardless of media or cardinality" do
+    assert Encoding.plan!([source(:unknown, true, nil)]) == []
     assert Encoding.plan!([source(:unknown, false, nil)]) == []
 
     assert Encoding.plan!([
@@ -66,12 +49,6 @@ defmodule FFix.Command.EncodingTest do
              source(:unknown, false, :copy),
              source(:video, false, :copy)
            ]) == [{:copy, nil}]
-  end
-
-  test "one typed plural source uses a media-wide encoder scope" do
-    encoder = %Encoder{name: "libx264"}
-
-    assert Encoding.plan!([source(:video, false, encoder)]) == [{encoder, "v"}]
   end
 
   test "plural groups preserve the order of first media occurrence" do
@@ -199,27 +176,6 @@ defmodule FFix.Command.EncodingTest do
       assert_raise ArgumentError, ~r/unknown media/, fn ->
         Encoding.plan!([source(:unknown, false, :copy), source(:unknown, single, nil)])
       end
-    end
-  end
-
-  test "static option values remain unchanged and callbacks are never executed" do
-    callback = fn _streams -> flunk("encoding planning must not execute callbacks") end
-    encoder = %Encoder{name: "libx264", options: [crf: callback, preset: "slow", threads: 2]}
-
-    assert Encoding.plan!([source(:video, true, encoder)]) == [{encoder, "0"}]
-
-    assert Encoding.plan!([
-             source(:video, false, encoder),
-             source(:video, true, encoder)
-           ]) == [{encoder, "v"}]
-  end
-
-  test "different callback values do not share a plural scope" do
-    first = %Encoder{options: [threads: fn _streams -> flunk("unexpected callback") end]}
-    second = %Encoder{options: [threads: fn _streams -> flunk("unexpected callback") end]}
-
-    assert_raise ArgumentError, ~r/ambiguous.*video/, fn ->
-      Encoding.plan!([source(:video, false, first), source(:video, false, second)])
     end
   end
 

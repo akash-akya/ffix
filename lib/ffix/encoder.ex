@@ -37,7 +37,7 @@ defmodule FFix.Encoder do
   @doc "Builds an unbound configuration without metadata lookup; nil leaves selection to FFmpeg."
   @spec new(String.t() | nil, [Command.output_av_option()]) :: t()
   def new(name, options \\ []) do
-    Command.validate_component!(%__MODULE__{name: name, options: options})
+    Options.validate_component!(%__MODULE__{name: name, options: options})
   end
 
   @doc "Maps a source using a codec or encoder name and unscoped options, without a metadata schema."

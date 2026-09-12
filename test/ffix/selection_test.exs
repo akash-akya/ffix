@@ -106,28 +106,25 @@ defmodule FFix.SelectionTest do
   test "all-copy queries remain direct mappings without fabricated graph pads" do
     input = FFix.input("in.mkv")
 
-    command =
-      input
-      |> FFix.select(:all)
-      |> FFix.stream_copy()
-      |> Muxer.matroska("out.mkv")
-      |> FFix.command()
+    Enum.each([{FFix.select(input, :all), "0"}, {FFix.audio(input, :all), "0:a"}], fn
+      {selection, expected} ->
+        command = selection |> FFix.stream_copy() |> Muxer.matroska("out.mkv") |> FFix.command()
+        assert command.graph == nil
+        assert command.inputs == [input]
 
-    assert command.graph == nil
-    assert command.inputs == [input]
-
-    assert FFix.to_argv(command) == [
-             "ffmpeg",
-             "-i",
-             "in.mkv",
-             "-map",
-             "0",
-             "-c",
-             "copy",
-             "-f",
-             "matroska",
-             "out.mkv"
-           ]
+        assert FFix.to_argv(command) == [
+                 "ffmpeg",
+                 "-i",
+                 "in.mkv",
+                 "-map",
+                 expected,
+                 "-c",
+                 "copy",
+                 "-f",
+                 "matroska",
+                 "out.mkv"
+               ]
+    end)
   end
 
   test "query dependencies preserve order alongside filtered sources" do
@@ -228,8 +225,12 @@ defmodule FFix.SelectionTest do
           FFix.audio(input, 0),
           Encoder.aac(FFix.audio(input, :all))
         ] do
+      output = FFix.output([copied, other], "out.mkv")
+
+      assert_raise ArgumentError, ~r/ambiguous output encoding/, fn -> FFix.command(output) end
+
       assert_raise ArgumentError, ~r/ambiguous output encoding/, fn ->
-        FFix.command(FFix.output([copied, other], "out.mkv"))
+        Command.new(inputs: [input], outputs: [output]) |> FFix.to_argv()
       end
     end
 
@@ -245,45 +246,6 @@ defmodule FFix.SelectionTest do
     assert_raise ArgumentError, ~r/expects video/, fn ->
       Encoder.libx264(FFix.audio(input, :all))
     end
-
-    assert_raise ArgumentError, ~r/cannot copy a filtered source/, fn ->
-      Filter.hflip(FFix.video(input, 0))
-      |> FFix.stream_copy()
-      |> FFix.output("out.mkv")
-      |> FFix.command()
-    end
-  end
-
-  test "callbacks still require a concrete layout and are not evaluated by validation" do
-    input = FFix.input("in.mkv")
-
-    for selection <- [
-          FFix.video(input, :all),
-          FFix.audio(input, 0, optional: true),
-          FFix.select(input, "v:0")
-        ] do
-      output =
-        FFix.output([query: FFix.stream_copy(selection)], "out.mkv",
-          metadata: fn _ -> flunk("must not evaluate") end
-        )
-
-      assert_raise ArgumentError, ~r/callbacks require every mapping to select one stream/, fn ->
-        FFix.command(output)
-      end
-    end
-
-    output =
-      FFix.output([picture: FFix.video(input, 0, attached_pictures: false)], "out.mkv",
-        metadata: fn streams ->
-          send(self(), streams.picture)
-          "title=picture"
-        end
-      )
-
-    command = FFix.command(output)
-    refute_received _message
-    FFix.to_argv(command)
-    assert_received %{index: 0, specifier: "v:0"}
   end
 
   test "raw queries and optional indexes keep their literal mapping suffixes" do

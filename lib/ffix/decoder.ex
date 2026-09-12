@@ -37,7 +37,7 @@ defmodule FFix.Decoder do
   @doc "Builds an unbound configuration without metadata lookup."
   @spec new(String.t() | nil, [Command.av_option()]) :: t()
   def new(name, options \\ []) do
-    Command.validate_component!(%__MODULE__{name: name, options: options})
+    Options.validate_component!(%__MODULE__{name: name, options: options})
   end
 
   @doc "Configures one explicitly indexed input stream using a codec or decoder name."
@@ -49,7 +49,7 @@ defmodule FFix.Decoder do
 
     options = Options.normalize!(options, nil, "#{name || "automatic"} decoder")
     decoder = new(name, options)
-    Command.validate_decoder!(selector, decoder)
+    Input.validate_decoder!(selector, decoder)
     %{input | decoders: Map.put(input.decoders, selector, decoder)}
   end
 

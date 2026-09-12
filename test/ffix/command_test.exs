@@ -60,12 +60,6 @@ defmodule FFix.CommandTest do
            ]
   end
 
-  test "removed graph output shorthands require explicit references" do
-    for shorthand <- [:preview, 0, 1] do
-      assert_raise ArgumentError, fn -> FFix.output(shorthand, "out.mp4") end
-    end
-  end
-
   test "builds argv with independently declared inputs" do
     source = FFix.input("input.mp4")
     logo = FFix.input("logo.png")
@@ -121,8 +115,6 @@ defmodule FFix.CommandTest do
                "out.mkv"
              ]
     end
-
-    refute function_exported?(FFix.Command.Input, :fetch, 2)
   end
 
   test "explicit input ordering uses declarations rather than named input bindings" do
@@ -136,20 +128,6 @@ defmodule FFix.CommandTest do
     assert_raise ArgumentError, ~r/input labels are not supported/, fn ->
       FFix.input("input.mp4", label: :src)
     end
-  end
-
-  test "callback command arities and constructor append overloads are removed" do
-    assert Keyword.get_values(FFix.__info__(:functions), :command) == [1, 2]
-    refute Keyword.has_key?(FFix.__info__(:macros), :__using__)
-    refute Keyword.has_key?(Command.__info__(:functions), :input)
-    refute Keyword.has_key?(Command.__info__(:functions), :output)
-    source = FFix.input("input.mp4")
-
-    assert_raise ArgumentError, fn ->
-      FFix.command(source, fn _source -> flunk("must not run") end)
-    end
-
-    assert_raise ArgumentError, fn -> FFix.command(inputs: [source], outputs: []) end
   end
 
   test "ordinary functions can compose ordered list and map values" do

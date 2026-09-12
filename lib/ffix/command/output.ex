@@ -53,6 +53,8 @@ defmodule FFix.Command.Output do
 
   alias FFix.Command
   alias FFix.Command.Mapping
+  alias FFix.Encoder
+  alias FFix.Muxer
   alias FFix.Options
 
   @type target :: String.t() | :stdout | {:pipe, non_neg_integer()} | {:url, String.t()}
@@ -70,9 +72,9 @@ defmodule FFix.Command.Output do
   @doc "Builds an ordered output declaration without evaluating option callbacks."
   @spec new(Command.binding() | [Command.binding()], target(), [option()]) :: t()
   def new(sources, target, options \\ []) do
-    Command.validate_endpoint!(target, :output)
+    Options.validate_endpoint!(target, :output)
     {configuration, raw_options} = Options.split!(options, [:muxer])
-    Command.validate_cli_options!(raw_options)
+    Options.validate_cli!(raw_options, true)
     sources = List.wrap(sources)
 
     if sources == [] do
@@ -102,5 +104,69 @@ defmodule FFix.Command.Output do
       muxer: Keyword.get(configuration, :muxer),
       options: raw_options
     }
+  end
+
+  @doc false
+  def validate!(%__MODULE__{} = output) do
+    Options.validate_endpoint!(output.target, :output)
+    Options.validate_cli!(output.options, true)
+
+    unless is_list(output.mappings) do
+      raise ArgumentError, "output mappings must be a list of Mapping values"
+    end
+
+    if output.mappings == [] do
+      raise ArgumentError, "output requires at least one source"
+    end
+
+    Enum.reduce(output.mappings, MapSet.new(), fn
+      %Mapping{name: name, encoding: encoding}, names ->
+        unless is_atom(name) and name not in [true, false] do
+          raise ArgumentError, "output mapping name must be an atom or nil, got: #{inspect(name)}"
+        end
+
+        if name != nil and MapSet.member?(names, name) do
+          raise ArgumentError, "duplicate output mapping name: #{inspect(name)}"
+        end
+
+        case encoding do
+          unconfigured when unconfigured in [nil, :copy] -> :ok
+          %Encoder{} -> Options.validate_component!(encoding)
+          other -> raise ArgumentError, "invalid encoding configuration: #{inspect(other)}"
+        end
+
+        MapSet.put(names, name)
+
+      other, _names ->
+        raise ArgumentError, "invalid output mapping: #{inspect(other)}"
+    end)
+
+    encodings = Enum.map(output.mappings, & &1.encoding)
+
+    if Enum.any?(encodings, &(&1 != nil)) do
+      Options.reject_conflicts!(output.options, :encoding, encodings)
+    end
+
+    case output.muxer do
+      nil ->
+        :ok
+
+      %Muxer{} = muxer ->
+        Options.validate_component!(muxer)
+        Options.reject_conflicts!(output.options, :muxer, [muxer])
+
+      other ->
+        raise ArgumentError, "invalid muxer configuration: #{inspect(other)}"
+    end
+
+    output
+  end
+
+  def validate!(other), do: raise(ArgumentError, "invalid command output: #{inspect(other)}")
+
+  @doc false
+  def callbacks?(%__MODULE__{} = output) do
+    Options.callbacks?(output.options) or Options.callbacks?(output.muxer) or
+      Enum.any?(output.mappings, &Options.callbacks?(&1.encoding))
   end
 end
