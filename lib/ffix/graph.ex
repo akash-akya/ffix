@@ -48,12 +48,16 @@ defmodule FFix.Graph do
   compose; conflicting values raise an error. General CLI options belong on
   `FFix.command/2` or its inputs and outputs.
 
+  Filter composition checks the new operation, not every ancestor in an existing
+  snapshot. After editing graph data directly, use `FFix.validate!/1` to check the
+  whole graph. Command construction and graph serialization also validate it.
+
   See [FFmpeg filtergraph syntax](https://ffmpeg.org/ffmpeg-filters.html#Filtergraph-syntax)
   for labels, chains, and filter arguments.
   """
   @behaviour Access
 
-  alias __MODULE__.{Bind, Builder, Export, Parse, Render, StreamRef, Terminal}
+  alias __MODULE__.{Bind, Builder, Export, Parse, Render, StreamRef, Terminal, Validator}
 
   @type node_id :: reference()
   @type setting :: {atom() | String.t(), term()}
@@ -220,5 +224,5 @@ defmodule FFix.Graph do
   """
   @spec to_filtergraph(t()) :: String.t()
   def to_filtergraph(%__MODULE__{} = graph),
-    do: graph |> Builder.validate_graph!() |> Render.to_filtergraph()
+    do: graph |> Validator.graph!() |> Render.to_filtergraph()
 end

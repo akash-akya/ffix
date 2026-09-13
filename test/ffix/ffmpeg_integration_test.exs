@@ -313,16 +313,11 @@ defmodule FFix.FFmpegIntegrationTest do
     end
   end
 
-  test "runner streams ffmpeg logs and progress events" do
+  test "runner streams raw ffmpeg stderr and grouped progress updates" do
     command = runner_observation_command()
 
     events =
       FFix.stream(command, ffmpeg: @ffmpeg, progress: true, stderr: :collect) |> Enum.to_list()
-
-    assert Enum.any?(events, fn
-             {:log, %FFix.Runner.Log{level: :info}} -> true
-             _ -> false
-           end)
 
     assert Enum.any?(events, fn
              {:progress, %FFix.Runner.Progress{status: :end}} -> true
@@ -331,8 +326,17 @@ defmodule FFix.FFmpegIntegrationTest do
 
     assert {:exit, result} = List.last(events)
     assert result.exit_status == 0
+
+    stderr =
+      events
+      |> Enum.flat_map(fn
+        {:stderr, chunk} -> [chunk]
+        _event -> []
+      end)
+      |> IO.iodata_to_binary()
+
+    assert result.stderr == stderr
     assert result.stderr =~ "[info]"
-    assert Enum.any?(result.logs, &(&1.level == :info))
     assert %FFix.Runner.Progress{status: :end} = result.last_progress
     assert result.last_progress.frame >= 1
   end

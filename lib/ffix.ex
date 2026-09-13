@@ -160,7 +160,7 @@ defmodule FFix do
 
   alias FFix.{Command, Filter, Graph, Runner, Selection}
   alias FFix.Command.{Build, Input, Mapping, Output}
-  alias FFix.Graph.{Builder, StreamRef, Terminal}
+  alias FFix.Graph.{Builder, StreamRef, Terminal, Validator}
 
   @type output_media :: :audio | :video | :unknown
   @type stream_index :: non_neg_integer() | :all
@@ -385,6 +385,6 @@ defmodule FFix do
   the command runs. Deferred output option values are checked during serialization.
   """
   @spec validate!(Graph.t() | Command.t()) :: Graph.t() | Command.t()
-  def validate!(%Graph{} = graph), do: Builder.validate_graph!(graph)
+  def validate!(%Graph{} = graph), do: Validator.graph!(graph)
   def validate!(%Command{} = command), do: Command.validate!(command)
 end

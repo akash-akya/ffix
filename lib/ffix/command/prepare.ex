@@ -4,7 +4,7 @@ defmodule FFix.Command.Prepare do
   alias FFix.Command
   alias FFix.Command.{Encoding, Input, Output}
   alias FFix.Graph
-  alias FFix.Graph.{Builder, Export, InputRef, StreamRef}
+  alias FFix.Graph.{Export, InputRef, StreamRef, Validator}
   alias FFix.Options
   alias FFix.Selection
 
@@ -122,7 +122,7 @@ defmodule FFix.Command.Prepare do
   defp resolve_graph!(nil, _inputs), do: nil
 
   defp resolve_graph!(%Graph{} = graph, inputs) do
-    Builder.validate_graph!(graph)
+    Validator.graph!(graph)
 
     nodes =
       Map.new(graph.nodes, fn
@@ -184,7 +184,7 @@ defmodule FFix.Command.Prepare do
 
   defp classify_source!(%StreamRef{} = stream, _graph, inputs) do
     node = StreamRef.node!(stream)
-    Builder.validate_graph!(stream.graph, allow_unused: true)
+    Validator.graph!(stream.graph, allow_unused: true)
 
     unless node.kind == :input and map_size(stream.graph.nodes) == 1 and
              stream.graph.settings == [] do

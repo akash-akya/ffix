@@ -30,7 +30,7 @@ defmodule FFix.MixProject do
   defp deps do
     [
       {:nimble_parsec, "~> 1.4"},
-      {:exile, "~> 0.14"},
+      {:exile, git: "https://github.com/akash-akya/exile.git", branch: "dev"},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false}
     ]
   end
@@ -84,7 +84,6 @@ defmodule FFix.MixProject do
           FFix.Runner,
           FFix.Runner.Result,
           FFix.Runner.Progress,
-          FFix.Runner.Log,
           FFix.Runner.Error
         ],
         Discovery: [

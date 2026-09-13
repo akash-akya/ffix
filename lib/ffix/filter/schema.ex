@@ -32,9 +32,6 @@ defmodule FFix.Filter.Schema do
         help.option_sections
         |> option_specs()
         |> add_timeline(filter.flags)
-        |> Map.new(fn {option, spec} ->
-          {option, Map.put(spec, :filter_name, filter_name)}
-        end)
 
       %{
         filters: Map.put(metadata.filters, filter_name, filter),
@@ -149,26 +146,12 @@ defmodule FFix.Filter.Schema do
       spec =
         declaration
         |> Map.put(:desc, declaration.help)
-        |> Map.put(:default, integer_default(declaration))
         |> Map.put(:owners, declarations |> Enum.map(& &1.owner) |> Enum.uniq())
         |> Map.put(:declarations, declarations)
         |> put_constants(declaration.constants)
 
       Map.put(specs, name, spec)
     end)
-  end
-
-  defp integer_default(declaration) do
-    case {declaration.type, declaration.declared_default} do
-      {type, value} when type in [:int, :int64] and is_binary(value) ->
-        case Integer.parse(value) do
-          {integer, ""} -> integer
-          _other -> nil
-        end
-
-      _other ->
-        nil
-    end
   end
 
   defp put_constants(spec, constants) do
@@ -199,7 +182,6 @@ defmodule FFix.Filter.Schema do
         flags: [],
         desc:
           "timeline expression evaluated before each frame; the filter is enabled when non-zero",
-        default: nil,
         declared_default: nil,
         ranges: [],
         constants: [],

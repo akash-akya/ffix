@@ -5,26 +5,22 @@ defmodule FFix.Runner.Result do
   `FFix.run/2` returns this value on success. On failure, it is available as
   the `result` field of `FFix.Runner.Error`. Streaming includes it in the exit event.
 
-  - `exit_status` — zero for success; a non-zero status or `:epipe` for failure.
+  - `exit_status` — zero for success; a non-zero status for failure.
   - `stdout`, `stderr` — captured bytes according to `FFix.Runner.run/2` options;
     `nil` when discarded.
-  - `logs` — retained `FFix.Runner.Log` entries.
   - `last_progress` — latest parsed progress update, when available.
   - `argv`, `shell` — the executed arguments and their shell-quoted representation.
   - `command` — original command data, or `nil` for raw argv.
   - `started_at`, `finished_at`, `duration_ms` — execution timing.
 
-  `logs_truncated` reports logs omitted by the capture budget.
-  `diagnostics_truncated` reports oversized lines or progress records that were
-  dropped. Full stderr collection retains both raw and parsed diagnostics in
-  memory; use a bounded tail for long-running commands.
+  Full stderr collection retains all diagnostic output in memory; use a bounded
+  tail for long-running commands. Stderr is preserved as raw bytes, not parsed logs.
   """
 
   alias FFix.Command
-  alias FFix.Runner.Log
   alias FFix.Runner.Progress
 
-  @type exit_status :: non_neg_integer() | :epipe
+  @type exit_status :: non_neg_integer()
 
   @type t :: %__MODULE__{
           command: Command.t() | nil,
@@ -33,9 +29,6 @@ defmodule FFix.Runner.Result do
           exit_status: exit_status() | nil,
           stdout: binary() | nil,
           stderr: binary() | nil,
-          logs: [Log.t()],
-          logs_truncated: boolean(),
-          diagnostics_truncated: boolean(),
           last_progress: Progress.t() | nil,
           started_at: DateTime.t() | nil,
           finished_at: DateTime.t() | nil,
@@ -52,9 +45,6 @@ defmodule FFix.Runner.Result do
     :last_progress,
     :started_at,
     :finished_at,
-    :duration_ms,
-    logs: [],
-    logs_truncated: false,
-    diagnostics_truncated: false
+    :duration_ms
   ]
 end

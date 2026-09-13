@@ -1,7 +1,7 @@
 defmodule FFix.Filter.Shape do
   @moduledoc false
 
-  alias FFix.Filter.Metadata
+  alias FFix.Metadata
 
   @type media :: :audio | :video
   @type result :: {:ok, [media()]} | {:unresolved, String.t()}

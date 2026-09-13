@@ -218,6 +218,34 @@ defmodule FFix.Graph.InvariantsTest do
     end
   end
 
+  test "extending a stream still rejects malformed ancestors at materialization" do
+    source = FFix.input("in.mp4")
+    stream = source |> FFix.video(0) |> Filter.scale(w: 16, h: 16) |> Filter.hflip()
+    ancestor = Enum.find(Graph.nodes(stream.graph), &(&1.name == :scale))
+
+    graphs = [
+      %{stream.graph | order: tl(stream.graph.order)},
+      %{stream.graph | settings: [sws_flags: "bad\0value"]},
+      %{
+        stream.graph
+        | nodes: Map.put(stream.graph.nodes, ancestor.id, %{ancestor | output_media: [:audio]})
+      },
+      %{
+        stream.graph
+        | nodes: Map.put(stream.graph.nodes, ancestor.id, %{ancestor | args: [{"bad;key", 1}]})
+      }
+    ]
+
+    for graph <- graphs do
+      extended = Filter.vflip(%{stream | graph: graph})
+      assert_raise ArgumentError, fn -> FFix.graph(output: extended) end
+
+      assert_raise ArgumentError, fn ->
+        extended |> FFix.output("out.mp4") |> FFix.command()
+      end
+    end
+  end
+
   test "file-loaded pad counts are not guessed or read" do
     assert_raise ArgumentError, ~r/unresolved filter output shape/, fn ->
       Graph.parse!("[0:v]split=/outputs=/not/read/by/ffix[left][right]")

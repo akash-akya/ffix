@@ -3,7 +3,7 @@ defmodule FFix.Filter.HelpersTest do
 
   alias FFix.Filter
   alias FFix.Filter.Helpers
-  alias FFix.Filter.Metadata
+  alias FFix.Metadata
   alias FFix.Filter.Schema
   alias FFix.Graph
   alias FFix.Graph.StreamRef
@@ -47,6 +47,11 @@ defmodule FFix.Filter.HelpersTest do
 
     normalized = Schema.normalize!(metadata.filters)
     assert normalized.filters == Metadata.filters()
+    assert normalized.specs == Metadata.filter_specs()
+    assert Metadata.component_metadata() == Map.take(metadata, [:components, :shared])
+
+    assert Helpers.definitions(metadata) ==
+             Helpers.definitions(Metadata.filters(), Metadata.filter_specs())
 
     for {name, spec} <- normalized.specs do
       assert Metadata.filter_spec(name) == spec

@@ -1,15 +1,21 @@
 defmodule FFix.Helpers do
   @moduledoc false
 
-  @metadata_path Path.expand("../../priv/ffmpeg/metadata.exs", __DIR__)
+  @metadata_path FFix.Metadata.path()
 
   # Shared controls supplement private options without exposing every AVOption.
   @codec_options ~w(b g maxrate minrate bufsize threads thread_type flags flags2 profile level strict global_quality compression_level skip_frame skip_idct skip_loop_filter lowres err_detect)
   @format_options ~w(fflags avioflags probesize analyzeduration max_delay flush_packets avoid_negative_ts)
 
   defmacro define(kind) when kind in [:encoder, :decoder, :muxer, :demuxer, :filter] do
-    {metadata, []} = Code.eval_file(@metadata_path)
-    definitions = definitions(metadata, kind)
+    definitions =
+      case kind do
+        :filter ->
+          FFix.Filter.Helpers.definitions(FFix.Metadata.filters(), FFix.Metadata.filter_specs())
+
+        _component ->
+          component_definitions(FFix.Metadata.component_metadata(), kind)
+      end
 
     quote do
       @external_resource unquote(@metadata_path)

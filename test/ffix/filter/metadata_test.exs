@@ -48,7 +48,7 @@ defmodule FFix.Filter.MetadataTest do
     %{specs: %{fixture: specs}} = Schema.normalize!([entry(sections)])
     assert Map.keys(specs) == [:count]
     assert specs.count.type == :string
-    assert specs.count.default == nil
+    assert specs.count.declared_default == "\"later\""
     assert specs.count.owners == ["Different AVClass", "framesync"]
 
     assert specs.count.declarations == [
@@ -60,33 +60,23 @@ defmodule FFix.Filter.MetadataTest do
     assert length(specs.count.declarations) == 1
   end
 
-  test "integer inference uses only complete scalar declared defaults, never help prose" do
+  test "declared defaults retain their spelling and are never inferred from help prose" do
     cases = [
-      {:int, "2", 2},
-      {:int, "0", 0},
-      {:int64, "-1", -1},
-      {:int64, "+2", 2},
-      {:int, nil, nil},
-      {:int, "repeat", nil},
-      {:int, "auto", nil},
-      {:int64, "I64_MIN", nil},
-      {:int, "\"2\"", nil},
-      {:int, "2.0", nil},
-      {:int, "2suffix", nil},
-      {:int, "2 ", nil},
-      {:boolean, "1", nil},
-      {:unsigned, "2", nil},
-      {:uint64, "2", nil},
-      {{:array, :int}, "2", nil}
+      {:int, "2"},
+      {:int, nil},
+      {:int64, "+2"},
+      {:int64, "I64_MIN"},
+      {:boolean, "true"},
+      {:string, "\"stereo\""},
+      {{:array, :int}, "2"}
     ]
 
-    for {type, declared, expected} <- cases do
+    for {type, declared} <- cases do
       declaration = %{option("count", type, declared) | help: "prose (default 999)"}
 
       %{specs: %{fixture: %{count: spec}}} =
         Schema.normalize!([entry([%{name: "owner", options: [declaration]}])])
 
-      assert spec.default == expected
       assert spec.declared_default == declared
       assert spec.desc == "prose (default 999)"
     end
@@ -109,7 +99,7 @@ defmodule FFix.Filter.MetadataTest do
     assert normalized.filters.split.outputs == [:N]
     assert normalized.specs.null == %{}
     assert normalized.specs.nullsink == %{}
-    assert normalized.specs.split.outputs.default == 2
+    assert normalized.specs.split.outputs.declared_default == "2"
     assert normalized.specs.split.outputs.owner == "(a)split"
     assert normalized == Schema.normalize!(Enum.reverse(entries))
   end
@@ -201,7 +191,7 @@ defmodule FFix.Filter.MetadataTest do
       Schema.normalize!([timeline])
 
     assert spec.owner == "owner"
-    assert spec.default == 0
+    assert spec.declared_default == "0"
     refute Map.has_key?(spec, :implicit)
     assert filter.flags == [:T, :S, :C]
 
