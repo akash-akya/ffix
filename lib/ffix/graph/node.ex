@@ -41,4 +41,7 @@ defmodule FFix.Graph.Node do
     output_media: [:unknown],
     metadata: %{}
   ]
+
+  @spec sink?(term()) :: boolean()
+  def sink?(node), do: match?(%__MODULE__{kind: :filter, output_media: []}, node)
 end

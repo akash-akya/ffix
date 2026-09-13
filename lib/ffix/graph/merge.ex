@@ -2,11 +2,11 @@ defmodule FFix.Graph.Merge do
   @moduledoc false
 
   alias FFix.Graph
-  alias FFix.Graph.Builder
+  alias FFix.Graph.{Node, Validator}
 
   def new(settings \\ []) do
     graph = %Graph{id: make_ref(), settings: settings}
-    Builder.validate_graph!(graph, allow_unused: true)
+    Validator.graph!(graph, allow_unused: true)
   end
 
   def merge(graphs, settings \\ []) do
@@ -19,7 +19,7 @@ defmodule FFix.Graph.Merge do
   # Exports belong to the caller's result, not to the fragments being combined.
   # Return newly encountered inputs so commands can interleave query dependencies.
   def add(%Graph{} = merged, %Graph{} = graph) do
-    Builder.validate_graph!(graph, allow_unused: true)
+    Validator.graph!(graph, allow_unused: true)
 
     {nodes, added, inputs} =
       Enum.reduce(graph.order, {merged.nodes, [], []}, fn node_id, {nodes, added, inputs} ->
@@ -46,10 +46,7 @@ defmodule FFix.Graph.Merge do
 
     added = Enum.reverse(added)
 
-    sinks =
-      Enum.filter(added, fn node_id ->
-        nodes[node_id].kind == :filter and nodes[node_id].output_media == []
-      end)
+    sinks = Enum.filter(added, &Node.sink?(nodes[&1]))
 
     merged = %{
       merged

@@ -24,7 +24,7 @@ defmodule FFix.Runner.ExecutableTest do
     ["ffmpeg" | serialized_args] = Command.to_argv(command)
     stream = Runner.stream(command)
     System.put_env("FFMPEG_BIN", "true")
-    assert [{:start, %{argv: ["true" | _]}}, {:exit, %{exit_status: 0}}] = Enum.to_list(stream)
+    assert [{:exit, %{argv: ["true" | _], exit_status: 0}}] = Enum.to_list(stream)
 
     System.put_env("FFMPEG_BIN", "ffix-missing-executable")
     assert [{:error, %{kind: :spawn}}] = Enum.to_list(stream)
@@ -44,11 +44,11 @@ defmodule FFix.Runner.ExecutableTest do
     assert Command.to_argv(command) == ["ffmpeg" | serialized_args]
 
     System.delete_env("FFMPEG_BIN")
-    first = Runner.stream(command) |> Enum.take(1)
+    last = Runner.stream(command) |> Enum.to_list() |> List.last()
 
-    case first do
-      [{:start, %{argv: ["ffmpeg" | _]}}] -> :ok
-      [{:error, %{kind: :spawn, result: %{argv: ["ffmpeg" | _]}}}] -> :ok
+    case last do
+      {:exit, %{argv: ["ffmpeg" | _]}} -> :ok
+      {:error, %{kind: :spawn, result: %{argv: ["ffmpeg" | _]}}} -> :ok
     end
   end
 end

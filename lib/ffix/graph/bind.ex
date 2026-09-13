@@ -3,10 +3,10 @@ defmodule FFix.Graph.Bind do
 
   alias FFix.Command.Input
   alias FFix.Graph
-  alias FFix.Graph.{Builder, InputRef, Merge, Ref, StreamRef}
+  alias FFix.Graph.{Builder, InputRef, Merge, Node, Ref, StreamRef, Validator}
 
   def bind(%Graph{} = template, bindings) do
-    Builder.validate_graph!(template, allow_unused: true)
+    Validator.graph!(template, allow_unused: true)
     bindings = normalize_bindings!(bindings)
     ports = selectors_by_input(template)
     initial = {Merge.new(template.settings), %{}, MapSet.new()}
@@ -39,7 +39,7 @@ defmodule FFix.Graph.Bind do
           }
 
           graph =
-            if cloned.output_media == [] do
+            if Node.sink?(cloned) do
               %{graph | terminals: graph.terminals ++ [cloned.id]}
             else
               graph

@@ -1,12 +1,13 @@
 defmodule FFix.Runner.Progress do
   @moduledoc """
-  One parsed ffmpeg `-progress` update emitted by `FFix.Runner`.
+  One ffmpeg `-progress` update, grouped through its `progress=continue` or
+  `progress=end` marker. Fields without a closing marker are not emitted.
 
   The common fields are exposed directly, while the original key/value payload is
   kept in `fields` for callers that need something more specific.
   """
 
-  @type status :: :continue | :end | String.t()
+  @type status :: :continue | :end
 
   @type t :: %__MODULE__{
           status: status() | nil,

@@ -111,6 +111,31 @@ defmodule FFix.Graph.ReuseTest do
     assert FFix.to_argv(command) |> Enum.any?(&String.starts_with?(&1, "sws_flags=bilinear;"))
   end
 
+  test "extending a graph export preserves sinks, settings, and the original snapshot" do
+    [kept, discarded] = Filter.split(Graph.input(0, :video))
+
+    graph =
+      FFix.graph(
+        outputs: [kept: kept],
+        terminals: [Filter.nullsink(discarded)],
+        settings: [sws_flags: "bilinear"]
+      )
+
+    original_text = FFix.to_filtergraph(graph)
+
+    for extend <- [&Filter.hflip/1, &Filter.filter(&1, "hflip", [:video])] do
+      extended = graph[:kept] |> extend.() |> Filter.vflip()
+      materialized = FFix.graph(output: extended) |> FFix.validate!()
+      assert materialized.settings == graph.settings
+      assert materialized.terminals == graph.terminals
+      assert length(materialized.exports) == 1
+      assert Enum.count(Graph.nodes(materialized), &(&1.name == :split)) == 1
+      assert List.last(Graph.nodes(materialized)).name == :vflip
+      assert FFix.to_filtergraph(materialized) =~ "nullsink;"
+      assert FFix.to_filtergraph(graph) == original_text
+    end
+  end
+
   test "terminal-only instances retain input dependencies and settings" do
     terminal_graph =
       FFix.graph(

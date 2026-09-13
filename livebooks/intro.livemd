@@ -587,7 +587,7 @@ The master playlist should list both resolutions and one audio group. To play it
 
 ## 13. Watch progress and handle failures
 
-A live frame can show progress while FFmpeg works. This example reads at playback speed (`re: :flag`) so you have time to see updates. Omit that input option for normal batch processing.
+A live frame can show progress while FFmpeg works. Start with a waiting message, then update it as progress and exit events arrive. This example reads at playback speed (`re: :flag`) so you have time to see updates. Omit that input option for normal batch processing.
 
 ```elixir
 observation_command =
@@ -597,13 +597,11 @@ observation_command =
   |> FFix.command()
 
 progress_frame = Kino.Frame.new() |> Kino.render()
+Kino.Frame.render(progress_frame, "Waiting for progress…")
 
 observation_command
 |> FFix.stream!(progress: true)
 |> Enum.each(fn
-  {:start, _info} ->
-    Kino.Frame.render(progress_frame, "Reading the clip…")
-
   {:progress, progress} ->
     Kino.Frame.render(progress_frame, "Processed #{progress.frame || 0} frames")
 

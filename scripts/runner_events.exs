@@ -3,7 +3,6 @@ Mix.Task.run("app.start")
 import FFix
 
 defmodule RunnerEvents do
-  alias FFix.Runner.Log
   alias FFix.Runner.Progress
   alias FFix.Runner.Result
 
@@ -104,10 +103,8 @@ defmodule RunnerEvents do
     IO.puts("[#{label} +#{elapsed(started_at)}] #{format_event(event)}")
   end
 
-  defp format_event({:start, %{shell: shell}}), do: "start #{shell}"
   defp format_event({:stdout, chunk}), do: "stdout #{byte_size(chunk)} bytes #{preview(chunk)}"
   defp format_event({:stderr, chunk}), do: "stderr #{byte_size(chunk)} bytes #{preview(chunk)}"
-  defp format_event({:log, %Log{} = log}), do: "log #{log.level} #{preview(log.message)}"
   defp format_event({:progress, %Progress{} = progress}), do: "progress #{progress(progress)}"
 
   defp format_event({:exit, %Result{} = result}) do
@@ -116,8 +113,7 @@ defmodule RunnerEvents do
 
   defp summarize(label, events, %Result{} = result) do
     IO.puts(
-      "#{label} summary: #{summary(events)}; logs=#{length(result.logs)}; " <>
-        "last_progress=#{progress(result.last_progress)}"
+      "#{label} summary: #{summary(events)}; last_progress=#{progress(result.last_progress)}"
     )
   end
 

@@ -1,7 +1,7 @@
 defmodule FFix.Graph.Parse do
   @moduledoc false
 
-  alias FFix.Filter.Metadata
+  alias FFix.Metadata
   alias FFix.Graph
   alias FFix.Graph.Export
   alias FFix.Graph.InputRef
@@ -142,11 +142,7 @@ defmodule FFix.Graph.Parse do
 
     graph_id = make_ref()
 
-    terminals =
-      Enum.filter(
-        order,
-        &(state.nodes[&1].kind == :filter and state.nodes[&1].output_media == [])
-      )
+    terminals = Enum.filter(order, &Node.sink?(state.nodes[&1]))
 
     used_refs = state.nodes |> Map.values() |> Enum.flat_map(& &1.inputs) |> MapSet.new()
 

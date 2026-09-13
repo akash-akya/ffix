@@ -6,15 +6,19 @@ defmodule FFix.Filter.Helpers do
   @spec definitions(map()) :: [Macro.t()]
   def definitions(metadata) do
     normalized = Schema.normalize!(Map.fetch!(metadata, :filters))
+    definitions(normalized.filters, normalized.specs)
+  end
 
-    normalized.filters
+  @spec definitions(map(), map()) :: [Macro.t()]
+  def definitions(filters, specs) do
+    filters
     |> Enum.sort_by(fn {name, _filter} -> name end)
     |> Enum.map(fn {name, filter} ->
       if name == :filter do
         raise ArgumentError, "filter helper name conflicts with the generic filter operation"
       end
 
-      helper(name, filter, Map.fetch!(normalized.specs, name))
+      helper(name, filter, Map.fetch!(specs, name))
     end)
   end
 

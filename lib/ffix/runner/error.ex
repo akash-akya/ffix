@@ -1,18 +1,19 @@
 defmodule FFix.Runner.Error do
   @moduledoc """
-  An FFmpeg process that failed to start, finish successfully, or exchange data.
+  A missing command executable or an unsuccessful process exit.
 
-  `kind` is `:spawn`, `:exit`, or `:io`. The `message` is suitable for logs, and
+  `kind` is `:spawn` or `:exit`. The `message` is suitable for logs, and
   `result` contains captured diagnostics. `exit_status` is available when the
   process produced one. See `FFix.Runner.Result` for its fields.
 
   `FFix.run/2` returns `{:error, error}`. `FFix.run!/2` raises this exception.
+  Process I/O follows `Exile.stream/2` semantics rather than producing this error.
   Exceptions from your own callbacks and stream consumers propagate separately.
   """
 
   alias FFix.Runner.Result
 
-  @type kind :: :spawn | :exit | :io
+  @type kind :: :spawn | :exit
 
   @type t :: %__MODULE__{
           kind: kind(),
@@ -42,16 +43,6 @@ defmodule FFix.Runner.Error do
       result: result,
       exit_status: exit_status,
       message: build_exit_message(result)
-    }
-  end
-
-  @doc false
-  @spec io(String.t(), Result.t()) :: t()
-  def io(reason, %Result{} = result) do
-    %__MODULE__{
-      kind: :io,
-      result: result,
-      message: "command I/O failed: #{reason}\ncommand: #{result.shell}"
     }
   end
 

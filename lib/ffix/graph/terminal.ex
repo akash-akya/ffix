@@ -15,9 +15,10 @@ defmodule FFix.Graph.Terminal do
 
   @doc false
   def validate!(%__MODULE__{graph: graph, node_id: node_id} = terminal) do
-    case Map.fetch(graph.nodes, node_id) do
-      {:ok, %FFix.Graph.Node{kind: :filter, output_media: []}} -> terminal
-      _ -> raise ArgumentError, "terminal must reference a sink node"
+    unless FFix.Graph.Node.sink?(Map.get(graph.nodes, node_id)) do
+      raise ArgumentError, "terminal must reference a sink node"
     end
+
+    terminal
   end
 end
