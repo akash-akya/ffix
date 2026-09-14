@@ -261,7 +261,7 @@ defmodule Mix.FFix.FFmpegDownload do
   defp verify!(archive, expected) do
     digest =
       archive
-      |> File.stream!([], 65_536)
+      |> File.stream!(65_536)
       |> Enum.reduce(:crypto.hash_init(:sha256), &:crypto.hash_update(&2, &1))
       |> :crypto.hash_final()
       |> Base.encode16(case: :lower)

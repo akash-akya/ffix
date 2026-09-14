@@ -30,7 +30,7 @@ defmodule FFix.MixProject do
   defp deps do
     [
       {:nimble_parsec, "~> 1.4"},
-      {:exile, git: "https://github.com/akash-akya/exile.git", branch: "dev"},
+      {:exile, "~> 0.15"},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false}
     ]
   end
