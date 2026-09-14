@@ -45,7 +45,7 @@ defmodule FFix.Runner do
         |> Muxer.mux("image2pipe", :stdout)
         |> FFix.command()
 
-      result = FFix.run!(command, stdin: File.stream!("photo.png", [], 65_536), stdout: :collect)
+      result = FFix.run!(command, stdin: File.stream!("photo.png", 65_536), stdout: :collect)
       File.write!("small.png", result.stdout)
 
   > #### Collect only what you need {: .warning}

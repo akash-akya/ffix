@@ -258,7 +258,11 @@ defmodule FFix.SelectionTest do
     argv = FFix.command(output) |> FFix.to_argv()
     assert "0:a:m:language:eng" in argv
     assert "0:4?" in argv
-    assert_raise ArgumentError, fn -> Selection.validate!(%Selection{input_ref: %{}}) end
+    invalid_selection = struct!(Selection, input_ref: %{})
+
+    assert_raise ArgumentError, "selections require a captured input declaration", fn ->
+      Selection.validate!(invalid_selection)
+    end
 
     assert_raise ArgumentError, fn ->
       FFix.output(FFix.audio(input, :all), "out.mkv", c: :copy)
