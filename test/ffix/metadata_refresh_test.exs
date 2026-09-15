@@ -110,6 +110,27 @@ defmodule FFix.MetadataRefreshTest do
     end)
   end
 
+  test "component helper conflicts leave the prior snapshot unchanged", context do
+    set_filters(context, ["null"])
+    path = Path.join(context.directory, "priv/ffmpeg/metadata.exs")
+
+    File.cd!(context.directory, fn ->
+      Metadata.run(["--ffmpeg", context.executable])
+      original = File.read!(path)
+
+      for kind <- [:encoder, :decoder, :muxer, :demuxer] do
+        File.write!(Path.join(context.directory, "mode"), "conflict_#{kind}")
+
+        assert_raise ArgumentError, ~r/helper name conflicts/, fn ->
+          Metadata.run(["--ffmpeg", context.executable])
+        end
+
+        assert File.read!(path) == original
+        assert Path.wildcard(path <> ".*.tmp") == []
+      end
+    end)
+  end
+
   defp error_type("missing_pads"), do: ArgumentError
   defp error_type(_mode), do: Mix.Error
 
@@ -140,22 +161,23 @@ defmodule FFix.MetadataRefreshTest do
         """
         [ "$LC_ALL" = C ] || exit 9
         printf '%s\\n' "$4" "$5" >> '#{directory}/calls'
+        mode=''
+        if [ -f '#{directory}/mode' ]; then mode="$(cat '#{directory}/mode')"; fi
         case "$4" in
           -version) printf 'ffmpeg version fixture Copyright\\n';;
           -encoders|-decoders|-muxers|-demuxers|-filters)
             name="${4#-}"
             cat '#{directory}/'"$name";;
           -h)
+            name="${5#*=}"
+            if [ "$mode" = "conflict_${5%%=*}" ]; then name="$name,new"; fi
             case "$5" in
               full) printf 'AVCodecContext AVOptions:\\n';;
-              encoder=*) printf 'Encoder %s [Fixture]:\\n' "${5#encoder=}";;
-              decoder=*) printf 'Decoder %s [Fixture]:\\n' "${5#decoder=}";;
-              muxer=*) printf 'Muxer %s [Fixture]:\\n' "${5#muxer=}";;
-              demuxer=*) printf 'Demuxer %s [Fixture]:\\n' "${5#demuxer=}";;
+              encoder=*) printf 'Encoder %s [Fixture]:\\n' "$name";;
+              decoder=*) printf 'Decoder %s [Fixture]:\\n' "$name";;
+              muxer=*) printf 'Muxer %s [Fixture]:\\n' "$name";;
+              demuxer=*) printf 'Demuxer %s [Fixture]:\\n' "$name";;
               filter=*)
-                name="${5#filter=}"
-                mode=''
-                if [ -f '#{directory}/mode' ]; then mode="$(cat '#{directory}/mode')"; fi
                 if [ "$name" = vendor ]; then
                   case "$mode" in
                     failure) printf 'capture failed\\n' >&2; exit 3;;

@@ -104,6 +104,37 @@ defmodule FFix.CommandValidationTest do
     refute "-filter_complex" in FFix.to_argv(command)
   end
 
+  test "graph settings require filters in both command construction styles" do
+    input = FFix.input("in.mp4")
+    stream = FFix.video(input, 0)
+    settings = [sws_flags: "bilinear"]
+
+    for source <- [stream, FFix.video(input, :all)] do
+      output = FFix.output(source, "out.mp4")
+
+      assert_raise ArgumentError, ~r/graph settings require filter nodes/, fn ->
+        FFix.command(output, settings: settings)
+      end
+
+      graphs = [
+        %Graph{id: make_ref(), settings: settings},
+        FFix.graph(output: stream, settings: settings)
+      ]
+
+      for graph <- graphs do
+        command = Command.new(inputs: [input], graph: graph, outputs: [output])
+
+        assert_raise ArgumentError, ~r/graph settings require filter nodes/, fn ->
+          Command.validate!(command)
+        end
+
+        assert_raise ArgumentError, ~r/graph settings require filter nodes/, fn ->
+          FFix.to_argv(command)
+        end
+      end
+    end
+  end
+
   test "malformed sources and targets fail at construction and on hand-built structs" do
     for invalid <- [%{}, nil, :bad, "", <<0>>, pipe: -1, url: 4] do
       assert_raise ArgumentError, ~r/invalid input/, fn -> FFix.input(invalid) end

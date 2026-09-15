@@ -5,6 +5,8 @@ defmodule FFix.Command.Render do
   alias FFix.Graph
   alias FFix.Graph.InputRef
 
+  @doc "Requires a prepared command with resolved callbacks."
+  @spec to_argv(FFix.Command.Prepare.t()) :: [String.t()]
   def to_argv(prepared) do
     {graph_args, labels} = render_graph(prepared.graph)
 

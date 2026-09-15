@@ -137,23 +137,22 @@ defmodule FFix.Graph do
   @doc "Returns an output by name or zero-based position, or `nil` when missing. Also available as `graph[key]`."
   @spec export(t(), Export.name() | non_neg_integer()) :: StreamRef.t() | nil
   def export(%__MODULE__{} = graph, key) do
-    index =
-      cond do
-        is_integer(key) and key >= 0 ->
-          key
+    export =
+      case key do
+        index when is_integer(index) and index >= 0 ->
+          Enum.at(graph.exports, index)
 
-        (is_atom(key) and key not in [nil, true, false]) or is_binary(key) ->
-          Enum.find_index(
-            graph.exports,
-            &(&1.name != nil and to_string(&1.name) == to_string(key))
-          )
+        name when (is_atom(name) and name not in [nil, true, false]) or is_binary(name) ->
+          name = to_string(name)
+          Enum.find(graph.exports, &(&1.name != nil and to_string(&1.name) == name))
 
-        true ->
+        _key ->
           nil
       end
 
-    if index != nil and index < length(graph.exports) do
-      stream(graph, Enum.at(graph.exports, index))
+    case export do
+      nil -> nil
+      export -> stream(graph, export)
     end
   end
 

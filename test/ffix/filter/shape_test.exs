@@ -72,6 +72,20 @@ defmodule FFix.Filter.ShapeTest do
     assert {:unresolved, _reason} = Shape.resolve(:ebur128, :outputs, video: "maybe")
   end
 
+  test "positional arguments unrelated to shape do not prevent inference" do
+    assert Shape.resolve(:ebur128, :outputs, pos: 1, pos: "640x480") ==
+             {:ok, [:video, :audio]}
+
+    assert Shape.resolve(:ebur128, :outputs, pos: 1, pos: "640x480", video: false) ==
+             {:ok, [:audio]}
+
+    assert Shape.resolve(:hstack, :inputs, pos: 3, pos: true) ==
+             {:ok, [:video, :video, :video]}
+
+    assert {:unresolved, _reason} =
+             Shape.resolve(:ebur128, :outputs, video: true, pos: "640x480")
+  end
+
   test "channelsplit supports mono and stereo without guessing unfamiliar layouts" do
     assert Shape.resolve(:channelsplit, :outputs) == {:ok, [:audio, :audio]}
     assert Shape.resolve(:channelsplit, :outputs, channel_layout: :mono) == {:ok, [:audio]}

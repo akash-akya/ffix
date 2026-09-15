@@ -30,8 +30,8 @@ defmodule FFix.Discovery do
   All query functions accept:
 
   - `:ffmpeg` — executable path/name; defaults to `FFMPEG_BIN`, then `ffmpeg` on `PATH`.
-  - `:timeout` — per-process timeout in milliseconds; defaults to `10_000`.
-  - `:max_output` — maximum captured bytes per process; defaults to `8_388_608`.
+  - `:timeout` — non-negative milliseconds or `:infinity`; defaults to `10_000`.
+  - `:max_output` — non-negative capture limit in bytes; defaults to `8_388_608`.
 
   A `help/3` query first checks the catalog, then requests help. Limits apply to
   each process. See `FFix.Discovery.Error` for failures and captured diagnostics.
@@ -70,7 +70,8 @@ defmodule FFix.Discovery do
     protocol: "protocol"
   ]
 
-  @type option :: {:ffmpeg, String.t()} | {:timeout, pos_integer()} | {:max_output, pos_integer()}
+  @type option ::
+          {:ffmpeg, String.t()} | {:timeout, timeout()} | {:max_output, non_neg_integer()}
   @type result(value) :: {:ok, value} | {:error, Error.t()}
 
   @doc "Returns the catalog kinds accepted by `list/2`. This is the list of query types supported by FFix."

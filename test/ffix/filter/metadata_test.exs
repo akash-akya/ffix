@@ -28,7 +28,7 @@ defmodule FFix.Filter.MetadataTest do
     assert [%{owner: "overlay"}, %{owner: "framesync"}] =
              specs.overlay.repeatlast.declarations
 
-    assert specs.overlay.repeatlast.desc =~ "extend last frame"
+    assert specs.overlay.repeatlast.help =~ "extend last frame"
     assert filters.scale.inputs == [:V]
     assert filters.scale.dynamic_pads.inputs =~ "dynamic"
     assert hd(entries).help.dynamic_pads.inputs =~ "dynamic"
@@ -78,7 +78,7 @@ defmodule FFix.Filter.MetadataTest do
         Schema.normalize!([entry([%{name: "owner", options: [declaration]}])])
 
       assert spec.declared_default == declared
-      assert spec.desc == "prose (default 999)"
+      assert spec.help == "prose (default 999)"
     end
   end
 
@@ -149,7 +149,7 @@ defmodule FFix.Filter.MetadataTest do
 
     assert map_size(specs) == 6
     assert specs.sample_rates.type == {:array, :int}
-    refute Map.has_key?(specs.sample_rates, :sub)
+    assert specs.sample_rates.constants == []
     assert Value.normalize(["44100", 48000], specs.sample_rates) == [44100, 48000]
     assert Value.normalize("44100|48000", specs.sample_rates) == "44100|48000"
     assert Value.normalize([:fltp, :s16], specs.sample_fmts) == ["fltp", "s16"]
@@ -169,8 +169,7 @@ defmodule FFix.Filter.MetadataTest do
     %{specs: %{fixture: specs}} =
       Schema.normalize!([entry([%{name: "owner", options: [declaration, unknown]}])])
 
-    assert [%{num: "", enum: "multi word"}, %{num: "0", enum: "zero-value"}] =
-             specs.flags.sub
+    assert specs.flags.constants == declaration.constants
 
     assert specs.flags.ranges == declaration.ranges
     assert specs.future.type == {:unknown, "future-type"}

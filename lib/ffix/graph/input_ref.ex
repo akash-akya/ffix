@@ -99,7 +99,7 @@ defmodule FFix.Graph.InputRef do
 
   @spec selector_string(selector()) :: String.t()
   def selector_string(selector) do
-    case normalize_selector!(selector) do
+    case selector do
       whole when whole in [:input, :all] -> ""
       media when media in @selector_media -> selector_prefix(media)
       {media, :all} when media in @selector_media -> selector_prefix(media)

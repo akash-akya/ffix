@@ -32,7 +32,7 @@ defmodule Mix.Tasks.Ffix.Refresh.Metadata do
   alias FFix.Discovery
   alias FFix.Discovery.Exec
   alias FFix.Discovery.Parser
-  alias FFix.Filter.Helpers
+  alias FFix.Helpers
 
   @metadata_path "priv/ffmpeg/metadata.exs"
   @selection [
@@ -109,7 +109,11 @@ defmodule Mix.Tasks.Ffix.Refresh.Metadata do
       end)
 
     metadata = %{version: version, shared: shared, components: components, filters: filters}
-    Helpers.definitions(metadata)
+
+    Enum.each([:filter, :encoder, :decoder, :muxer, :demuxer], fn kind ->
+      Helpers.definitions(metadata, kind)
+    end)
+
     report_signature_changes(previous, filters)
     metadata
   end

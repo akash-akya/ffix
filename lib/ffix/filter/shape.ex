@@ -154,10 +154,12 @@ defmodule FFix.Filter.Shape do
               {[slot | remaining], false} ->
                 {:cont, {Map.put(options, slot, value), remaining, false}}
 
-              _other ->
-                {:halt,
-                 {:unresolved,
-                  "unsupported positional option or positional value after named option"}}
+              {[], false} ->
+                # Later positional slots do not affect this policy's pad shape.
+                {:cont, {options, [], false}}
+
+              {_slots, true} ->
+                {:halt, {:unresolved, "positional value after named option"}}
             end
 
           key ->

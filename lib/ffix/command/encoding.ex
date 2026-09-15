@@ -10,7 +10,10 @@ defmodule FFix.Command.Encoding do
           encoding: nil | :copy | Encoder.t()
         }
 
-  @spec plan!([source()]) :: [{:copy | Encoder.t(), String.t() | nil}]
+  @typedoc "A `nil` specifier applies to all output streams."
+  @type plan :: [{:copy | Encoder.t(), String.t() | nil}]
+
+  @spec plan!([source()]) :: plan()
   def plan!(sources) do
     cond do
       Enum.all?(sources, & &1.single) ->

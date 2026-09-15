@@ -49,6 +49,7 @@ defmodule FFix.Filter.Helpers do
 
     output_spec = output_typespec(outputs)
     options_typespec = build_options_typespec(option_specs)
+    runtime_specs = Map.new(option_specs, fn {name, spec} -> {name, Map.take(spec, [:type])} end)
 
     example = filter_example(name)
 
@@ -82,7 +83,7 @@ defmodule FFix.Filter.Helpers do
           unquote(inputs),
           unquote(outputs),
           options,
-          unquote(Macro.escape(option_specs))
+          unquote(Macro.escape(runtime_specs))
         )
       end
     end
@@ -138,21 +139,21 @@ defmodule FFix.Filter.Helpers do
     |> Enum.map_join("\n", fn {name, config} ->
       constants =
         config
-        |> Map.get(:sub, [])
+        |> Map.get(:constants, [])
         |> Enum.map_join("\n", fn constant ->
           number =
-            case constant.num do
-              "" -> ""
+            case constant.value do
+              value when value in [nil, ""] -> ""
               value -> " (#{value})"
             end
 
-          "    - `#{constant.enum}`#{number}" <>
-            FFix.Helpers.description_suffix(constant.desc, " — ")
+          "    - `#{constant.name}`#{number}" <>
+            FFix.Helpers.description_suffix(constant.help, " — ")
         end)
 
       row =
         "- `#{name}` (#{FFix.Helpers.option_type(config.type)})" <>
-          FFix.Helpers.description_suffix(config.desc, ": ")
+          FFix.Helpers.description_suffix(config.help, ": ")
 
       case constants do
         "" -> row

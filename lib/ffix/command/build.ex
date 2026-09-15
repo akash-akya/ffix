@@ -40,15 +40,9 @@ defmodule FFix.Command.Build do
       |> unique_inputs!()
 
     inputs = resolve_inputs!(captured_inputs, input_refs, options)
-    filters? = Enum.any?(graph.nodes, fn {_id, node} -> node.kind == :filter end)
-
-    if not filters? and graph.settings != [] do
-      raise ArgumentError,
-            "graph settings require filter nodes; cannot discard settings from a direct mapping command"
-    end
 
     graph =
-      if map_size(graph.nodes) == 0 do
+      if map_size(graph.nodes) == 0 and graph.settings == [] do
         nil
       else
         %{graph | exports: Enum.reverse(graph.exports)}

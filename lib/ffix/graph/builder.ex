@@ -19,13 +19,14 @@ defmodule FFix.Graph.Builder do
   def input(index, selector) do
     input_ref = InputRef.new(index, selector)
     selector = Validator.selector!(input_ref.selector)
+    media = InputRef.media(selector)
 
     node = %Node{
       id: make_ref(),
       kind: :input,
       name: :input,
       input_ref: input_ref,
-      output_media: [selector_media(selector)]
+      output_media: [media]
     }
 
     graph = %Graph{id: make_ref(), nodes: %{node.id => node}, order: [node.id]}
@@ -33,7 +34,7 @@ defmodule FFix.Graph.Builder do
     %StreamRef{
       graph: graph,
       ref: %Ref{node_id: node.id, output: 0},
-      media: selector_media(selector)
+      media: media
     }
   end
 
@@ -77,11 +78,8 @@ defmodule FFix.Graph.Builder do
         ) ::
           StreamRef.t() | Terminal.t() | [StreamRef.t()]
   def apply_filter(name, inputs, input_signature, outputs, options, option_specs) do
-    validate_named_inputs!(name, inputs, input_signature)
-    inputs = normalize_inputs(inputs)
-    validate_streams!(inputs)
-    validate_options!(options, option_specs)
-    args = normalize_args(options, option_specs)
+    inputs = normalize_named_inputs!(name, inputs, input_signature)
+    args = normalize_named_args!(options, option_specs)
 
     shape =
       cond do
@@ -147,7 +145,7 @@ defmodule FFix.Graph.Builder do
   def graph(options) when is_list(options) do
     validate_graph_keys!(options)
     {exports, terminals} = normalize_roots(options)
-    settings = Validator.settings!(Keyword.get(options, :settings, []))
+    settings = Keyword.get(options, :settings, [])
 
     streams = Enum.map(exports, fn {_name, stream} -> stream end)
     graphs = Enum.map(streams ++ terminals, & &1.graph)
@@ -161,40 +159,26 @@ defmodule FFix.Graph.Builder do
     %{graph | exports: graph_exports}
   end
 
-  defp validate_named_inputs!(name, inputs, signature) do
-    unless length(inputs) == length(signature) do
-      raise ArgumentError, "invalid input count for #{name}"
-    end
-
+  defp normalize_named_inputs!(name, inputs, signature) do
     Enum.zip(inputs, signature)
-    |> Enum.each(fn
+    |> Enum.flat_map(fn
       {streams, :N} when is_list(streams) ->
         validate_streams!(streams)
+        streams
 
-      {%StreamRef{media: media}, expected} when expected in [:A, :V] ->
+      {%StreamRef{media: media} = stream, expected} when expected in [:A, :V] ->
+        StreamRef.node!(stream)
         expected_media = media_from_io(expected)
 
         if media not in [:unknown, expected_media] do
           raise ArgumentError, "#{name} expects #{expected_media} input, got: #{media}"
         end
 
+        [stream]
+
       {other, _expected} ->
         raise ArgumentError,
               "invalid input for #{name}: #{inspect(other)}; pass one stream per fixed input pad"
-    end)
-  end
-
-  defp normalize_inputs(inputs) do
-    Enum.flat_map(inputs, fn
-      %StreamRef{} = stream ->
-        [stream]
-
-      streams when is_list(streams) ->
-        streams
-
-      other ->
-        raise ArgumentError,
-              "expected a stream reference or ordered input list, got: #{inspect(other)}"
     end)
   end
 
@@ -252,25 +236,29 @@ defmodule FFix.Graph.Builder do
     raise ArgumentError, "filter options must be an ordered list, got: #{inspect(other)}"
   end
 
-  # Keep value normalization permissive so raw ffmpeg strings remain an escape hatch.
-  defp validate_options!(options, specs) do
+  defp normalize_named_args!(options, specs) do
     {_special, options} = FFix.Options.split!(options, [])
 
-    Enum.each(options, fn {key, value} ->
-      if key != :pos and option_spec(specs, key) == nil do
-        raise ArgumentError, "#{key} is not a valid option"
-      end
+    Enum.map(options, fn {key, value} ->
+      spec =
+        case key do
+          :pos -> nil
+          key -> option_spec!(specs, key)
+        end
 
       validate_named_value!(value)
+      {key, Value.normalize(value, spec)}
     end)
   end
 
-  defp option_spec(specs, key) do
-    Enum.find_value(specs, fn {name, spec} ->
-      if to_string(name) == to_string(key) do
-        spec
-      end
-    end)
+  defp option_spec!(specs, key) do
+    name = to_string(key)
+    entry = Enum.find(specs, fn {option, _spec} -> to_string(option) == name end)
+
+    case entry do
+      {_name, spec} -> spec
+      nil -> raise ArgumentError, "#{key} is not a valid option"
+    end
   end
 
   defp validate_named_value!(values) when is_list(values),
@@ -278,16 +266,12 @@ defmodule FFix.Graph.Builder do
 
   defp validate_named_value!(value), do: Validator.value!(value)
 
-  defp normalize_args(options, specs) do
-    Enum.map(options, fn
-      {:pos, value} -> {:pos, Value.normalize(value, nil)}
-      {key, value} -> {key, Value.normalize(value, option_spec(specs, key))}
-    end)
+  defp media_from_io(media) do
+    case media do
+      :A -> :audio
+      :V -> :video
+    end
   end
-
-  defp media_from_io(:A), do: :audio
-  defp media_from_io(:V), do: :video
-  defp media_from_io(_), do: :unknown
 
   defp validate_graph_keys!(options) do
     unless Keyword.keyword?(options) do
@@ -296,7 +280,7 @@ defmodule FFix.Graph.Builder do
 
     keys = Keyword.keys(options)
 
-    if length(keys) != length(Enum.uniq(keys)) do
+    if keys != Enum.uniq(keys) do
       raise ArgumentError, "duplicate graph option; specify each root collection once"
     end
 
@@ -363,6 +347,4 @@ defmodule FFix.Graph.Builder do
       other -> raise ArgumentError, "invalid graph terminal: #{inspect(other)}"
     end)
   end
-
-  defp selector_media(selector), do: InputRef.media(selector)
 end

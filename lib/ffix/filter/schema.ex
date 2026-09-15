@@ -145,33 +145,11 @@ defmodule FFix.Filter.Schema do
 
       spec =
         declaration
-        |> Map.put(:desc, declaration.help)
         |> Map.put(:owners, declarations |> Enum.map(& &1.owner) |> Enum.uniq())
         |> Map.put(:declarations, declarations)
-        |> put_constants(declaration.constants)
 
       Map.put(specs, name, spec)
     end)
-  end
-
-  defp put_constants(spec, constants) do
-    case constants do
-      [] ->
-        spec
-
-      constants ->
-        values =
-          Enum.map(constants, fn constant ->
-            %{
-              enum: constant.name,
-              num: constant.value || "",
-              flags: constant.flags,
-              desc: constant.help
-            }
-          end)
-
-        Map.put(spec, :sub, values)
-    end
   end
 
   defp add_timeline(specs, flags) do
@@ -180,7 +158,7 @@ defmodule FFix.Filter.Schema do
         name: "enable",
         type: :string,
         flags: [],
-        desc:
+        help:
           "timeline expression evaluated before each frame; the filter is enabled when non-zero",
         declared_default: nil,
         ranges: [],

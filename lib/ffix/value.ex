@@ -74,9 +74,6 @@ defmodule FFix.Value do
 
   defp normalize_untyped(value) when is_nil(value), do: value
   defp normalize_untyped(value) when is_boolean(value), do: value
-  defp normalize_untyped(value) when is_integer(value), do: value
-  defp normalize_untyped(value) when is_float(value), do: value
-  defp normalize_untyped(value) when is_binary(value), do: value
   defp normalize_untyped(value) when is_atom(value), do: Atom.to_string(value)
   defp normalize_untyped(value) when is_list(value), do: Enum.map(value, &normalize_untyped/1)
   defp normalize_untyped(value), do: value
