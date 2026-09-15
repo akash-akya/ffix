@@ -4,12 +4,32 @@ defmodule FFix.Command.Prepare do
   alias FFix.Command
   alias FFix.Command.{Encoding, Input, Output}
   alias FFix.Graph
-  alias FFix.Graph.{Export, InputRef, StreamRef, Validator}
+  alias FFix.Graph.{Export, InputRef, Ref, StreamRef, Validator}
   alias FFix.Options
   alias FFix.Selection
 
-  # Resolved positions and output layouts belong to this operation, never to the
-  # stored command. Validation uses the same preparation without running callbacks.
+  @typedoc "The boolean marks an optional input selection."
+  @type source :: {:input, InputRef.t(), boolean()} | {:filter, Ref.t()}
+
+  @typedoc "`streams` is populated only for option callbacks."
+  @type output :: %{
+          target: Output.target(),
+          sources: [source()],
+          encodings: Encoding.plan(),
+          muxer: FFix.Muxer.t() | nil,
+          options: [Output.option()],
+          streams: Command.streams() | nil
+        }
+
+  @type t :: %{
+          global_options: [Command.option()],
+          inputs: [Input.t()],
+          graph: Graph.t() | nil,
+          outputs: [output()]
+        }
+
+  @doc "Validates without evaluating callbacks."
+  @spec command!(Command.t()) :: t()
   def command!(%Command{} = command) do
     Options.validate_cli!(command.global_options)
     inputs = index_inputs!(command.inputs)
@@ -46,6 +66,8 @@ defmodule FFix.Command.Prepare do
     }
   end
 
+  @doc "Evaluates and validates option callbacks."
+  @spec resolve_options!(t()) :: t()
   def resolve_options!(prepared) do
     outputs =
       Enum.map(prepared.outputs, fn output ->
@@ -123,6 +145,11 @@ defmodule FFix.Command.Prepare do
 
   defp resolve_graph!(%Graph{} = graph, inputs) do
     Validator.graph!(graph)
+
+    if graph.settings != [] and
+         not Enum.any?(graph.nodes, fn {_id, node} -> node.kind == :filter end) do
+      raise ArgumentError, "graph settings require filter nodes"
+    end
 
     nodes =
       Map.new(graph.nodes, fn

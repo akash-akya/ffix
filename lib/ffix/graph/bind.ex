@@ -9,20 +9,14 @@ defmodule FFix.Graph.Bind do
     Validator.graph!(template, allow_unused: true)
     bindings = normalize_bindings!(bindings)
     ports = selectors_by_input(template)
-    initial = {Merge.new(template.settings), %{}, MapSet.new()}
+    initial = {Merge.new(template.settings), %{}, []}
 
     {graph, replacements, used} =
       Enum.reduce(Graph.nodes(template), initial, fn node, {graph, replacements, used} ->
         if node.kind == :input do
-          {stream, key} = resolve_binding!(node.input_ref, bindings, ports)
+          {stream, keys} = resolve_binding!(node.input_ref, bindings, ports)
           {graph, _inputs} = Merge.add(graph, stream.graph)
-
-          used =
-            if key == nil do
-              used
-            else
-              MapSet.put(used, key)
-            end
+          used = keys ++ used
 
           {graph, Map.put(replacements, node.id, stream.ref), used}
         else
@@ -49,7 +43,7 @@ defmodule FFix.Graph.Bind do
         end
       end)
 
-    unused = Map.keys(bindings) -- MapSet.to_list(used)
+    unused = Map.keys(bindings) -- used
 
     if unused != [] do
       raise ArgumentError, "unknown graph input bindings: #{inspect(unused)}"
@@ -87,16 +81,17 @@ defmodule FFix.Graph.Bind do
         &Map.has_key?(bindings, &1)
       )
 
-    {value, key} =
+    value =
       case keys do
-        [] -> {input_ref.declaration, nil}
-        [key] -> {Map.fetch!(bindings, key), key}
+        [] -> input_ref.declaration
+        [key] -> Map.fetch!(bindings, key)
         _ -> raise ArgumentError, "multiple bindings for graph input #{inspect(input_ref)}"
       end
 
-    if is_struct(value, StreamRef) and key == input_ref.input and length(ports[key]) > 1 do
+    if is_struct(value, StreamRef) and keys == [input_ref.input] and
+         length(ports[input_ref.input]) > 1 do
       raise ArgumentError,
-            "input #{inspect(key)} has multiple selectors; bind an Input declaration or exact {input, selector} slots"
+            "input #{inspect(input_ref.input)} has multiple selectors; bind an Input declaration or exact {input, selector} slots"
     end
 
     stream =
@@ -105,6 +100,7 @@ defmodule FFix.Graph.Bind do
           Builder.input(value, input_ref.selector)
 
         %StreamRef{} ->
+          StreamRef.node!(value)
           value
 
         nil ->
@@ -115,14 +111,13 @@ defmodule FFix.Graph.Bind do
                 "graph inputs bind to Input declarations or StreamRefs, got: #{inspect(value)}"
       end
 
-    StreamRef.node!(stream)
     expected = InputRef.media(input_ref.selector)
 
     if expected != :unknown and stream.media not in [:unknown, expected] do
       raise ArgumentError, "graph input expects #{expected}, got: #{stream.media}"
     end
 
-    {stream, key}
+    {stream, keys}
   end
 
   defp normalize_bindings!(bindings) when is_map(bindings) or is_list(bindings) do

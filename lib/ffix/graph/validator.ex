@@ -13,7 +13,7 @@ defmodule FFix.Graph.Validator do
       raise ArgumentError, "invalid graph structure"
     end
 
-    unless Enum.uniq(graph.order) == graph.order and
+    unless length(graph.order) == map_size(graph.nodes) and
              MapSet.new(graph.order) == MapSet.new(Map.keys(graph.nodes)) do
       raise ArgumentError, "graph order must contain every node exactly once"
     end
@@ -33,27 +33,22 @@ defmodule FFix.Graph.Validator do
         raise ArgumentError, "graph export belongs to a different graph"
       end
 
-      validate_ref!(export.ref, graph.nodes, "export")
-      node = Map.fetch!(graph.nodes, export.ref.node_id)
+      node = validate_ref!(export.ref, graph.nodes, "export")
 
       unless export.media == Enum.at(node.output_media, export.ref.output) do
         raise ArgumentError, "graph export media does not match its output pad"
       end
 
-      name = export.name
-
-      unless is_nil(name) or (is_atom(name) and name not in [true, false]) or
-               (is_binary(name) and name != "") do
-        raise ArgumentError, "invalid graph export name: #{inspect(name)}"
-      end
-
       key =
-        if name != nil do
-          to_string(name)
+        case export.name do
+          nil -> nil
+          name when is_atom(name) and name not in [true, false] -> Atom.to_string(name)
+          name when is_binary(name) and name != "" -> name
+          name -> raise ArgumentError, "invalid graph export name: #{inspect(name)}"
         end
 
       if key != nil and MapSet.member?(names, key) do
-        raise ArgumentError, "duplicate graph export name: #{inspect(name)}"
+        raise ArgumentError, "duplicate graph export name: #{inspect(export.name)}"
       end
 
       MapSet.put(names, key)
@@ -61,7 +56,7 @@ defmodule FFix.Graph.Validator do
 
     sinks = Enum.filter(graph.order, &Node.sink?(graph.nodes[&1]))
 
-    unless Enum.uniq(graph.terminals) == graph.terminals and
+    unless length(sinks) == length(graph.terminals) and
              MapSet.new(sinks) == MapSet.new(graph.terminals) do
       raise ArgumentError, "graph terminals must contain every sink exactly once"
     end
@@ -122,17 +117,20 @@ defmodule FFix.Graph.Validator do
             media
 
           {:unresolved, _reason} ->
-            Metadata.filter!(name).inputs
-            |> Enum.filter(&(&1 in [:A, :V]))
-            |> Enum.map(fn
-              :A -> :audio
-              :V -> :video
-            end)
-        end
+            fixed_inputs =
+              Metadata.filter!(name).inputs
+              |> Enum.filter(&(&1 in [:A, :V]))
+              |> Enum.map(fn
+                :A -> :audio
+                :V -> :video
+              end)
 
-      if length(node.inputs) < length(expected) do
-        raise ArgumentError, "missing fixed input pads for #{name}"
-      end
+            if length(node.inputs) < length(fixed_inputs) do
+              raise ArgumentError, "missing fixed input pads for #{name}"
+            end
+
+            fixed_inputs
+        end
 
       Enum.zip(node.inputs, expected)
       |> Enum.each(fn {ref, media} ->
@@ -149,9 +147,9 @@ defmodule FFix.Graph.Validator do
 
   defp validate_ref!(%Ref{node_id: node_id, output: output}, nodes, context) do
     case Map.get(nodes, node_id) do
-      %Node{output_media: media}
+      %Node{output_media: media} = node
       when is_integer(output) and output >= 0 and output < length(media) ->
-        :ok
+        node
 
       _ ->
         raise ArgumentError,
@@ -163,44 +161,29 @@ defmodule FFix.Graph.Validator do
     do: raise(ArgumentError, "invalid #{context} ref: #{inspect(ref)}")
 
   defp validate_connected_outputs!(graph, allow_unused) do
-    used_outputs =
-      graph.nodes
-      |> Map.values()
-      |> Enum.flat_map(& &1.inputs)
-      |> Enum.map(fn %Ref{node_id: node_id, output: output} -> {node_id, output} end)
-      |> Kernel.++(
-        Enum.map(graph.exports, fn %Export{ref: %Ref{node_id: node_id, output: output}} ->
-          {node_id, output}
-        end)
-      )
-      |> Enum.frequencies()
+    nodes = Graph.nodes(graph)
+    inputs = Enum.flat_map(nodes, & &1.inputs)
+    exports = Enum.map(graph.exports, & &1.ref)
+    consumers = Enum.frequencies(inputs ++ exports)
+    filters = Enum.filter(nodes, &(&1.kind == :filter))
 
-    Enum.each(graph.order, fn node_id ->
-      case Map.fetch!(graph.nodes, node_id) do
-        %Node{kind: :filter, output_media: media} ->
-          media
-          |> Enum.with_index()
-          |> Enum.each(fn {_media, output} ->
-            case Map.get(used_outputs, {node_id, output}, 0) do
-              0 when allow_unused ->
-                :ok
+    Enum.each(filters, fn node ->
+      node.output_media
+      |> Enum.with_index()
+      |> Enum.each(fn {_media, output} ->
+        ref = %Ref{node_id: node.id, output: output}
+        count = Map.get(consumers, ref, 0)
 
-              0 ->
-                raise ArgumentError,
-                      "unconnected filter output #{inspect({node_id, output})}; every produced output must be consumed or exported"
+        if count == 0 and not allow_unused do
+          raise ArgumentError,
+                "unconnected filter output #{inspect({node.id, output})}; every produced output must be consumed or exported"
+        end
 
-              1 ->
-                :ok
-
-              count ->
-                raise ArgumentError,
-                      "filter output #{inspect({node_id, output})} is used #{count} times; use split/asplit for multiple consumers"
-            end
-          end)
-
-        _node ->
-          :ok
-      end
+        if count > 1 do
+          raise ArgumentError,
+                "filter output #{inspect({node.id, output})} is used #{count} times; use split/asplit for multiple consumers"
+        end
+      end)
     end)
   end
 
@@ -248,13 +231,13 @@ defmodule FFix.Graph.Validator do
   end
 
   @spec media!(FFix.Graph.StreamRef.media()) :: FFix.Graph.StreamRef.media()
-  def media!(:audio), do: :audio
-  def media!(:video), do: :video
-  def media!(:unknown), do: :unknown
-
   def media!(media) do
-    raise ArgumentError,
-          "output media must be :audio, :video, or :unknown, got: #{inspect(media)}"
+    unless media in [:audio, :video, :unknown] do
+      raise ArgumentError,
+            "output media must be :audio, :video, or :unknown, got: #{inspect(media)}"
+    end
+
+    media
   end
 
   @spec option_name!(atom() | String.t()) :: String.t()
@@ -279,7 +262,7 @@ defmodule FFix.Graph.Validator do
 
   def value!(value) when is_number(value) or is_boolean(value), do: value
 
-  def value!(value) when is_atom(value) and not is_nil(value), do: Atom.to_string(value)
+  def value!(value) when is_atom(value) and not is_nil(value), do: value!(Atom.to_string(value))
 
   def value!(other) do
     raise ArgumentError,
@@ -300,11 +283,7 @@ defmodule FFix.Graph.Validator do
           raise ArgumentError, "duplicate graph setting: #{name}"
         end
 
-        if is_list(value) do
-          Enum.each(value, &value!/1)
-        else
-          value!(value)
-        end
+        validate_argument_value!(value)
 
         MapSet.put(names, name)
 

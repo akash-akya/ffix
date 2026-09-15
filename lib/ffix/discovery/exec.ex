@@ -11,10 +11,21 @@ defmodule FFix.Discovery.Exec do
         max_output: 8_388_608
       )
 
+    timeout = options[:timeout]
+    max_output = options[:max_output]
+
+    unless timeout == :infinity or (is_integer(timeout) and timeout >= 0) do
+      raise ArgumentError, "discovery :timeout must be a non-negative integer or :infinity"
+    end
+
+    unless is_integer(max_output) and max_output >= 0 do
+      raise ArgumentError, "discovery :max_output must be a non-negative integer"
+    end
+
     with {:ok, executable} <- executable(options[:ffmpeg]) do
       argv = [executable, "-hide_banner", "-v", "quiet" | arguments]
-      task = Task.async(fn -> capture(argv, options[:max_output]) end)
-      await(task, argv, options[:timeout])
+      task = Task.async(fn -> capture(argv, max_output) end)
+      await(task, argv, timeout)
     end
   end
 

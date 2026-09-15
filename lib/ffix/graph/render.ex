@@ -12,19 +12,14 @@ defmodule FFix.Graph.Render do
           exports: [%{name: Export.name() | nil, label: String.t(), ref: Ref.t()}]
         }
 
+  @doc "Renders a graph already checked by `FFix.Graph.Validator`."
   @spec render(Graph.t()) :: render_result()
   def render(%Graph{} = graph) do
-    node_labels = build_node_labels(graph)
-    output_labels = build_output_labels(graph, node_labels)
-
-    lines =
-      settings_lines(graph.settings) ++
-        Enum.flat_map(graph.order, fn node_id ->
-          case render_node(Map.fetch!(graph.nodes, node_id), graph.nodes, output_labels) do
-            nil -> []
-            line -> [line]
-          end
-        end)
+    filters = Enum.filter(Graph.nodes(graph), &(&1.kind == :filter))
+    node_labels = build_node_labels(filters)
+    output_labels = build_output_labels(filters, graph.exports, node_labels)
+    filter_lines = Enum.map(filters, &render_node(&1, graph.nodes, output_labels))
+    lines = settings_lines(graph.settings) ++ filter_lines
 
     %{
       graph: Enum.join(lines, "\n"),
@@ -44,8 +39,6 @@ defmodule FFix.Graph.Render do
       "#{key}=#{encode_setting_value(value)};"
     end)
   end
-
-  defp render_node(%Node{kind: :input}, _nodes, _output_labels), do: nil
 
   defp render_node(%Node{} = node, nodes, output_labels) do
     inputs = Enum.map_join(node.inputs, "", &input_label(&1, nodes, output_labels))
@@ -75,10 +68,7 @@ defmodule FFix.Graph.Render do
     node.output_media
     |> Enum.with_index()
     |> Enum.map_join("", fn {_media, output} ->
-      case Map.get(output_labels, {node.id, output}) do
-        nil -> ""
-        label -> "[#{label}]"
-      end
+      "[#{Map.fetch!(output_labels, {node.id, output})}]"
     end)
   end
 
@@ -103,7 +93,6 @@ defmodule FFix.Graph.Render do
   defp encode_value(value) when is_boolean(value), do: to_string(value)
   defp encode_value(value) when is_integer(value), do: Integer.to_string(value)
   defp encode_value(value) when is_float(value), do: FFix.Value.float_to_string(value)
-  defp encode_value(nil), do: ""
   defp encode_value(value) when is_atom(value), do: value |> Atom.to_string() |> escape_value()
   defp encode_value(value) when is_list(value), do: Enum.map_join(value, "|", &encode_value/1)
   defp encode_value(value) when is_binary(value), do: escape_value(value)
@@ -114,20 +103,26 @@ defmodule FFix.Graph.Render do
   defp escape_graph(value), do: escape(value, ~c"\\'[],; \t\r\n")
 
   defp escape(value, special_chars) do
-    if String.contains?(value, <<0>>) do
-      raise ArgumentError, "filtergraph values must not contain NUL"
-    end
-
     value
     |> String.to_charlist()
-    |> Enum.map(fn char -> if char in special_chars, do: [?\\, char], else: char end)
+    |> Enum.map(fn char ->
+      if char in special_chars do
+        [?\\, char]
+      else
+        char
+      end
+    end)
     |> List.to_string()
   end
 
   defp input_ref_to_string(%InputRef{input: input, selector: selector}) do
     input = graph_input_id!(input)
     suffix = InputRef.selector_string(selector)
-    if suffix == "", do: to_string(input), else: "#{input}:#{suffix}"
+
+    case suffix do
+      "" -> to_string(input)
+      suffix -> "#{input}:#{suffix}"
+    end
   end
 
   defp graph_input_id!(input) when is_integer(input), do: input
@@ -142,58 +137,51 @@ defmodule FFix.Graph.Render do
     end)
   end
 
-  defp build_node_labels(%Graph{} = graph) do
+  defp build_node_labels(filters) do
     {labels, _counts} =
-      Enum.reduce(graph.order, {%{}, %{}}, fn node_id, {labels, counts} ->
-        node = Map.fetch!(graph.nodes, node_id)
+      Enum.reduce(filters, {%{}, %{}}, fn node, {labels, counts} ->
+        name = to_string(node.name)
+        count = Map.get(counts, name, 0)
 
-        if node.kind == :filter do
-          name = to_string(node.name)
-          count = Map.get(counts, name, 0)
-          label = if count == 0, do: name, else: "#{name}_#{count}"
+        label =
+          case count do
+            0 -> name
+            count -> "#{name}_#{count}"
+          end
 
-          {Map.put(labels, node_id, label), Map.put(counts, name, count + 1)}
-        else
-          {labels, counts}
-        end
+        {Map.put(labels, node.id, label), Map.put(counts, name, count + 1)}
       end)
 
     labels
   end
 
-  defp build_output_labels(%Graph{} = graph, node_labels) do
-    {labels, used_labels} = export_labels(graph.exports)
-    used_outputs = used_outputs(graph)
+  defp build_output_labels(filters, exports, node_labels) do
+    initial = export_labels(exports)
 
-    Enum.reduce(graph.order, {labels, used_labels}, fn node_id, {labels, used_labels} ->
-      node = Map.fetch!(graph.nodes, node_id)
+    {labels, _used_labels} =
+      Enum.reduce(filters, initial, fn node, labels ->
+        preferred_labels = Map.get(node.metadata, :preferred_labels, %{})
+        node_label = Map.fetch!(node_labels, node.id)
 
-      if node.kind == :filter do
-        required_outputs = required_outputs(node, used_outputs)
-        preferred_labels = preferred_output_labels(node)
-
-        Enum.reduce(required_outputs, {labels, used_labels}, fn output, {labels, used_labels} ->
-          key = {node_id, output}
+        node.output_media
+        |> Enum.with_index()
+        |> Enum.reduce(labels, fn {_media, output}, {labels, used_labels} ->
+          key = {node.id, output}
 
           if Map.has_key?(labels, key) do
             {labels, used_labels}
           else
             preferred_label = Map.get(preferred_labels, output)
-            fallback_label = "#{Map.fetch!(node_labels, node_id)}_#{output}"
+            fallback_label = "#{node_label}_#{output}"
             base_label = safe_label(preferred_label, fallback_label)
             label = unique_label(base_label, used_labels)
             {Map.put(labels, key, label), MapSet.put(used_labels, label)}
           end
         end)
-      else
-        {labels, used_labels}
-      end
-    end)
-    |> elem(0)
-  end
+      end)
 
-  defp preferred_output_labels(%Node{metadata: %{preferred_labels: labels}}), do: labels
-  defp preferred_output_labels(%Node{}), do: %{}
+    labels
+  end
 
   defp export_labels(exports) do
     Enum.with_index(exports)
@@ -204,33 +192,6 @@ defmodule FFix.Graph.Render do
 
       {Map.put(labels, ref_key(ref), label), MapSet.put(used, label)}
     end)
-  end
-
-  # Multi-output filters need labels for every output so later outputs stay addressable.
-  defp required_outputs(%Node{output_media: media}, _used_outputs) when length(media) > 1 do
-    Enum.to_list(0..(length(media) - 1))
-  end
-
-  defp required_outputs(%Node{id: node_id, output_media: [_media]}, used_outputs) do
-    if MapSet.member?(used_outputs, {node_id, 0}) do
-      [0]
-    else
-      []
-    end
-  end
-
-  defp required_outputs(%Node{output_media: []}, _used_outputs), do: []
-
-  defp used_outputs(%Graph{} = graph) do
-    input_refs =
-      graph.nodes
-      |> Map.values()
-      |> Enum.flat_map(& &1.inputs)
-      |> Enum.map(&ref_key/1)
-
-    export_refs = Enum.map(graph.exports, &ref_key(&1.ref))
-
-    MapSet.new(input_refs ++ export_refs)
   end
 
   defp ref_key(%Ref{node_id: node_id, output: output}), do: {node_id, output}
@@ -246,15 +207,17 @@ defmodule FFix.Graph.Render do
     end
   end
 
-  defp unique_label(base, used_labels) do
-    if MapSet.member?(used_labels, base) do
-      Stream.iterate(1, &(&1 + 1))
-      |> Enum.find_value(fn suffix ->
-        candidate = "#{base}_#{suffix}"
-        if MapSet.member?(used_labels, candidate), do: nil, else: candidate
-      end)
+  defp unique_label(base, used_labels, suffix \\ 0) do
+    candidate =
+      case suffix do
+        0 -> base
+        suffix -> "#{base}_#{suffix}"
+      end
+
+    if MapSet.member?(used_labels, candidate) do
+      unique_label(base, used_labels, suffix + 1)
     else
-      base
+      candidate
     end
   end
 end

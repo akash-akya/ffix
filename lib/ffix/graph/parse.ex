@@ -105,7 +105,7 @@ defmodule FFix.Graph.Parse do
       inputs: explicit_inputs ++ implicit_inputs,
       args: args,
       output_media: output_media,
-      metadata: preferred_label_metadata(preferred_labels)
+      metadata: %{preferred_labels: preferred_labels}
     }
 
     state = put_node(state, node)
@@ -194,9 +194,6 @@ defmodule FFix.Graph.Parse do
   end
 
   defp ensure_input_node(state, input_ref) do
-    InputRef.normalize_input_id!(input_ref.input)
-    InputRef.normalize_selector!(input_ref.selector)
-
     case state.input_nodes[input_ref] do
       nil ->
         node_id = make_ref()
@@ -206,7 +203,7 @@ defmodule FFix.Graph.Parse do
           kind: :input,
           name: :input,
           input_ref: input_ref,
-          output_media: [selector_media(input_ref.selector)]
+          output_media: [InputRef.media(input_ref.selector)]
         }
 
         ref = %Ref{node_id: node_id, output: 0}
@@ -252,58 +249,44 @@ defmodule FFix.Graph.Parse do
   }
 
   defp parse_input_ref(label) do
-    case String.split(label, ":") do
-      [input] ->
-        build_input_ref(input, :input)
+    [input | parts] = String.split(label, ":")
 
-      [input, prefix] when is_map_key(@media_prefixes, prefix) ->
-        build_input_ref(input, Map.fetch!(@media_prefixes, prefix))
-
-      [input, prefix, stream] when is_map_key(@media_prefixes, prefix) ->
-        build_stream_input_ref(input, stream, Map.fetch!(@media_prefixes, prefix)) ||
-          build_raw_input_ref(input, prefix <> ":" <> stream)
-
-      [input, index] ->
-        build_stream_input_ref(input, index, :index) || build_raw_input_ref(input, index)
-
-      [input | selector] ->
-        build_raw_input_ref(input, Enum.join(selector, ":"))
-
-      _ ->
-        nil
-    end
-  end
-
-  defp build_input_ref(input, selector) do
-    with {input, ""} <- Integer.parse(input) do
+    with {input, ""} <- Integer.parse(input),
+         selector when selector != nil <- parse_selector(parts) do
       %InputRef{input: input, selector: selector}
     else
       _ -> nil
     end
   end
 
-  defp build_stream_input_ref(input, stream, selector) do
-    with {input, ""} <- Integer.parse(input),
-         {stream, ""} <- Integer.parse(stream) do
-      %InputRef{input: input, selector: {selector, stream}}
-    else
-      _ -> nil
+  defp parse_selector(parts) do
+    raw = Enum.join(parts, ":")
+
+    case parts do
+      [] ->
+        :input
+
+      [""] ->
+        nil
+
+      [prefix] when is_map_key(@media_prefixes, prefix) ->
+        Map.fetch!(@media_prefixes, prefix)
+
+      [index] ->
+        parse_indexed_selector(index, :index, raw)
+
+      [prefix, index] when is_map_key(@media_prefixes, prefix) ->
+        parse_indexed_selector(index, Map.fetch!(@media_prefixes, prefix), raw)
+
+      _parts ->
+        {:raw, raw}
     end
   end
 
-  defp build_raw_input_ref(input, selector) do
-    with {input, ""} <- Integer.parse(input),
-         false <- selector == "" do
-      %InputRef{input: input, selector: {:raw, selector}}
-    else
-      _ -> nil
+  defp parse_indexed_selector(index, media, raw) do
+    case Integer.parse(index) do
+      {index, ""} -> {media, index}
+      _other -> {:raw, raw}
     end
   end
-
-  defp preferred_label_metadata(%{} = preferred_labels) when map_size(preferred_labels) == 0,
-    do: %{}
-
-  defp preferred_label_metadata(preferred_labels), do: %{preferred_labels: preferred_labels}
-
-  defp selector_media(selector), do: InputRef.media(selector)
 end

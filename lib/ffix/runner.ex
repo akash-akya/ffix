@@ -52,6 +52,7 @@ defmodule FFix.Runner do
   > `stdout: :collect` and `stderr: :collect` retain their full output in memory.
   > For large media, consume stdout chunks with `stream/2` and keep stdout's
   > default `:discard` capture policy. Live chunks are still emitted.
+  > Progress buffers are unbounded, even with limited stderr capture.
 
   ## Choose FFmpeg
 
@@ -515,16 +516,6 @@ defmodule FFix.Runner do
   end
 
   defp shell_string(argv) do
-    Enum.map_join(argv, " ", &shell_escape/1)
-  end
-
-  defp shell_escape(""), do: "''"
-
-  defp shell_escape(argument) do
-    if String.match?(argument, ~r|^[A-Za-z0-9_@%+=:,./-]+$|) do
-      argument
-    else
-      "'" <> String.replace(argument, "'", ~S('"'"')) <> "'"
-    end
+    Enum.map_join(argv, " ", &FFix.Command.Render.shell_escape/1)
   end
 end

@@ -36,10 +36,13 @@ defmodule FFix.Command do
   the right stream scopes. If using raw scoped options, write the full name,
   such as `"metadata:s:a:0"`. FFix rejects raw controls that conflict with
   structured settings or change the mapping layout those settings depend on.
+  Conflict checks ignore stream scopes.
   Raw option names can repeat where FFmpeg allows it; structured component
   options must be specified once.
 
   ## Explicit construction
+
+  For input ordering alone, use `FFix.command(outputs, inputs: ordered_inputs)`.
 
       alias FFix.Command
       source = FFix.input("interview.mp4")

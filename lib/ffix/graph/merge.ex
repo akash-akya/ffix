@@ -5,8 +5,8 @@ defmodule FFix.Graph.Merge do
   alias FFix.Graph.{Node, Validator}
 
   def new(settings \\ []) do
-    graph = %Graph{id: make_ref(), settings: settings}
-    Validator.graph!(graph, allow_unused: true)
+    settings = Validator.settings!(settings)
+    %Graph{id: make_ref(), settings: settings}
   end
 
   def merge(graphs, settings \\ []) do

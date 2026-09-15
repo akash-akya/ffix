@@ -100,6 +100,35 @@ defmodule FFix.DiscoveryTest do
              Discovery.version(ffmpeg: Path.join(context.directory, "absent"))
   end
 
+  test "invalid resource limits fail before executable lookup or process startup", context do
+    absent = Path.join(context.directory, "absent")
+
+    for timeout <- [-1, 1.5, nil, "1000", :invalid] do
+      assert_raise ArgumentError, ~r/timeout/, fn ->
+        Discovery.version(ffmpeg: absent, timeout: timeout)
+      end
+    end
+
+    for limit <- [-1, 1.5, nil, "1024", :infinity] do
+      assert_raise ArgumentError, ~r/max_output/, fn ->
+        Discovery.version(ffmpeg: absent, max_output: limit)
+      end
+    end
+  end
+
+  test "resource limits allow an infinite timeout and a zero-byte capture", context do
+    executable = executable(context, "printf 'ffmpeg version fixture Copyright\\n'")
+
+    assert {:ok, %{version: "fixture"}} =
+             Discovery.version(ffmpeg: executable, timeout: :infinity)
+
+    assert {:error, %Error{reason: :output_limit, output: ""}} =
+             Discovery.version(ffmpeg: executable, max_output: 0)
+
+    assert {:error, %Error{reason: :executable_not_found}} =
+             Discovery.version(ffmpeg: Path.join(context.directory, "absent"), timeout: 0)
+  end
+
   test "timeout terminates the OS child rather than only abandoning the caller", context do
     pid_file = Path.join(context.directory, "pid")
     executable = executable(context, "echo $$ > '#{pid_file}'\nexec sleep 30\n")

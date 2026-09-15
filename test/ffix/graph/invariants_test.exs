@@ -201,6 +201,7 @@ defmodule FFix.Graph.InvariantsTest do
           %{node | instance: "bad;name"},
           %{node | args: [{"text;injected", "value"}]},
           %{node | args: [text: "bad\0text"]},
+          %{node | args: [text: :"bad\0text"]},
           %{node | args: [text: fn -> flunk("must not run") end]},
           %{node | output_media: [:audio]}
         ] do
@@ -212,6 +213,7 @@ defmodule FFix.Graph.InvariantsTest do
           nil,
           [{"sws_flags;injected", "value"}],
           [sws_flags: "bad\0text"],
+          [sws_flags: [:"bad\0text"]],
           [sws_flags: "fast_bilinear", sws_flags: "lanczos"]
         ] do
       assert_raise ArgumentError, fn -> Graph.to_filtergraph(%{graph | settings: settings}) end

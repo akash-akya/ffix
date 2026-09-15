@@ -97,6 +97,15 @@ defmodule FFix.Filter.HelpersTest do
     assert [%StreamRef{}, %StreamRef{}] = Filter.select(video, outputs: 3, n: 2)
   end
 
+  test "shape inference preserves unrelated positional options in helpers and parsed graphs" do
+    [picture, sound] = Filter.ebur128(Graph.input(0, :audio), pos: 1, pos: "640x480")
+    graph = FFix.graph(outputs: [v: picture, a: sound])
+    text = "[0:a]ebur128=1:640x480[v][a];"
+
+    assert FFix.to_filtergraph(graph) == text
+    assert text |> Graph.parse!() |> FFix.to_filtergraph() == text
+  end
+
   test "filter helpers preserve arrays, raw strings, expressions, flags and positional order" do
     audio = Graph.input(0, :audio)
     formatted = Filter.aformat(audio, sample_rates: ["44100", 48000], sample_fmts: [:fltp, :s16])
@@ -164,13 +173,13 @@ defmodule FFix.Filter.HelpersTest do
       options = %{
         mode: %{
           type: :int,
-          desc: blank,
-          sub: [
-            %{enum: "dc_luma", num: "0", desc: blank},
-            %{enum: "all", num: "", desc: "Run every test"}
+          help: blank,
+          constants: [
+            %{name: "dc_luma", value: "0", help: blank},
+            %{name: "all", value: nil, help: "Run every test"}
           ]
         },
-        rate: %{type: :int, desc: "Set frame rate"}
+        rate: %{type: :int, help: "Set frame rate"}
       }
 
       assert Helpers.build_options_doc(options) ==
