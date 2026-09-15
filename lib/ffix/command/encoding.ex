@@ -16,11 +16,11 @@ defmodule FFix.Command.Encoding do
   @spec plan!([source()]) :: plan()
   def plan!(sources) do
     cond do
-      Enum.all?(sources, & &1.single) ->
-        indexed_plan(sources, nil)
-
       Enum.all?(sources, &is_nil(&1.encoding)) ->
         []
+
+      Enum.all?(sources, & &1.single) ->
+        indexed_plan(sources, nil)
 
       Enum.all?(sources, &(&1.encoding == :copy)) ->
         [{:copy, nil}]
@@ -40,11 +40,11 @@ defmodule FFix.Command.Encoding do
     end
   end
 
-  defp group_plan!([first | _rest] = sources, media) do
+  defp group_plan!([first | rest] = sources, media) do
     prefix = InputRef.media_prefix(media)
 
     cond do
-      Enum.all?(sources, &(&1.encoding === first.encoding)) ->
+      Enum.all?(rest, &(&1.encoding === first.encoding)) ->
         case first.encoding do
           nil -> []
           encoding -> [{encoding, prefix}]

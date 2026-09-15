@@ -110,10 +110,6 @@ defmodule FFix.Command.Input do
   def new(source, options \\ []) do
     {configuration, raw_options} = Options.split!(options, [:demuxer, :decoders])
 
-    if List.keymember?(raw_options, :label, 0) do
-      raise ArgumentError, "input labels are not supported; bind named graph inputs explicitly"
-    end
-
     input = %__MODULE__{
       id: make_ref(),
       source: source,
@@ -239,7 +235,6 @@ defmodule FFix.Command.Input do
   end
 
   defp selection(input, selector, options) do
-    selector = InputRef.normalize_selector!(selector)
     optional = Keyword.get(options, :optional, false)
 
     if InputRef.single?(selector) and not optional do
