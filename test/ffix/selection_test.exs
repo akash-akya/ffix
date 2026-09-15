@@ -163,7 +163,7 @@ defmodule FFix.SelectionTest do
       FFix.command(FFix.output([query, FFix.video(changed, 0)], "out.mkv"))
     end
 
-    assert_raise ArgumentError, ~r/missing from explicit/, fn ->
+    assert_raise ArgumentError, ~r/not declared in the command/, fn ->
       FFix.command(output, inputs: [])
     end
   end

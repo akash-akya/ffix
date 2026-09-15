@@ -211,7 +211,6 @@ defmodule FFix.Command.Prepare do
 
   defp classify_source!(%StreamRef{} = stream, _graph, inputs) do
     node = StreamRef.node!(stream)
-    Validator.graph!(stream.graph, allow_unused: true)
 
     unless node.kind == :input and map_size(stream.graph.nodes) == 1 and
              stream.graph.settings == [] do
@@ -219,6 +218,7 @@ defmodule FFix.Command.Prepare do
             "graph references require FFix.command/2 or canonical graph.exports handles with an explicit graph"
     end
 
+    Validator.graph!(stream.graph, allow_unused: true)
     reference = resolve_input!(node.input_ref, inputs)
     single_input!(reference, stream.media)
   end
@@ -228,7 +228,7 @@ defmodule FFix.Command.Prepare do
   end
 
   defp classify_source!(%Export{} = export, graph, _inputs) do
-    unless export.graph_id == graph.id and Enum.member?(graph.exports, export) do
+    unless Enum.member?(graph.exports, export) do
       raise ArgumentError,
             "graph export #{inspect(export.name || export.ref)} is not exported by the command graph"
     end
@@ -268,12 +268,12 @@ defmodule FFix.Command.Prepare do
         end
 
         media_index = Map.get(counts, mapping.media, 0)
-        specifier = "#{InputRef.media_prefix(mapping.media)}:#{media_index}"
 
         streams =
           if mapping.name == nil do
             streams
           else
+            specifier = "#{InputRef.media_prefix(mapping.media)}:#{media_index}"
             Map.put(streams, mapping.name, %{index: index, specifier: specifier})
           end
 
@@ -296,17 +296,11 @@ defmodule FFix.Command.Prepare do
 
     Enum.each(graph.exports, fn export ->
       if Map.fetch!(graph.nodes, export.ref.node_id).kind == :filter do
-        case Map.get(counts, export.ref, 0) do
-          1 ->
-            :ok
+        count = Map.get(counts, export.ref, 0)
 
-          0 ->
-            raise ArgumentError,
-                  "graph output #{inspect(export.name || export.ref)} must be mapped exactly once"
-
-          count ->
-            raise ArgumentError,
-                  "graph output #{inspect(export.name || export.ref)} is mapped #{count} times; complex filter outputs must be mapped exactly once"
+        if count != 1 do
+          raise ArgumentError,
+                "graph output #{inspect(export.name || export.ref)} is mapped #{count} times; complex filter outputs must be mapped exactly once"
         end
       end
     end)

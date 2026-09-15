@@ -124,20 +124,18 @@ defmodule FFix.Command.Output do
     end
 
     mappings =
-      Enum.map(sources, fn source ->
-        case source do
-          {name, %Mapping{} = mapping} when is_atom(name) and name not in [nil, true, false] ->
-            %{mapping | name: name}
+      Enum.map(sources, fn
+        {name, %Mapping{} = mapping} when is_atom(name) and name not in [nil, true, false] ->
+          %{mapping | name: name}
 
-          {name, source} when is_atom(name) and name not in [nil, true, false] ->
-            %{Mapping.new(source) | name: name}
+        {name, source} when is_atom(name) and name not in [nil, true, false] ->
+          %{Mapping.new(source) | name: name}
 
-          %Mapping{} = mapping ->
-            mapping
+        %Mapping{} = mapping ->
+          mapping
 
-          source ->
-            Mapping.new(source)
-        end
+        source ->
+          Mapping.new(source)
       end)
 
     %__MODULE__{
@@ -161,29 +159,29 @@ defmodule FFix.Command.Output do
       raise ArgumentError, "output requires at least one source"
     end
 
-    Enum.reduce(output.mappings, MapSet.new(), fn
-      %Mapping{name: name, encoding: encoding}, names ->
-        unless is_atom(name) and name not in [true, false] do
-          raise ArgumentError, "output mapping name must be an atom or nil, got: #{inspect(name)}"
-        end
+    {encodings, _names} =
+      Enum.map_reduce(output.mappings, MapSet.new(), fn
+        %Mapping{name: name, encoding: encoding}, names ->
+          unless is_atom(name) and name not in [true, false] do
+            raise ArgumentError,
+                  "output mapping name must be an atom or nil, got: #{inspect(name)}"
+          end
 
-        if name != nil and MapSet.member?(names, name) do
-          raise ArgumentError, "duplicate output mapping name: #{inspect(name)}"
-        end
+          if name != nil and MapSet.member?(names, name) do
+            raise ArgumentError, "duplicate output mapping name: #{inspect(name)}"
+          end
 
-        case encoding do
-          unconfigured when unconfigured in [nil, :copy] -> :ok
-          %Encoder{} -> Options.validate_component!(encoding)
-          other -> raise ArgumentError, "invalid encoding configuration: #{inspect(other)}"
-        end
+          case encoding do
+            unconfigured when unconfigured in [nil, :copy] -> :ok
+            %Encoder{} -> Options.validate_component!(encoding)
+            other -> raise ArgumentError, "invalid encoding configuration: #{inspect(other)}"
+          end
 
-        MapSet.put(names, name)
+          {encoding, MapSet.put(names, name)}
 
-      other, _names ->
-        raise ArgumentError, "invalid output mapping: #{inspect(other)}"
-    end)
-
-    encodings = Enum.map(output.mappings, & &1.encoding)
+        other, _names ->
+          raise ArgumentError, "invalid output mapping: #{inspect(other)}"
+      end)
 
     if Enum.any?(encodings, &(&1 != nil)) do
       Options.reject_conflicts!(output.options, :encoding, encodings)

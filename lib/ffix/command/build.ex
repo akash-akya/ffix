@@ -32,14 +32,7 @@ defmodule FFix.Command.Build do
       end)
 
     input_refs = Enum.reverse(reversed_inputs)
-
-    captured_inputs =
-      input_refs
-      |> Enum.map(& &1.declaration)
-      |> Enum.reject(&is_nil/1)
-      |> unique_inputs!()
-
-    inputs = resolve_inputs!(captured_inputs, input_refs, options)
+    inputs = resolve_inputs!(input_refs, options)
 
     graph =
       if map_size(graph.nodes) == 0 and graph.settings == [] do
@@ -48,13 +41,14 @@ defmodule FFix.Command.Build do
         %{graph | exports: Enum.reverse(graph.exports)}
       end
 
-    Command.new(
-      global: Keyword.get(options, :global, []),
+    command = %Command{
+      global_options: Keyword.get(options, :global, []),
       inputs: inputs,
       graph: graph,
       outputs: outputs
-    )
-    |> Command.validate!()
+    }
+
+    Command.validate!(command)
   end
 
   defp normalize_outputs!(output_or_outputs) do
@@ -95,36 +89,24 @@ defmodule FFix.Command.Build do
           "expected a mapping with a stream reference or selection, got: #{inspect(other)}"
   end
 
-  defp resolve_inputs!(captured_inputs, input_refs, options) do
+  defp resolve_inputs!(input_refs, options) do
     case Keyword.fetch(options, :inputs) do
+      {:ok, inputs} ->
+        unique_inputs!(inputs)
+
       :error ->
-        if Enum.any?(input_refs, &is_nil(&1.declaration)) do
-          raise ArgumentError,
-                "unbound input reference; select streams from Input.new/2 declarations, bind graph inputs, or supply an explicit ordered :inputs list"
-        end
-
-        captured_inputs
-
-      {:ok, explicit_inputs} ->
-        inputs = unique_inputs!(explicit_inputs)
-        declarations = Map.new(inputs, &{&1.id, &1})
-
-        Enum.each(captured_inputs, fn captured ->
-          case Map.fetch(declarations, captured.id) do
-            {:ok, ^captured} ->
-              :ok
-
-            {:ok, _conflicting} ->
+        input_refs
+        |> Enum.map(fn reference ->
+          case reference.declaration do
+            nil ->
               raise ArgumentError,
-                    "conflicting input snapshots for declaration #{inspect(captured.id)}"
+                    "unbound input reference; select streams from Input.new/2 declarations, bind graph inputs, or supply an explicit ordered :inputs list"
 
-            :error ->
-              raise ArgumentError,
-                    "captured input declaration #{inspect(captured.id)} is missing from explicit :inputs"
+            declaration ->
+              declaration
           end
         end)
-
-        inputs
+        |> unique_inputs!()
     end
   end
 

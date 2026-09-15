@@ -62,7 +62,7 @@ defmodule FFix.OutputFirstTest do
       FFix.command(FFix.output(new_stream, "out.mkv"), inputs: [original, configured])
     end
 
-    assert_raise ArgumentError, ~r/missing from explicit/, fn ->
+    assert_raise ArgumentError, ~r/not declared in the command/, fn ->
       FFix.command(FFix.output(new_stream, "out.mkv"), inputs: [])
     end
   end
