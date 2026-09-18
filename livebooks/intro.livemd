@@ -1,38 +1,41 @@
 # FFix: from a conversion to a media pipeline
 
+```elixir
+Mix.install(
+  [
+    {:ffix, github: "akash-akya/ffix"},
+    {:kino, "~> 0.19"},
+    {:req, "~> 0.7"}
+  ],
+  consolidate_protocols: false
+)
+```
+
 ## Setup
 
 Use FFix to convert audio, edit pictures, and package video. You'll start with a little birdsong, give sound a visible shape, and build up to moving mosaics and multiple outputs in one FFmpeg run.
 
 Evaluate the cells in order. When you change a control, re-evaluate the cell below it; moving a slider doesn't start an encode. Audio never plays automatically, but start with your volume low.
 
-This notebook uses your local FFix checkout. From the repository, launch it with:
+Open this notebook in Livebook, or launch it from the repository with:
 
 ```sh
-FFIX_PATH="$PWD" livebook server livebooks/intro.livemd
+livebook server livebooks/intro.livemd
 ```
 
-The Livebook runtime needs Elixir 1.16+, FFmpeg with `libx264` and `aac`, and `ffprobe`. In a container or remote runtime, those programs and the checkout must be available there. Installing dependencies and downloading the two small media samples requires internet access.
+The setup cell installs FFix from GitHub, Kino for previews and controls, and Req for downloads. Keep it above the first section so Livebook recognizes it as the dependency setup cell.
 
-```elixir
-ffix_path = System.get_env("FFIX_PATH", File.cwd!()) |> Path.expand()
+The Livebook runtime needs Elixir 1.16+, Git, FFmpeg with `libx264`, `aac`, and `libwebp_anim`, and `ffprobe`. In a container or remote runtime, those programs must be available there. Installing dependencies and downloading the two small media samples requires internet access.
 
-unless File.regular?(Path.join(ffix_path, "lib/ffix.ex")) do
-  raise "Set FFIX_PATH to your FFix checkout, or edit ffix_path above"
-end
-
-Mix.install([
-  {:ffix, path: ffix_path},
-  {:kino, "~> 0.19"},
-  {:req, "~> 0.5"}
-])
-```
-
-These notebook helpers handle downloads, previews, and stream inspection. They keep the examples focused on FFix; command construction and execution stay explicit.
+These notebook helpers handle file paths, downloads, previews, and stream inspection. They keep the examples focused on FFix; command construction and execution stay explicit.
 
 ```elixir
 defmodule Demo do
   alias FFix.{Encoder, Muxer}
+
+  @work_dir Path.join(System.tmp_dir!(), "ffix-intro-#{System.system_time(:microsecond)}")
+
+  def path(filename \\ ""), do: Path.join(@work_dir, filename)
 
   def fetch!(url, path) do
     %{status: 200, body: bytes} = Req.get!(url)
@@ -47,6 +50,14 @@ defmodule Demo do
 
   def download(path) do
     Kino.Download.new(fn -> File.read!(path) end, filename: Path.basename(path))
+  end
+
+  def image_card(path, title, type \\ :png) do
+    Kino.Layout.grid([
+      Kino.Markdown.new("**#{title}** — #{size_label(path)}"),
+      image(path, type),
+      download(path)
+    ])
   end
 
   def probe_streams!(path) do
@@ -73,11 +84,12 @@ end
 
 alias FFix.{Decoder, Demuxer, Encoder, Filter, Graph, Muxer}
 
-work_dir = Path.join(System.tmp_dir!(), "ffix-intro-#{System.system_time(:microsecond)}")
-File.mkdir!(work_dir)
+File.mkdir!(Demo.path())
 global_options = [y: :flag]
-IO.puts("Your files will be in #{work_dir}")
+IO.puts("Your files will be in #{Demo.path()}")
 ```
+
+`Demo.path("filename")` builds paths under this notebook's temporary directory. Paths stay the same when you re-run examples; re-evaluating the helper cell creates a fresh directory.
 
 `y: :flag` allows replacing this notebook's outputs when you re-run cells. Keep your own source files separate from the output paths. The preview helpers load whole files, which is fine for these small samples.
 
@@ -91,12 +103,12 @@ This audio uses the [Pixabay Content License](https://pixabay.com/service/licens
 sound_path =
   Demo.fetch!(
     "https://cdn.pixabay.com/download/audio/2025/01/23/audio_7b7cfbe3d0.mp3",
-    Path.join(work_dir, "birds.mp3")
+    Demo.path("birds.mp3")
   )
 ```
 
 ```elixir
-wav_path = Path.join(work_dir, "sound.wav")
+wav_path = Demo.path("sound.wav")
 
 command =
   FFix.input(sound_path)
@@ -118,7 +130,7 @@ An **output** says what to write and where. A **command** assembles outputs and 
 For a smaller web asset, encode the sound as AAC and put it in an MP4 container. Audio-only MP4 files commonly use the `.m4a` extension.
 
 ```elixir
-aac_path = Path.join(work_dir, "sound.m4a")
+aac_path = Demo.path("sound.m4a")
 
 command =
   FFix.input(wav_path)
@@ -147,7 +159,11 @@ waveform =
   |> Filter.aformat(channel_layouts: :mono)
   |> Filter.showwavespic(size: "640x160", colors: "DodgerBlue", scale: :sqrt)
 
-command = waveform |> Demo.png_output() |> FFix.command()
+command =
+  waveform
+  |> Demo.png_output()
+  |> FFix.command()
+
 waveform_image = FFix.run!(command, stdout: :collect)
 Kino.Image.new(waveform_image.stdout, :png)
 ```
@@ -164,7 +180,7 @@ Now download [MDN's CC0 flower clip](https://interactive-examples.mdn.mozilla.ne
 clip_path =
   Demo.fetch!(
     "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4",
-    Path.join(work_dir, "flowers.mp4")
+    Demo.path("flowers.mp4")
   )
 
 clip = FFix.input(clip_path)
@@ -174,15 +190,19 @@ Demo.video(clip_path)
 To archive it in Matroska, copy the video and any audio or subtitle tracks. `optional: true` lets a missing match disappear instead of failing the command.
 
 ```elixir
-archive_path = Path.join(work_dir, "flowers.mkv")
+archive_path = Demo.path("flowers.mkv")
 
 tracks = [
-  FFix.stream_copy(FFix.video(clip, 0)),
-  FFix.stream_copy(FFix.audio(clip, :all, optional: true)),
-  FFix.stream_copy(FFix.subtitle(clip, :all, optional: true))
+  clip |> FFix.video(0) |> FFix.stream_copy(),
+  clip |> FFix.audio(:all, optional: true) |> FFix.stream_copy(),
+  clip |> FFix.subtitle(:all, optional: true) |> FFix.stream_copy()
 ]
 
-command = tracks |> Muxer.matroska(archive_path) |> FFix.command(global: global_options)
+command =
+  tracks
+  |> Muxer.matroska(archive_path)
+  |> FFix.command(global: global_options)
+
 FFix.run!(command)
 
 IO.puts(Demo.probe_streams!(archive_path))
@@ -206,7 +226,7 @@ Kino.Layout.grid([width_control, crf_control])
 ```elixir
 width = round(Kino.Input.read(width_control))
 crf = round(Kino.Input.read(crf_control))
-small_path = Path.join(work_dir, "flowers-small.mp4")
+small_path = Demo.path("flowers-small.mp4")
 
 picture =
   clip
@@ -349,7 +369,8 @@ blend_mode = Kino.Input.read(blend_control)
   |> Filter.split()
 
 command =
-  Filter.blend(original, Filter.hflip(reflection), all_mode: blend_mode)
+  original
+  |> Filter.blend(Filter.hflip(reflection), all_mode: blend_mode)
   |> Demo.png_output()
   |> FFix.command()
 
@@ -359,45 +380,63 @@ Kino.Image.new(blended.stdout, :png)
 
 Blend math runs on color components. Converting to RGB gives familiar image-editor results; doing the same operations on YUV can produce surprising colors. Both inputs need matching dimensions and pixel formats. The [blend gallery](https://trac.ffmpeg.org/wiki/Blend) has more modes to explore.
 
-### Make a looping GIF
+### Compare looping GIF and WebP images
 
-A small loop is handy when you don't need a video player. Following [High quality GIF with FFmpeg](https://blog.pkh.me/p/21-high-quality-gif-with-ffmpeg.html), resize a short excerpt, build a custom palette, then apply it with deliberate dithering.
+A small loop is handy when you don't need a video player. Resize and sample one short excerpt, then make GIF and animated WebP in the same FFmpeg run. Compare their appearance and file sizes side by side.
+
+The GIF follows [High quality GIF with FFmpeg](https://blog.pkh.me/p/21-high-quality-gif-with-ffmpeg.html): build a custom palette, then apply it with deliberate dithering. We need three branches—one to build that palette, one to apply it, and one to encode WebP.
 
 ```elixir
-[frames, palette_frames] =
+[gif_frames, palette_frames, webp_frames] =
   FFix.input(clip_path, ss: 1, t: 3)
   |> FFix.video(0)
   |> Filter.fps(fps: 10)
   |> Filter.scale(w: 240, h: -1, flags: :lanczos)
-  |> Filter.split()
+  |> Filter.split(outputs: 3)
 
-gif_path = Path.join(work_dir, "flowers.gif")
+gif_path = Demo.path("flowers.gif")
+webp_path = Demo.path("flowers.webp")
 palette = Filter.palettegen(palette_frames, stats_mode: :diff)
 
-command =
-  Filter.paletteuse(frames, palette, dither: :bayer, bayer_scale: 3, diff_mode: :rectangle)
+gif_output =
+  gif_frames
+  |> Filter.paletteuse(palette, dither: :bayer, bayer_scale: 3, diff_mode: :rectangle)
   |> Muxer.mux("gif", gif_path, loop: 0)
-  |> FFix.command(global: global_options)
 
+webp_output =
+  webp_frames
+  |> Filter.format(pix_fmts: "yuv420p")
+  |> Encoder.encode("libwebp_anim", quality: 75)
+  |> Muxer.mux("webp", webp_path, loop: 0)
+
+command = FFix.command([gif_output, webp_output], global: global_options)
 FFix.run!(command)
-IO.puts(Demo.size_label(gif_path))
-Kino.Layout.grid([Demo.image(gif_path, :gif), Demo.download(gif_path)])
+
+Kino.Layout.grid(
+  [
+    Demo.image_card(gif_path, "GIF", :gif),
+    Demo.image_card(webp_path, "Animated WebP", "image/webp")
+  ],
+  columns: 2
+)
 ```
 
-`palettegen` chooses up to 256 colors, then `paletteuse` applies them to the other branch. `stats_mode: :diff` favors changing pixels; try `:full` when background colors matter equally.
+`palettegen` chooses up to 256 colors, then `paletteuse` applies them to the GIF frames. `stats_mode: :diff` favors changing pixels; try `:full` when background colors matter equally.
 
 Bayer dithering trades a visible pattern for less frame-to-frame noise, which often compresses better. `diff_mode: :rectangle` limits reprocessing to the changing area. Try `dither: :sierra2_4a` for smoother-looking gradients, then compare the file size.
 
-Ten fps, 240px width, and a three-second duration keep this small. Lanczos scaling preserves detail; GIF doesn't need an even height. `loop: 0` repeats forever. GIF cannot carry the birdsong—or any audio.
+WebP doesn't need a palette or dithering. `libwebp_anim` uses lossy compression here; raise `quality` toward 100 for higher quality, usually at a larger size. Its YUV pixel format is separate from the GIF's palette conversion. The generic encoder and muxer calls work without named WebP helpers, and Kino previews it using the MIME type `"image/webp"`.
 
-The palette is ready only after the excerpt ends, so this single-command version buffers resized frames. For longer clips, use the article's two-pass approach with the same excerpt and filters in both passes.
+Ten fps, 240px width, and a three-second duration keep both animations small. Lanczos scaling preserves detail. `loop: 0` repeats both forever; neither format carries audio.
+
+The GIF palette is ready only after the excerpt ends, so this single-command version buffers resized frames. For longer clips, use the article's two-pass approach with the same excerpt and filters in both passes.
 
 ## 8. Generate and combine audio
 
 Here's a different job: make a short notification sound. Two source filters generate tones, `amix` combines them, and a fade softens the ending. There are no input files.
 
 ```elixir
-cue_path = Path.join(work_dir, "notification.wav")
+cue_path = Demo.path("notification.wav")
 low_tone = Filter.sine(frequency: 440, duration: 2)
 high_tone = Filter.sine(frequency: 660, duration: 2)
 
@@ -429,7 +468,7 @@ panels =
     |> Filter.setpts(expr: "PTS-STARTPTS")
   end)
 
-mosaic_path = Path.join(work_dir, "mosaic.mp4")
+mosaic_path = Demo.path("mosaic.mp4")
 
 command =
   panels
@@ -458,7 +497,7 @@ IO.puts(FFix.to_filtergraph(template))
 
 excerpt = FFix.input(clip_path, ss: 2)
 bound = Graph.bind(template, %{0 => excerpt})
-reused_path = Path.join(work_dir, "reused-preview.mp4")
+reused_path = Demo.path("reused-preview.mp4")
 
 command =
   bound[:preview]
@@ -486,13 +525,13 @@ A filtered output must have exactly one consumer. Use `split` for video or `aspl
   |> Filter.scale(w: 640, h: -2)
   |> Filter.split(outputs: 3)
 
-main_path = Path.join(work_dir, "main.mp4")
-preview_path = Path.join(work_dir, "preview.mp4")
-sheet_path = Path.join(work_dir, "contact-sheet.png")
+main_path = Demo.path("main.mp4")
+preview_path = Demo.path("preview.mp4")
+sheet_path = Demo.path("contact-sheet.png")
 
 main_tracks = [
   Encoder.libx264(main, crf: 20, preset: "veryfast"),
-  FFix.stream_copy(FFix.audio(clip, 0))
+  clip |> FFix.audio(0) |> FFix.stream_copy()
 ]
 
 main_output = Muxer.mp4(main_tracks, main_path, movflags: [:faststart])
@@ -540,7 +579,7 @@ An HLS presentation needs coordinated encodes and playlist references. We'll mak
 At 24 fps, `g: 48` and `sc_threshold: 0` give regular two-second keyframe intervals. This aligns the renditions with `hls_time: 2` segments.
 
 ```elixir
-hls_dir = Path.join(work_dir, "hls")
+hls_dir = Demo.path("hls")
 File.mkdir_p!(hls_dir)
 
 [high, low] =
@@ -558,7 +597,10 @@ end
 high = encode_rendition.(high, 640, "600k")
 low = encode_rendition.(low, 320, "180k")
 
-audio = Encoder.aac(FFix.audio(clip, 0), b: "64k")
+audio =
+  clip
+  |> FFix.audio(0)
+  |> Encoder.aac(b: "64k")
 
 output =
   Muxer.hls([sound: audio, low: low, high: high], Path.join(hls_dir, "%v.m3u8"),
@@ -619,9 +661,9 @@ The null muxer discards the media; decoding still runs. Event streams are lazy: 
 
 ```elixir
 missing_command =
-  FFix.input(Path.join(work_dir, "missing.mp3"))
+  FFix.input(Demo.path("missing.mp3"))
   |> FFix.audio(0)
-  |> FFix.output(Path.join(work_dir, "missing.wav"))
+  |> FFix.output(Demo.path("missing.wav"))
   |> FFix.command()
 
 case FFix.run(missing_command) do
@@ -643,4 +685,4 @@ encoder.properties
 * [FFix.Runner](https://hexdocs.pm/ffix/FFix.Runner.html): streaming bytes, diagnostics, and choosing an executable with `ffmpeg:`.
 * [FFix.Discovery](https://hexdocs.pm/ffix/FFix.Discovery.html): installed codecs, formats, and filters. Use [ffprobe](https://ffmpeg.org/ffprobe.html) to inspect a media file instead.
 
-Your generated files remain in `work_dir`. Download anything you want to keep before removing that temporary directory.
+Your generated files remain in the directory returned by `Demo.path()`. Download anything you want to keep before removing that temporary directory.
