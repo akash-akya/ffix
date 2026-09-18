@@ -125,7 +125,7 @@ Add FFix to your dependencies:
 
 ```elixir
 def deps do
-  [{:ffix, "~> 0.1.0"}]
+  [{:ffix, "~> 0.2.0"}]
 end
 ```
 
